@@ -1,0 +1,23 @@
+{
+  "name": "@codexbar/platform",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --project tsconfig.json",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@codexbar/contracts": "workspace:*",
+    "@codexbar/core": "workspace:*",
+    "@napi-rs/keyring": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

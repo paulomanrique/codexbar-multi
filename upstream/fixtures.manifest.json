@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "baseline": {
+    "repository": "steipete/CodexBar",
+    "commit": "453174fe13eebdf403cc0776268eb2b101fd9553"
+  },
+  "policy": {
+    "allowNetwork": false,
+    "allowCredentials": false,
+    "requiredShape": "provider-response",
+    "notes": "Counts are a reviewed inventory of checked-in oracle fixtures; they are not live-provider probes."
+  },
+  "entries": [
+    {
+      "id": "provider-response-fixtures",
+      "pathGlobs": ["Tests/CodexBarTests/Fixtures/Providers/**/*"],
+      "observedCount": 16,
+      "testGlobs": [
+        "Tests/CodexBarTests/*Provider*Tests.swift",
+        "Tests/CodexBarTests/ProviderQuotaFixtureContractTests.swift"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "config-fixtures",
+      "pathGlobs": [
+        "Tests/CodexBarTests/Fixtures/Config/*.json",
+        "Tests/CodexBarTests/Fixtures/codex-config-*.toml"
+      ],
+      "observedCount": 4,
+      "testGlobs": [
+        "Tests/CodexBarTests/CLIConfigCommandTests.swift",
+        "Tests/CodexBarTests/Config*Tests.swift"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "cost-usage-issue-2037",
+      "pathGlobs": [
+        "Tests/CodexBarTests/Fixtures/CostUsage/**/*.json",
+        "Tests/CodexBarTests/Fixtures/CostUsage/**/*.jsonl",
+        "Tests/CodexBarTests/Fixtures/CostUsage/**/ORACLE.md"
+      ],
+      "observedCount": 15,
+      "testGlobs": [
+        "Tests/CodexBarTests/Issue2037*Tests.swift",
+        "Tests/CodexBarTests/CostUsage*Tests.swift"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "codex-session-and-usage-fixtures",
+      "pathGlobs": [
+        "Tests/CodexBarTests/Fixtures/*session*",
+        "Tests/CodexBarTests/Fixtures/codex-historical-usage-real-legacy.jsonl",
+        "Tests/CodexBarTests/Fixtures/codex-plan-utilization-real-migration.json"
+      ],
+      "observedCount": 6,
+      "testGlobs": [
+        "Tests/CodexBarTests/AgentSession*Tests.swift",
+        "Tests/CodexBarTests/UsageStore*SnapshotTests.swift",
+        "Tests/CodexBarTests/CLISnapshotTests.swift"
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "plugin-manifest-resources",
+      "pathGlobs": [
+        "Sources/CodexBarCore/Resources/Plugins/*.js",
+        "Sources/CodexBarCore/Resources/Plugins/*.ts"
+      ],
+      "observedCount": 21,
+      "testGlobs": ["TestsPlugin/**/*.swift", "Tests/CodexBarTests/Sub2APIPluginGoldenTests.swift"],
+      "status": "partial"
+    },
+    {
+      "id": "qwen-cloud-provider",
+      "pathGlobs": ["Tests/CodexBarTests/Fixtures/QwenCloud/*.json"],
+      "observedCount": 5,
+      "providers": ["qwencloud"],
+      "testGlobs": ["Tests/CodexBarTests/QwenCloud*Tests.swift"],
+      "status": "partial"
+    },
+    {
+      "id": "pi-family-session-fixtures",
+      "pathGlobs": ["Tests/CodexBarTests/Fixtures/PiFamily/**/*.jsonl"],
+      "observedCount": 3,
+      "testGlobs": ["Tests/CodexBarTests/AgentSession*Tests.swift"],
+      "status": "partial"
+    },
+    {
+      "id": "generic-usage-snapshot",
+      "pathGlobs": ["Tests/CodexBarTests/Fixtures/usage-snapshot-current.json"],
+      "observedCount": 1,
+      "testGlobs": [
+        "Tests/CodexBarTests/CLISnapshotTests.swift",
+        "Tests/CodexBarTests/UsageStoreWidgetSnapshotTests.swift"
+      ],
+      "status": "partial"
+    }
+  ]
+}

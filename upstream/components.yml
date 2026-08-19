@@ -1,0 +1,231 @@
+# Maintenance matrix for the Swift oracle and the TypeScript migration.
+# This is deliberately a map of migration components, not a provider descriptor list.
+version: 2
+baselineCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+statusValues: [unported, partial, parity, not-applicable]
+components:
+  - id: contracts-snapshots
+    description: Core quota, identity, cost, detail and usage snapshot contracts.
+    swiftGlobs:
+      - Sources/CodexBarCore/UsageFetcher.swift
+      - Sources/CodexBarCore/ProviderIdentitySnapshot.swift
+      - Sources/CodexBarCore/ProviderCostSnapshot.swift
+      - Sources/CodexBarCore/ProviderDetailSection.swift
+      - Sources/CodexBarCore/CostUsageModels.swift
+    tsPaths:
+      - packages/contracts/src/usage.ts
+      - packages/contracts/src/provider.ts
+    tests:
+      - Tests/CodexBarTests/UsageSnapshotTests.swift
+      - Tests/CodexBarTests/ProviderDetailSectionTests.swift
+      - TestsLinux/*UsageSnapshot*Tests.swift
+      - packages/contracts/test/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
+      - Tests/CodexBarTests/Fixtures/Providers/**/*.json
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: config
+    description: Persisted CodexBar configuration, provider settings and validation.
+    swiftGlobs:
+      - Sources/CodexBarCore/Config/**/*.swift
+      - Sources/CodexBar/Config/**/*.swift
+    tsPaths:
+      - packages/contracts/src/config.ts
+      - packages/core/src/services.ts
+    tests:
+      - Tests/CodexBarTests/CLIConfigCommandTests.swift
+      - Tests/CodexBarTests/Config*.swift
+      - packages/contracts/test/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Config/*.json
+      - Tests/CodexBarTests/Fixtures/codex-config-*.toml
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: fetch-pipeline-fallback
+    description: Ordered source selection, classified failures, retries and fallback policy.
+    swiftGlobs:
+      - Sources/CodexBarCore/Providers/ProviderFetchPlan.swift
+      - Sources/CodexBarCore/UsageFetcher.swift
+      - Sources/CodexBar/ProviderRegistry.swift
+    tsPaths:
+      - packages/core/src/provider-fetch-pipeline.ts
+      - packages/contracts/src/errors.ts
+      - packages/contracts/src/provider.ts
+    tests:
+      - Tests/CodexBarTests/ProviderFetchPlanTests.swift
+      - Tests/CodexBarTests/*Fallback*Tests.swift
+      - packages/core/test/provider-fetch-pipeline.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: http-security
+    description: HTTP endpoint policy, bounded responses and platform-neutral security gates.
+    swiftGlobs:
+      - Sources/CodexBarCore/ProviderEndpointOverrideValidator.swift
+      - Sources/CodexBarCore/Host/**/*.swift
+      - Sources/CodexBarCore/Providers/Shared/**/*.swift
+    tsPaths:
+      - packages/core/src/endpoint-security.ts
+      - packages/platform/src/**/*.ts
+    tests:
+      - Tests/CodexBarTests/ProviderEndpointOverrideValidatorTests.swift
+      - Tests/CodexBarTests/BrowserCookieAccessGateTests.swift
+      - packages/core/test/endpoint-security.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Scripts/exec-trampoline.sh
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: auth-credentials
+    description: OAuth, API token, browser cookie and credential ownership boundaries.
+    swiftGlobs:
+      - Sources/CodexBarCore/Providers/*/*Credential*.swift
+      - Sources/CodexBarCore/Providers/*/*Token*.swift
+      - Sources/CodexBar/*Login*.swift
+      - Sources/CodexBar/CookieHeaderStore.swift
+    tsPaths:
+      - packages/core/src/services.ts
+      - packages/platform/src/**/*.ts
+      - packages/providers/src/**/*.ts
+    tests:
+      - Tests/CodexBarTests/APITokenFetchStrategyTests.swift
+      - Tests/CodexBarTests/*Credentials*Tests.swift
+      - Tests/CodexBarTests/BrowserCookie*.swift
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/OpenAI/*.html
+      - Tests/CodexBarTests/Fixtures/codex-config-*.toml
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: history-cost-sqlite
+    description: Token history, spend summaries, local logs and SQLite-backed persistence.
+    swiftGlobs:
+      - Sources/CodexBarCore/CostUsage*.swift
+      - Sources/CodexBarCore/Vendored/CostUsage/**/*.swift
+      - Sources/CodexBarCore/Stores/**/*.swift
+      - Sources/CodexBar/PlanUtilizationHistoryStore.swift
+    tsPaths:
+      - packages/core/src/services.ts
+      - packages/contracts/src/usage.ts
+      - packages/platform/src/**/*.ts
+    tests:
+      - Tests/CodexBarTests/CostUsage*Tests.swift
+      - Tests/CodexBarTests/SpendDashboard*Tests.swift
+      - Tests/CodexBarTests/Issue2037*Tests.swift
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/CostUsage/**/*.json
+      - Tests/CodexBarTests/Fixtures/CostUsage/**/*.jsonl
+      - Tests/CodexBarTests/Fixtures/codex-historical-usage-real-legacy.jsonl
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: plugins
+    description: Untrusted QuickJS plugin manifests, host bridge and snapshot mapping.
+    swiftGlobs:
+      - Sources/CodexBarCore/Plugins/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/*.{js,ts}
+    tsPaths:
+      - packages/plugin-runtime/src/**/*.ts
+      - packages/contracts/src/usage.ts
+      - packages/testkit/src/**/*.ts
+    tests:
+      - TestsPlugin/**/*.swift
+      - Tests/CodexBarTests/Sub2APIPluginGoldenTests.swift
+      - packages/plugin-runtime/test/**/*.test.ts
+    fixtures:
+      - Sources/CodexBarCore/Resources/Plugins/*.js
+      - Sources/CodexBarCore/Resources/Plugins/*.ts
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: cli
+    description: JSON/TOON usage, cost, dashboard and serve command DTOs and rendering.
+    swiftGlobs:
+      - Sources/CodexBarCLI/**/*.swift
+    tsPaths:
+      - apps/cli/src/**/*.ts
+      - packages/contracts/src/ipc.ts
+    tests:
+      - Tests/CodexBarTests/CLI*Tests.swift
+      - Tests/CodexBarTests/CLISnapshotTests.swift
+      - Tests/CodexBarTests/CLIUnificationGoldenTests.swift
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
+      - Tests/CodexBarTests/Fixtures/models-dev-subset.json
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: desktop-ui
+    description: Menu bar, widgets, settings, dashboard and typed Electron preload boundary.
+    swiftGlobs:
+      - Sources/CodexBar/**/*.swift
+      - Sources/CodexBarWidget/**/*.swift
+      - WidgetExtension/**/*.swift
+    tsPaths:
+      - apps/desktop/src/main/**/*.ts
+      - apps/desktop/src/preload/**/*.ts
+      - apps/desktop/src/renderer/**/*.tsx
+      - packages/contracts/src/ipc.ts
+    tests:
+      - Tests/CodexBarTests/Menu*Tests.swift
+      - Tests/CodexBarTests/Widget*Tests.swift
+      - Tests/CodexBarTests/DashboardSnapshotBuilderTests.swift
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: i18n
+    description: Localized strings, provider display names and locale resource parity.
+    swiftGlobs:
+      - Sources/CodexBar/Resources/*.lproj/**/*.strings
+      - Sources/CodexBar/Resources/*.lproj/**/*.stringsdict
+      - Sources/CodexBar/Localization.swift
+    tsPaths:
+      - apps/desktop/src/renderer/**/*.tsx
+    tests:
+      - Tests/CodexBarTests/Localization*Tests.swift
+      - Tests/CodexBarTests/Provider*Label*Tests.swift
+    fixtures:
+      - Sources/CodexBar/Resources/en.lproj/Localizable.strings
+    status: unported
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: apple-only-exclusions
+    description: WidgetKit, iCloud/CloudKit and Sparkle are intentionally excluded from CodexBar Multi.
+    swiftGlobs:
+      - Sources/CodexBarWidget/**/*.swift
+      - WidgetExtension/**/*.swift
+      - Sources/CodexBar/**/*iCloud*.swift
+      - Sources/CodexBar/**/*CloudKit*.swift
+      - Sources/CodexBar/**/*Sparkle*.swift
+    tsPaths: []
+    tests:
+      - Tests/CodexBarTests/Widget*Tests.swift
+    fixtures: []
+    status: not-applicable
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: provider-mapping
+    description: Canonical 69-provider roster, per-provider Swift implementations and TS registry mapping.
+    swiftGlobs:
+      - Sources/CodexBarCore/Providers/*/*.swift
+      - Sources/CodexBar/Providers/**/*.swift
+    tsPaths:
+      - packages/providers/src/registry.ts
+      - packages/providers/src/providers/**/*.ts
+      - packages/contracts/src/provider.ts
+    tests:
+      - Tests/CodexBarTests/*Provider*Tests.swift
+      - TestsLinux/*Provider*Tests.swift
+      - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/**/*
+      - Tests/CodexBarTests/Fixtures/QwenCloud/*
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

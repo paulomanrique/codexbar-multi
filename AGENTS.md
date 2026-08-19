@@ -1,5 +1,18 @@
 # Repository Guidelines
 
+## TypeScript port (primary implementation)
+- All port work lives on the persistent `multi` branch. Commit and push every relevant milestone to `origin/multi`.
+  Keep `main`/`master` free to follow the original CodexBar repository; do not merge the TypeScript rewrite there.
+- The active product is being ported into `packages/*` and `apps/*`; Swift remains an oracle until parity gates pass.
+- Use pnpm/Vite+ and the versions pinned in `pnpm-workspace.yaml`.
+- `packages/contracts`, `packages/core`, and `packages/providers` must not import Electron, React, Node/Bun built-ins,
+  or branch on `process.platform`. Platform capabilities are injected through Effect services.
+- The renderer receives only schema-validated DTOs through the explicit preload bridge. Never expose raw IPC,
+  filesystem, subprocesses, tokens, cookies, or credential stores.
+- Providers retain their upstream IDs, source order, fallback rules, snapshots, fixtures, and error classification.
+- User plugins remain untrusted QuickJS code. First-party providers execute as normal TypeScript modules.
+- GitHub Actions, releases, signing, notarization, and package publication stay disabled during the migration.
+
 ## Project Structure & Modules
 - `Sources/CodexBar`: Swift 6 menu bar app (usage/credits probes, icon renderer, settings). Keep changes small and reuse existing helpers.
 - `Tests/CodexBarTests`: XCTest coverage for usage parsing, status probes, icon patterns; mirror new logic with focused tests.

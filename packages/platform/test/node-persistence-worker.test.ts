@@ -1,0 +1,100 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Effect } from "effect";
+import { describe, expect, it } from "vite-plus/test";
+import type { ProviderId } from "@codexbar/contracts";
+import { makeNodeSqliteWorkerPersistence } from "../src/node.ts";
+
+const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
+
+describe("Node SQLite worker persistence", () => {
+  it("runs history and cost repositories in a real worker and closes cleanly", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    try {
+      await Effect.runPromise(
+        persistence.history.append({
+          providerId: "codex" as ProviderId,
+          recordedAt: 1,
+          snapshot: snapshot("2026-01-01T00:00:00Z"),
+        }),
+      );
+      await Effect.runPromise(
+        persistence.costs.append({
+          providerId: "codex" as ProviderId,
+          recordedAt: 1,
+          inputTokens: 3,
+          outputTokens: 5,
+          costUsd: 0.02,
+        }),
+      );
+
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([
+        {
+          providerId: "codex",
+          recordedAt: 1,
+          snapshot: snapshot("2026-01-01T00:00:00Z"),
+        },
+      ]);
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual([
+        {
+          providerId: "codex",
+          recordedAt: 1,
+          inputTokens: 3,
+          outputTokens: 5,
+          costUsd: 0.02,
+        },
+      ]);
+
+      await Effect.runPromise(persistence.close);
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "SQLite worker",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a classified infrastructure error when worker startup cannot open SQLite", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-failure-"));
+    try {
+      await expect(
+        Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath: directory })),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "open SQLite persistence",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("terminates a cancelled worker request so it cannot outlive the host", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-cancel-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await expect(
+        Effect.runPromise(
+          persistence.history.append({
+            providerId: "codex" as ProviderId,
+            recordedAt: 1,
+            snapshot: snapshot("2026-01-01T00:00:00Z"),
+          }),
+          { signal: controller.signal },
+        ),
+      ).rejects.toBeDefined();
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "SQLite worker",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});

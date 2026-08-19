@@ -1,0 +1,25 @@
+{
+  "name": "@codexbar/testkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./json": "./src/json.ts",
+    "./fixtures": "./src/fixtures.ts",
+    "./oracle": "./src/oracle.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@codexbar/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

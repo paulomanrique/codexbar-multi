@@ -1,0 +1,32 @@
+{
+  "name": "@codexbar/monorepo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp run -r build",
+    "build:desktop": "vp run --filter @codexbar/desktop build",
+    "build:cli": "vp run --filter @codexbar/cli build",
+    "typecheck": "vp run -r typecheck",
+    "test": "vp run -r test",
+    "lint": "vp lint --report-unused-disable-directives apps packages scripts",
+    "fmt": "vp fmt apps packages scripts package.json pnpm-workspace.yaml tsconfig.base.json upstream docs/typescript-port.md README.md todo.md",
+    "fmt:check": "vp fmt --check apps packages scripts package.json pnpm-workspace.yaml tsconfig.base.json upstream docs/typescript-port.md README.md todo.md",
+    "check": "vp check apps packages scripts package.json pnpm-workspace.yaml tsconfig.base.json upstream docs/typescript-port.md README.md todo.md && node scripts/check-architecture.ts",
+    "dev:desktop": "vp run --filter @codexbar/desktop dev",
+    "dev:cli": "vp run --filter @codexbar/cli dev",
+    "upstream:report": "node scripts/upstream/report.ts",
+    "upstream:accept": "node scripts/upstream/accept.ts",
+    "local-gate": "node scripts/local-gate.ts"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": "24.13.1"
+  },
+  "packageManager": "pnpm@11.10.0"
+}

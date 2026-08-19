@@ -8,6 +8,13 @@ xcuserdata/
 # Build products
 .build/
 DerivedData
+node_modules/
+dist/
+dist-electron/
+.vite-plus/
+.codexbar-multi/
+coverage/
+artifacts/
 
 # Bundles / artifacts
 # Main app bundle (any variation)
@@ -36,6 +43,7 @@ debug_*.swift
 .swiftpm-cache/
 .tmp-clang/
 __pycache__/
+*.tsbuildinfo
 
 # Debug/analysis docs
 docs/*-analysis.md

@@ -1,0 +1,21 @@
+{
+  "name": "@codexbar/core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --project tsconfig.json",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@codexbar/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

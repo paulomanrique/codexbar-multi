@@ -1,0 +1,1294 @@
+# Semantic per-provider migration matrix for the CodexBar 0.54.0 oracle.
+#
+# Each entry is intentionally explicit so an upstream change can be traced from
+# Swift source/tests/fixtures to the expected and actual TypeScript implementation.
+# `partial` requires a real TS module and a TS test; `parity` additionally requires
+# an accepted Swift-oracle comparison. `unported` may still have a mechanical TS
+# file under migration, but it is not counted as behaviorally ported yet.
+version: 2
+baselineCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+providerCount: 69
+statusValues: [unported, partial, parity]
+oracleStatusValues: [pending, accepted]
+providers:
+  - id: codex
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Codex/**/*.swift
+      - Sources/CodexBarCore/Providers/Codex/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Codex*Tests.swift
+        - TestsLinux/*Codex*Tests.swift
+      tsGlobs:
+        - packages/providers/test/codex.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Codex/**/*
+      - Tests/CodexBarTests/Fixtures/codex-*
+      - Tests/CodexBarTests/Fixtures/*session*
+    tsPaths:
+      expected: [packages/providers/src/providers/codex.ts]
+      real:
+        - packages/providers/src/providers/codex.ts
+    tsTestGlobs:
+      - packages/providers/test/codex.test.ts
+    status: partial
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: openai
+    swiftGlobs:
+      - Sources/CodexBar/Providers/OpenAI/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*OpenAI*Tests.swift
+        - TestsLinux/*OpenAI*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/OpenAI/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/openai.ts]
+      real:
+        - packages/providers/src/providers/openai.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: azureopenai
+    swiftGlobs:
+      - Sources/CodexBar/Providers/AzureOpenAI/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*AzureOpenAI*Tests.swift
+        - TestsLinux/*AzureOpenAI*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/AzureOpenAI/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/azureopenai.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: claude
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Claude/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Claude*Tests.swift
+        - TestsLinux/*Claude*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Claude/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/claude.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: clinepass
+    swiftGlobs:
+      - Sources/CodexBar/Providers/ClinePass/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*ClinePass*Tests.swift
+        - TestsLinux/*ClinePass*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/ClinePass/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/clinepass.ts]
+      real:
+        - packages/providers/src/providers/clinepass.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: cursor
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Cursor/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Cursor*Tests.swift
+        - TestsLinux/*Cursor*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Cursor/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/cursor.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: opencode
+    swiftGlobs:
+      - Sources/CodexBar/Providers/OpenCode/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*OpenCode*Tests.swift
+        - TestsLinux/*OpenCode*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/OpenCode/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/opencode.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: opencodego
+    swiftGlobs:
+      - Sources/CodexBar/Providers/OpenCodeGo/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*OpenCodeGo*Tests.swift
+        - TestsLinux/*OpenCodeGo*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/OpenCodeGo/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/opencodego.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: alibaba
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Alibaba/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Alibaba*Tests.swift
+        - TestsLinux/*Alibaba*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Alibaba/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/alibaba.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: alibabatokenplan
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Alibaba/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Alibaba*Tests.swift
+        - TestsLinux/*Alibaba*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/AlibabaTokenPlan/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/alibabatokenplan.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: qwencloud
+    swiftGlobs:
+      - Sources/CodexBar/Providers/QwenCloud/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*QwenCloud*Tests.swift
+        - TestsLinux/*QwenCloud*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/QwenCloud/**/*
+      - Tests/CodexBarTests/Fixtures/QwenCloud/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/qwencloud.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: factory
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Factory/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Factory*Tests.swift
+        - TestsLinux/*Factory*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Factory/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/factory.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: fireworks
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Fireworks/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Fireworks*Tests.swift
+        - TestsLinux/*Fireworks*Tests.swift
+      tsGlobs:
+        - packages/providers/test/http-wave.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Fireworks/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/fireworks.ts]
+      real:
+        - packages/providers/src/providers/fireworks.ts
+    tsTestGlobs:
+      - packages/providers/test/http-wave.test.ts
+    status: partial
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: gemini
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Gemini/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Gemini*Tests.swift
+        - TestsLinux/*Gemini*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Gemini/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/gemini.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: antigravity
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Antigravity/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Antigravity*Tests.swift
+        - TestsLinux/*Antigravity*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Antigravity/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/antigravity.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: copilot
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Copilot/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Copilot*Tests.swift
+        - TestsLinux/*Copilot*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Copilot/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/copilot.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: devin
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Devin/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Devin*Tests.swift
+        - TestsLinux/*Devin*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Devin/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/devin.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: zai
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Zai/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Zai*Tests.swift
+        - TestsLinux/*Zai*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Zai/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/zai.ts]
+      real:
+        - packages/providers/src/providers/zai.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: minimax
+    swiftGlobs:
+      - Sources/CodexBar/Providers/MiniMax/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*MiniMax*Tests.swift
+        - TestsLinux/*MiniMax*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/MiniMax/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/minimax.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: manus
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Manus/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Manus*Tests.swift
+        - TestsLinux/*Manus*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Manus/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/manus.ts]
+      real:
+        - packages/providers/src/providers/manus.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: kimi
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Kimi/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Kimi*Tests.swift
+        - TestsLinux/*Kimi*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Kimi/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/kimi.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: kilo
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Kilo/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Kilo*Tests.swift
+        - TestsLinux/*Kilo*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Kilo/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/kilo.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: kiro
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Kiro/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Kiro*Tests.swift
+        - TestsLinux/*Kiro*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Kiro/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/kiro.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: vertexai
+    swiftGlobs:
+      - Sources/CodexBar/Providers/VertexAI/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*VertexAI*Tests.swift
+        - TestsLinux/*VertexAI*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/VertexAI/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/vertexai.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: augment
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Augment/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Augment*Tests.swift
+        - TestsLinux/*Augment*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Augment/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/augment.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: jetbrains
+    swiftGlobs:
+      - Sources/CodexBar/Providers/JetBrains/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*JetBrains*Tests.swift
+        - TestsLinux/*JetBrains*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/JetBrains/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/jetbrains.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: moonshot
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Moonshot/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Moonshot*Tests.swift
+        - TestsLinux/*Moonshot*Tests.swift
+      tsGlobs:
+        - packages/providers/test/http-wave.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Moonshot/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/moonshot.ts]
+      real:
+        - packages/providers/src/providers/moonshot.ts
+    tsTestGlobs:
+      - packages/providers/test/http-wave.test.ts
+    status: partial
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: amp
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Amp/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Amp*Tests.swift
+        - TestsLinux/*Amp*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Amp/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/amp.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: t3chat
+    swiftGlobs:
+      - Sources/CodexBar/Providers/T3Chat/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*T3Chat*Tests.swift
+        - TestsLinux/*T3Chat*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/T3Chat/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/t3chat.ts]
+      real:
+        - packages/providers/src/providers/t3chat.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: ollama
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Ollama/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Ollama*Tests.swift
+        - TestsLinux/*Ollama*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Ollama/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/ollama.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: synthetic
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Synthetic/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Synthetic*Tests.swift
+        - TestsLinux/*Synthetic*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Synthetic/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/synthetic.ts]
+      real:
+        - packages/providers/src/providers/synthetic.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: openrouter
+    swiftGlobs:
+      - Sources/CodexBar/Providers/OpenRouter/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*OpenRouter*Tests.swift
+        - TestsLinux/*OpenRouter*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/OpenRouter/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/openrouter.ts]
+      real:
+        - packages/providers/src/providers/openrouter.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: elevenlabs
+    swiftGlobs:
+      - Sources/CodexBar/Providers/ElevenLabs/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*ElevenLabs*Tests.swift
+        - TestsLinux/*ElevenLabs*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/ElevenLabs/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/elevenlabs.ts]
+      real:
+        - packages/providers/src/providers/elevenlabs.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: warp
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Warp/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Warp*Tests.swift
+        - TestsLinux/*Warp*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Warp/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/warp.ts]
+      real:
+        - packages/providers/src/providers/warp.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: windsurf
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Windsurf/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Windsurf*Tests.swift
+        - TestsLinux/*Windsurf*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Windsurf/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/windsurf.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: zed
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Zed/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Zed*Tests.swift
+        - TestsLinux/*Zed*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Zed/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/zed.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: perplexity
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Perplexity/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Perplexity*Tests.swift
+        - TestsLinux/*Perplexity*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Perplexity/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/perplexity.ts]
+      real:
+        - packages/providers/src/providers/perplexity.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: mimo
+    swiftGlobs:
+      - Sources/CodexBar/Providers/MiMo/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*MiMo*Tests.swift
+        - TestsLinux/*MiMo*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/MiMo/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/mimo.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: doubao
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Doubao/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Doubao*Tests.swift
+        - TestsLinux/*Doubao*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Doubao/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/doubao.ts]
+      real:
+        - packages/providers/src/providers/doubao.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: sakana
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Sakana/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Sakana*Tests.swift
+        - TestsLinux/*Sakana*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Sakana/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/sakana.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: abacus
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Abacus/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Abacus*Tests.swift
+        - TestsLinux/*Abacus*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Abacus/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/abacus.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: mistral
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Mistral/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Mistral*Tests.swift
+        - TestsLinux/*Mistral*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Mistral/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/mistral.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: deepseek
+    swiftGlobs:
+      - Sources/CodexBar/Providers/DeepSeek/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*DeepSeek*Tests.swift
+        - TestsLinux/*DeepSeek*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/DeepSeek/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/deepseek.ts]
+      real:
+        - packages/providers/src/providers/deepseek.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: deepinfra
+    swiftGlobs:
+      - Sources/CodexBar/Providers/DeepInfra/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*DeepInfra*Tests.swift
+        - TestsLinux/*DeepInfra*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/DeepInfra/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/deepinfra.ts]
+      real:
+        - packages/providers/src/providers/deepinfra.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: codebuff
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Codebuff/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Codebuff*Tests.swift
+        - TestsLinux/*Codebuff*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Codebuff/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/codebuff.ts]
+      real:
+        - packages/providers/src/providers/codebuff.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: crof
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Crof/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Crof*Tests.swift
+        - TestsLinux/*Crof*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Crof/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/crof.ts]
+      real:
+        - packages/providers/src/providers/crof.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: venice
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Venice/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Venice*Tests.swift
+        - TestsLinux/*Venice*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Venice/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/venice.ts]
+      real:
+        - packages/providers/src/providers/venice.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: commandcode
+    swiftGlobs:
+      - Sources/CodexBar/Providers/CommandCode/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*CommandCode*Tests.swift
+        - TestsLinux/*CommandCode*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/CommandCode/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/commandcode.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: qoder
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Qoder/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Qoder*Tests.swift
+        - TestsLinux/*Qoder*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Qoder/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/qoder.ts]
+      real:
+        - packages/providers/src/providers/qoder.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: stepfun
+    swiftGlobs:
+      - Sources/CodexBar/Providers/StepFun/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*StepFun*Tests.swift
+        - TestsLinux/*StepFun*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/StepFun/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/stepfun.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: bedrock
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Bedrock/**/*.swift
+      - Sources/CodexBarCore/Providers/Bedrock/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Bedrock*Tests.swift
+        - TestsLinux/*Bedrock*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Bedrock/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/bedrock.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: grok
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Grok/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Grok*Tests.swift
+        - TestsLinux/*Grok*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Grok/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/grok.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: groq
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Groq/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Groq*Tests.swift
+        - TestsLinux/*Groq*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Groq/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/groq.ts]
+      real:
+        - packages/providers/src/providers/groq.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: llmproxy
+    swiftGlobs:
+      - Sources/CodexBar/Providers/LLMProxy/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*LLMProxy*Tests.swift
+        - TestsLinux/*LLMProxy*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/LLMProxy/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/llmproxy.ts]
+      real:
+        - packages/providers/src/providers/llmproxy.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: litellm
+    swiftGlobs:
+      - Sources/CodexBar/Providers/LiteLLM/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*LiteLLM*Tests.swift
+        - TestsLinux/*LiteLLM*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/LiteLLM/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/litellm.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: deepgram
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Deepgram/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Deepgram*Tests.swift
+        - TestsLinux/*Deepgram*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Deepgram/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/deepgram.ts]
+      real:
+        - packages/providers/src/providers/deepgram.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: poe
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Poe/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Poe*Tests.swift
+        - TestsLinux/*Poe*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Poe/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/poe.ts]
+      real:
+        - packages/providers/src/providers/poe.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: chutes
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Chutes/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Chutes*Tests.swift
+        - TestsLinux/*Chutes*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Chutes/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/chutes.ts]
+      real:
+        - packages/providers/src/providers/chutes.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: neuralwatt
+    swiftGlobs:
+      - Sources/CodexBar/Providers/NeuralWatt/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*NeuralWatt*Tests.swift
+        - TestsLinux/*NeuralWatt*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/NeuralWatt/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/neuralwatt.ts]
+      real:
+        - packages/providers/src/providers/neuralwatt.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: clawrouter
+    swiftGlobs:
+      - Sources/CodexBar/Providers/ClawRouter/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*ClawRouter*Tests.swift
+        - TestsLinux/*ClawRouter*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/ClawRouter/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/clawrouter.ts]
+      real:
+        - packages/providers/src/providers/clawrouter.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: longcat
+    swiftGlobs:
+      - Sources/CodexBar/Providers/LongCat/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*LongCat*Tests.swift
+        - TestsLinux/*LongCat*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/LongCat/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/longcat.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: sub2api
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Sub2API/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Sub2API*Tests.swift
+        - TestsLinux/*Sub2API*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Sub2API/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/sub2api.ts]
+      real:
+        - packages/providers/src/providers/sub2api.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: wayfinder
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Wayfinder/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Wayfinder*Tests.swift
+        - TestsLinux/*Wayfinder*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Wayfinder/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/wayfinder.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: zenmux
+    swiftGlobs:
+      - Sources/CodexBar/Providers/ZenMux/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*ZenMux*Tests.swift
+        - TestsLinux/*ZenMux*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/ZenMux/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/zenmux.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: aiand
+    swiftGlobs:
+      - Sources/CodexBar/Providers/AiAnd/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*AiAnd*Tests.swift
+        - TestsLinux/*AiAnd*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/AiAnd/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/aiand.ts]
+      real:
+        - packages/providers/src/providers/aiand.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: zoommate
+    swiftGlobs:
+      - Sources/CodexBar/Providers/ZoomMate/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*ZoomMate*Tests.swift
+        - TestsLinux/*ZoomMate*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/ZoomMate/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/zoommate.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: xai
+    swiftGlobs:
+      - Sources/CodexBar/Providers/XAI/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*XAI*Tests.swift
+        - TestsLinux/*XAI*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/XAI/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/xai.ts]
+      real:
+        - packages/providers/src/providers/xai.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: notion
+    swiftGlobs:
+      - Sources/CodexBar/Providers/Notion/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*Notion*Tests.swift
+        - TestsLinux/*Notion*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/Notion/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/notion.ts]
+      real: []
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+  - id: ibmbob
+    swiftGlobs:
+      - Sources/CodexBar/Providers/IBMBob/**/*.swift
+    tests:
+      swiftGlobs:
+        - Tests/CodexBarTests/*IBMBob*Tests.swift
+        - TestsLinux/*IBMBob*Tests.swift
+      tsGlobs:
+        - packages/providers/test/**/*.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/Providers/IBMBob/**/*
+    tsPaths:
+      expected: [packages/providers/src/providers/ibmbob.ts]
+      real:
+        - packages/providers/src/providers/ibmbob.ts
+    tsTestGlobs: []
+    status: unported
+    oracleStatus: pending
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

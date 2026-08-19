@@ -1,0 +1,49 @@
+{
+  "name": "@codexbar/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts && vite build",
+    "dev": "vite",
+    "typecheck": "tsgo --build --pretty false",
+    "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@codexbar/contracts": "workspace:*",
+    "@codexbar/platform": "workspace:*",
+    "@codexbar/providers": "workspace:*",
+    "@napi-rs/keyring": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "electron": "catalog:",
+    "electron-builder": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "build": {
+    "appId": "com.paulomanrique.codexbar-multi",
+    "productName": "CodexBar Multi",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "protocols": [
+      {
+        "name": "CodexBar Multi",
+        "schemes": [
+          "codexbar-multi"
+        ]
+      }
+    ],
+    "publish": null
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "codexBar": {
+    "repository": "steipete/CodexBar",
+    "branch": "main",
+    "commit": "453174fe13eebdf403cc0776268eb2b101fd9553",
+    "version": "0.54.0"
+  },
+  "t3Code": {
+    "repository": "pingdotgg/t3code",
+    "branch": "main",
+    "commit": "24c4ba68f536d56e8482a1e4d7070a6771da551d"
+  },
+  "providerCount": 69,
+  "reviewedAt": "2026-08-19T00:00:00Z"
+}

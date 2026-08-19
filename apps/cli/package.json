@@ -1,0 +1,31 @@
+{
+  "name": "@codexbar/cli",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "codexbar-multi": "./dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "node --experimental-strip-types src/index.ts",
+    "typecheck": "tsgo --build --pretty false",
+    "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@codexbar/core": "workspace:*",
+    "@codexbar/platform": "workspace:*",
+    "@codexbar/providers": "workspace:*",
+    "@napi-rs/keyring": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
