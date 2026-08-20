@@ -10,9 +10,9 @@ describe("first-party provider migration registry", () => {
   });
 
   it("marks executable migrations as partial until oracle parity", () => {
-    expect(FIRST_PARTY_PROVIDERS).toHaveLength(68);
-    expect(PROVIDERS.filter((provider) => provider.status === "partial")).toHaveLength(68);
-    expect(new Set(FIRST_PARTY_PROVIDERS.map((provider) => provider.id))).toHaveLength(68);
+    expect(FIRST_PARTY_PROVIDERS).toHaveLength(69);
+    expect(PROVIDERS.filter((provider) => provider.status === "partial")).toHaveLength(69);
+    expect(new Set(FIRST_PARTY_PROVIDERS.map((provider) => provider.id))).toHaveLength(69);
   });
 
   it("does not silently give unported providers an executable strategy", () => {

@@ -43,6 +43,19 @@ export interface ProviderContext {
     get(url: string, options?: Record<string, unknown>): Promise<ProviderResponse>;
     getJSON(url: string, options?: Record<string, unknown>): Promise<ProviderJSONResponse>;
     postJSON(url: string, options?: Record<string, unknown>): Promise<ProviderJSONResponse>;
+    /**
+     * Bounded binary POST used only by non-JSON upstream protocols such as
+     * gRPC-web.  Providers never receive a general transport or `fetch`.
+     * Optional so parser-only test contexts do not gain privileged behavior.
+     */
+    postBinary?(
+      url: string,
+      options: {
+        readonly body: Uint8Array;
+        readonly headers?: Readonly<Record<string, string>>;
+        readonly timeoutSeconds?: number;
+      },
+    ): Promise<ProviderBinaryResponse>;
   };
   readonly browser: { cookieHeader(domain: string): Promise<string> };
   /** Omitted in direct parser tests; composed runtimes always provide a fail-closed broker. */
@@ -74,6 +87,12 @@ export interface ProviderResponse {
 
 export interface ProviderJSONResponse extends ProviderResponse {
   readonly json: any;
+}
+
+export interface ProviderBinaryResponse {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: Uint8Array;
 }
 
 export type ProviderSnapshot = Record<string, unknown>;

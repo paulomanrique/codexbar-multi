@@ -17,6 +17,7 @@ import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import { mapProviderSnapshot } from "@codexbar/providers";
 import type {
   FirstPartyProvider,
+  ProviderBinaryResponse,
   ProviderContext,
   ProviderDescriptor,
   ProviderJSONResponse,
@@ -311,6 +312,18 @@ const asProviderResponse = (response: HttpResponse): ProviderResponse => ({
   bodyText: text(response.body),
 });
 
+const asProviderBinaryResponse = (response: HttpResponse): ProviderBinaryResponse => {
+  if (!(response.body instanceof Uint8Array) || response.body.byteLength > maximumResponseBytes) {
+    throw failure("api-failure", "Provider binary response is invalid or exceeds 1 MiB");
+  }
+  return {
+    status: response.status,
+    headers: response.headers,
+    // The transport retains no mutable buffer shared with a provider.
+    body: response.body.slice(),
+  };
+};
+
 const localFor = (
   providerId: ProviderId,
   local: FirstPartyLocalCapabilities | undefined,
@@ -532,6 +545,48 @@ const executeProvider = (
             (await request("GET", url, requestOptions, true)) as ProviderJSONResponse,
           postJSON: async (url, requestOptions) =>
             (await request("POST", url, requestOptions, true)) as ProviderJSONResponse,
+          postBinary: async (rawUrl, requestOptions) => {
+            if (!(requestOptions.body instanceof Uint8Array)) {
+              throw failure("api-failure", "Provider binary request body must be a Uint8Array");
+            }
+            if (requestOptions.body.byteLength > maximumResponseBytes) {
+              throw failure("api-failure", "Provider binary request body exceeds 1 MiB");
+            }
+            const url = new URL(rawUrl);
+            if (!endpointAllowed(url, origins)) {
+              throw failure("api-failure", `Provider endpoint is not declared: ${url.origin}`);
+            }
+            const headers = headersFrom(requestOptions.headers);
+            const auth = descriptor.auth;
+            if (auth !== undefined) {
+              const secret = secrets.get(auth.secret) ?? settings.get(auth.secret);
+              if (secret === undefined || secret === "") {
+                throw failure("missing-credential", `Missing credential ${auth.secret}`);
+              }
+              const managedHeader = authorizationHeader(descriptor, secret);
+              if (managedHeader !== undefined) {
+                const [name, value] = managedHeader;
+                withoutHeader(headers, name);
+                headers[name] = value;
+              }
+            }
+            return asProviderBinaryResponse(
+              await Effect.runPromise(
+                options.http.execute({
+                  url: url.href,
+                  method: "POST",
+                  headers,
+                  timeoutMs: timeoutFrom(
+                    requestOptions.timeoutSeconds === undefined
+                      ? {}
+                      : { timeoutSeconds: requestOptions.timeoutSeconds },
+                  ),
+                  body: requestOptions.body.slice(),
+                }),
+                { signal: operationSignal },
+              ),
+            );
+          },
         },
         browser: {
           cookieHeader: async (domain) => {

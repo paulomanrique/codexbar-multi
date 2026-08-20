@@ -526,4 +526,77 @@ describe("first-party refresh runtime", () => {
     await run("Not/AZone");
     expect(observed).toEqual(["America/Sao_Paulo", "UTC"]);
   });
+
+  it("bounds raw binary requests and responses before a provider can inspect them", async () => {
+    const probe: FirstPartyProvider = {
+      id: "ibmbob",
+      kind: "api",
+      descriptor: {
+        id: "ibmbob",
+        name: "Binary protocol probe",
+        status: "partial",
+        endpoints: ["https://binary.test"],
+        settings: [],
+      },
+      fetchUsage: async (context) => {
+        await context.http.postBinary!("https://binary.test/usage", {
+          body: new Uint8Array([0, 1, 2]),
+        });
+        return { identity: { loginMethod: "probe" } };
+      },
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+      http: {
+        execute: () =>
+          Effect.succeed({
+            status: 200,
+            headers: {},
+            body: new Uint8Array(1024 * 1024 + 1),
+            url: "https://binary.test/usage",
+          }),
+      },
+    });
+    await expect(
+      Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "api", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+
+    const oversizedRequest: FirstPartyProvider = {
+      ...probe,
+      fetchUsage: async (context) => {
+        await context.http.postBinary!("https://binary.test/usage", {
+          body: new Uint8Array(1024 * 1024 + 1),
+        });
+        return {};
+      },
+    };
+    const requestRuntime = makeFirstPartyProviderRuntime({
+      providers: [oversizedRequest],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+      http: {
+        execute: () =>
+          Effect.fail(new InfrastructureError("http", "must not issue oversized request")),
+      },
+    });
+    await expect(
+      Effect.runPromise(
+        requestRuntime.fetch("ibmbob", { sourceMode: "api", includeCredits: false }),
+      ),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+  });
 });

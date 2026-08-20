@@ -31,6 +31,7 @@ import { elevenlabs } from "./providers/elevenlabs.ts";
 import { factory } from "./providers/factory.ts";
 import { fireworks } from "./providers/fireworks.ts";
 import { gemini } from "./providers/gemini.ts";
+import { grok } from "./providers/grok.ts";
 import { groq } from "./providers/groq.ts";
 import { ibmbob } from "./providers/ibmbob.ts";
 import { jetbrains } from "./providers/jetbrains.ts";
@@ -101,6 +102,7 @@ export const FIRST_PARTY_PROVIDERS = [
   factory,
   fireworks,
   gemini,
+  grok,
   groq,
   ibmbob,
   jetbrains,

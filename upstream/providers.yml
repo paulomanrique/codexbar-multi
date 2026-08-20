@@ -592,7 +592,7 @@ providers:
         - Tests/CodexBarTests/*Amp*Tests.swift
         - TestsLinux/*Amp*Tests.swift
       tsGlobs:
-        - packages/providers/test/local-cli-oauth-providers.test.ts
+        - packages/providers/test/grok-grpc-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Amp/**/*
     tsPaths:
@@ -600,7 +600,7 @@ providers:
       real:
         - packages/providers/src/providers/amp.ts
     tsTestGlobs:
-      - packages/providers/test/local-cli-oauth-providers.test.ts
+      - packages/providers/test/grok-grpc-parity.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

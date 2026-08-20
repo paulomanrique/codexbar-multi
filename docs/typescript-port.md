@@ -39,7 +39,7 @@ Upstream workflows are preserved as inert reference material in `upstream-refere
 
 - Workspace, strict TypeScript configuration, Effect contracts/services, architecture gate, and oracle normalization.
 - Closed 69-provider ID roster and a registry that makes unported entries explicit rather than silently omitting them.
-- TypeScript domain modules now exist for all 69 provider IDs. Sixty-eight have an executable first-party strategy; Amp, Kiro, and JetBrains now use a narrow platform-owned process/private-data broker, while Grok remains a parser/contract module until its RPC adapter is confirmed. Every entry remains `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
+- TypeScript domain modules and executable first-party strategies now exist for all 69 provider IDs. Amp, Kiro, and JetBrains use a narrow platform-owned process/private-data broker; Grok uses the real bounded gRPC-web billing transport. Every entry remains `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
 - A minimal Codex OAuth vertical slice with cross-platform `auth.json` discovery in the CLI composition root and shared `wham/usage` parsing.
 - Swift-compatible UsageSnapshot wire codecs preserve stable null lanes, omission defaults, legacy identity keys, bounded details, ISO dates, and persisted provider enrichments.
 - Shared quota warning, reset boundary/backfill, and linear/workday pace calculations are ported from the Swift decision tables.
