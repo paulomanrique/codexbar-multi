@@ -60,7 +60,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Cover process recreation, CPU/memory/output limits, approval drift, capability isolation, cache, sync settings, and IANA/DST behavior.
 - [x] Connect schema-validated list/install/approval-preview/approve/test/remove IPC without exposing paths or source to the renderer.
 - [x] Validate plugin test snapshots with the bounded upstream-compatible mapper before IPC.
-- [ ] Persist plugin snapshots, edit secrets through explicit keyring-only IPC, compose browser sessions, and remove associated config/secrets/history.
+- [x] Add write/clear-only keyring IPC for declared plugin secrets and clear them during removal.
+- [ ] Persist plugin snapshots, compose browser sessions, and remove associated config/history.
 - [ ] Port the complete upstream plugin suite.
 
 ## Milestones 5–7 — remaining providers
