@@ -606,19 +606,22 @@ providers:
   - id: ollama
     swiftGlobs:
       - Sources/CodexBar/Providers/Ollama/**/*.swift
+      - Sources/CodexBarCore/Providers/Ollama/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Ollama*Tests.swift
         - TestsLinux/*Ollama*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Ollama/**/*
     tsPaths:
       expected: [packages/providers/src/providers/ollama.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/ollama.ts
+    tsTestGlobs:
+      - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: synthetic
@@ -704,19 +707,22 @@ providers:
   - id: windsurf
     swiftGlobs:
       - Sources/CodexBar/Providers/Windsurf/**/*.swift
+      - Sources/CodexBarCore/Providers/Windsurf/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Windsurf*Tests.swift
         - TestsLinux/*Windsurf*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Windsurf/**/*
     tsPaths:
       expected: [packages/providers/src/providers/windsurf.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/windsurf.ts
+    tsTestGlobs:
+      - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: zed
@@ -761,19 +767,22 @@ providers:
   - id: mimo
     swiftGlobs:
       - Sources/CodexBar/Providers/MiMo/**/*.swift
+      - Sources/CodexBarCore/Providers/MiMo/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*MiMo*Tests.swift
         - TestsLinux/*MiMo*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/MiMo/**/*
     tsPaths:
       expected: [packages/providers/src/providers/mimo.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/mimo.ts
+    tsTestGlobs:
+      - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: doubao
@@ -799,55 +808,64 @@ providers:
   - id: sakana
     swiftGlobs:
       - Sources/CodexBar/Providers/Sakana/**/*.swift
+      - Sources/CodexBarCore/Providers/Sakana/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Sakana*Tests.swift
         - TestsLinux/*Sakana*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Sakana/**/*
     tsPaths:
       expected: [packages/providers/src/providers/sakana.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/sakana.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-d.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: abacus
     swiftGlobs:
       - Sources/CodexBar/Providers/Abacus/**/*.swift
+      - Sources/CodexBarCore/Providers/Abacus/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Abacus*Tests.swift
         - TestsLinux/*Abacus*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Abacus/**/*
     tsPaths:
       expected: [packages/providers/src/providers/abacus.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/abacus.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-d.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: mistral
     swiftGlobs:
       - Sources/CodexBar/Providers/Mistral/**/*.swift
+      - Sources/CodexBarCore/Providers/Mistral/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Mistral*Tests.swift
         - TestsLinux/*Mistral*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Mistral/**/*
     tsPaths:
       expected: [packages/providers/src/providers/mistral.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/mistral.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-d.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: deepseek

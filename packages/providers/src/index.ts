@@ -4,6 +4,7 @@ export * from "./snapshot-mapper.ts";
 
 import { installProviderRegistry, PROVIDER_REGISTRY } from "./registry.ts";
 import { aiand } from "./providers/aiand.ts";
+import { abacus } from "./providers/abacus.ts";
 import { alibaba } from "./providers/alibaba.ts";
 import { alibabatokenplan } from "./providers/alibabatokenplan.ts";
 import { azureopenai } from "./providers/azureopenai.ts";
@@ -31,10 +32,13 @@ import { kimi } from "./providers/kimi.ts";
 import { llmproxy } from "./providers/llmproxy.ts";
 import { litellm } from "./providers/litellm.ts";
 import { manus } from "./providers/manus.ts";
+import { mimo } from "./providers/mimo.ts";
+import { mistral } from "./providers/mistral.ts";
 import { moonshot } from "./providers/moonshot.ts";
 import { minimax } from "./providers/minimax.ts";
 import { neuralwatt } from "./providers/neuralwatt.ts";
 import { openai } from "./providers/openai.ts";
+import { ollama } from "./providers/ollama.ts";
 import { opencode } from "./providers/opencode.ts";
 import { opencodego } from "./providers/opencodego.ts";
 import { openrouter } from "./providers/openrouter.ts";
@@ -42,11 +46,13 @@ import { perplexity } from "./providers/perplexity.ts";
 import { poe } from "./providers/poe.ts";
 import { qoder } from "./providers/qoder.ts";
 import { qwencloud } from "./providers/qwencloud.ts";
+import { sakana } from "./providers/sakana.ts";
 import { sub2api } from "./providers/sub2api.ts";
 import { synthetic } from "./providers/synthetic.ts";
 import { t3chat } from "./providers/t3chat.ts";
 import { venice } from "./providers/venice.ts";
 import { vertexai } from "./providers/vertexai.ts";
+import { windsurf } from "./providers/windsurf.ts";
 import { xai } from "./providers/xai.ts";
 import { zai } from "./providers/zai.ts";
 import { warp } from "./providers/warp.ts";
@@ -55,6 +61,7 @@ import { zenmux } from "./providers/zenmux.ts";
 
 export const FIRST_PARTY_PROVIDERS = [
   codex,
+  abacus,
   aiand,
   alibaba,
   alibabatokenplan,
@@ -82,10 +89,13 @@ export const FIRST_PARTY_PROVIDERS = [
   llmproxy,
   litellm,
   manus,
+  mimo,
+  mistral,
   moonshot,
   minimax,
   neuralwatt,
   openai,
+  ollama,
   opencode,
   opencodego,
   openrouter,
@@ -93,11 +103,13 @@ export const FIRST_PARTY_PROVIDERS = [
   poe,
   qoder,
   qwencloud,
+  sakana,
   sub2api,
   synthetic,
   t3chat,
   venice,
   vertexai,
+  windsurf,
   warp,
   wayfinder,
   xai,
@@ -110,6 +122,7 @@ export { PROVIDER_REGISTRY };
 export const PROVIDER_DESCRIPTORS = PROVIDER_REGISTRY;
 
 export { clawrouter } from "./providers/clawrouter.ts";
+export { abacus } from "./providers/abacus.ts";
 export { aiand } from "./providers/aiand.ts";
 export { alibaba } from "./providers/alibaba.ts";
 export { alibabatokenplan } from "./providers/alibabatokenplan.ts";
@@ -137,10 +150,13 @@ export { kimi } from "./providers/kimi.ts";
 export { llmproxy } from "./providers/llmproxy.ts";
 export { litellm } from "./providers/litellm.ts";
 export { manus } from "./providers/manus.ts";
+export { mimo } from "./providers/mimo.ts";
+export { mistral } from "./providers/mistral.ts";
 export { moonshot } from "./providers/moonshot.ts";
 export { minimax } from "./providers/minimax.ts";
 export { neuralwatt } from "./providers/neuralwatt.ts";
 export { openai } from "./providers/openai.ts";
+export { ollama } from "./providers/ollama.ts";
 export { opencode } from "./providers/opencode.ts";
 export { opencodego } from "./providers/opencodego.ts";
 export { openrouter } from "./providers/openrouter.ts";
@@ -148,11 +164,13 @@ export { perplexity } from "./providers/perplexity.ts";
 export { poe } from "./providers/poe.ts";
 export { qoder } from "./providers/qoder.ts";
 export { qwencloud } from "./providers/qwencloud.ts";
+export { sakana } from "./providers/sakana.ts";
 export { sub2api } from "./providers/sub2api.ts";
 export { synthetic } from "./providers/synthetic.ts";
 export { t3chat } from "./providers/t3chat.ts";
 export { venice } from "./providers/venice.ts";
 export { vertexai } from "./providers/vertexai.ts";
+export { windsurf } from "./providers/windsurf.ts";
 export { warp } from "./providers/warp.ts";
 export { wayfinder } from "./providers/wayfinder.ts";
 export { xai } from "./providers/xai.ts";
