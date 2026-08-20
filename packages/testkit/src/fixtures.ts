@@ -13,6 +13,15 @@ export type FixtureManifestEntry = {
 export type FixtureManifest = {
   readonly version: number;
   readonly baseline: { readonly repository: string; readonly commit: string };
+  /** Fixed, offline bridge operations. `partial` is never evidence of provider parity by itself. */
+  readonly oracleCases?: readonly {
+    readonly id: string;
+    readonly swiftTarget: "CodexBarOracle";
+    readonly fixture: string;
+    readonly tsTest: string;
+    readonly providers?: readonly ProviderId[];
+    readonly status: "partial" | "parity";
+  }[];
   readonly entries: readonly FixtureManifestEntry[];
   readonly policy: {
     readonly allowNetwork: false;
@@ -39,6 +48,20 @@ export function validateFixtureManifest(manifest: FixtureManifest): void {
         throw new Error(`Unknown fixture provider: ${provider}`);
     }
     seen.add(fixture.id);
+  }
+  const seenOracleCases = new Set<string>();
+  for (const oracleCase of manifest.oracleCases ?? []) {
+    if (seenOracleCases.has(oracleCase.id))
+      throw new Error(`Duplicate oracle case: ${oracleCase.id}`);
+    if (!oracleCase.fixture.startsWith("Tests/") || oracleCase.fixture.includes(".."))
+      throw new Error(`Unsafe oracle fixture: ${oracleCase.id}`);
+    if (oracleCase.swiftTarget !== "CodexBarOracle")
+      throw new Error(`Unexpected Swift oracle target: ${oracleCase.id}`);
+    for (const provider of oracleCase.providers ?? []) {
+      if (!PROVIDER_IDS.includes(provider))
+        throw new Error(`Unknown oracle-case provider: ${provider}`);
+    }
+    seenOracleCases.add(oracleCase.id);
   }
 }
 

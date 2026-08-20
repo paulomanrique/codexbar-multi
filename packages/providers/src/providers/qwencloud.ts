@@ -165,7 +165,7 @@ const legacySnapshot = (ctx: ProviderContext, payload: unknown) => {
           },
         }
       : {}),
-    identity: { loginMethod: planName(expanded) ?? "Token Plan" },
+    identity: { loginMethod: planName(expanded) ?? "TOKEN PLAN" },
   };
 };
 

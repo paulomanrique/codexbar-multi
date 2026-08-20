@@ -347,6 +347,9 @@ importers:
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
+      '@codexbar/providers':
+        specifier: workspace:*
+        version: link:../providers
       '@effect/vitest':
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(effect@4.0.0-beta.103)

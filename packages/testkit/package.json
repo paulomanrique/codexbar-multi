@@ -17,6 +17,7 @@
     "@codexbar/contracts": "workspace:*"
   },
   "devDependencies": {
+    "@codexbar/providers": "workspace:*",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "typescript": "catalog:",

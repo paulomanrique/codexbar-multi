@@ -10,6 +10,23 @@
     "requiredShape": "provider-response",
     "notes": "Counts are a reviewed inventory of checked-in oracle fixtures; they are not live-provider probes."
   },
+  "oracleCases": [
+    {
+      "id": "snapshot-serialization",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/usage-snapshot-current.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "status": "parity"
+    },
+    {
+      "id": "qwencloud-flat-subscription",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/QwenCloud/flat_subscription_summary.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["qwencloud"],
+      "status": "parity"
+    }
+  ],
   "entries": [
     {
       "id": "provider-response-fixtures",

@@ -28,6 +28,7 @@ let package = Package(
         var products: [Product] = [
             .library(name: "CodexBarCore", targets: ["CodexBarCore"]),
             .executable(name: "CodexBarCLI", targets: ["CodexBarCLI"]),
+            .executable(name: "CodexBarOracle", targets: ["CodexBarOracle"]),
             // Offline adaptive-refresh replay harness. Keep the supporting library package-internal.
             .executable(name: "AdaptiveReplayCLI", targets: ["AdaptiveReplayCLI"]),
         ]
@@ -98,6 +99,18 @@ let package = Package(
                     .product(name: "Crypto", package: "swift-crypto"),
                 ],
                 path: "Sources/CodexBarCLI",
+                swiftSettings: [
+                    .enableUpcomingFeature("StrictConcurrency"),
+                ],
+                linkerSettings: sqlite3LinkerSettings),
+            // Deliberately tiny, offline-only bridge used by the TypeScript parity gate. It
+            // exposes a fixed allowlist of checked-in fixtures through the real CodexBarCore
+            // Codable/parser implementations; it has no command that can probe providers,
+            // discover credentials, or accept arbitrary filesystem paths.
+            .executableTarget(
+                name: "CodexBarOracle",
+                dependencies: ["CodexBarCore"],
+                path: "Sources/CodexBarOracle",
                 swiftSettings: [
                     .enableUpcomingFeature("StrictConcurrency"),
                 ],
