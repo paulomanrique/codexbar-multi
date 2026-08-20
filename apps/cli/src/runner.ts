@@ -27,10 +27,7 @@ import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config
 import { resolveCLIConfigPath } from "./config-path.ts";
 import { runCost, type CLICostStore } from "./cost.ts";
 import { runCards } from "./cards.ts";
-import { runCache, type CLICacheStore } from "./cache.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
-import { runDashboard } from "./dashboard.ts";
-import { runDiagnose } from "./diagnose.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
 export const CLIExitCode = {
@@ -67,7 +64,6 @@ export interface CLIProviderRuntime {
   /** Optional in-memory/host-injected configuration store used by `config`. */
   readonly config?: CLIConfigStore;
   readonly costs?: CLICostStore;
-  readonly cache?: CLICacheStore;
   readonly now?: () => number;
 }
 
@@ -526,9 +522,6 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
           },
     );
   if (command === "cards") return runCards(raw.slice(1), options.io, options.runtime);
-  if (command === "dashboard") return runDashboard(raw.slice(1), options.io, options.runtime);
-  if (command === "diagnose") return runDiagnose(raw.slice(1), options.io, options.runtime);
-  if (command === "cache") return runCache(raw.slice(1), options.io, options.runtime);
   if (command === "config")
     return runConfig(
       raw.slice(1),
