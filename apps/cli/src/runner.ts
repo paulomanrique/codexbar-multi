@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { dirname, join } from "node:path";
 import {
   ClassifiedFetchFailure,
   InfrastructureError,
@@ -17,11 +18,14 @@ import {
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeConfigRepository,
+  makeNodeSqlitePersistence,
   makeSystemClock,
+  type NodeSqlitePersistence,
 } from "@codexbar/platform/node";
 import { discoverCodexCredential } from "./codex-credential.ts";
 import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config.ts";
 import { resolveCLIConfigPath } from "./config-path.ts";
+import { runCost, type CLICostStore } from "./cost.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
@@ -58,6 +62,8 @@ export interface CLIProviderRuntime {
   ) => Promise<ProviderFetchOutcome>;
   /** Optional in-memory/host-injected configuration store used by `config`. */
   readonly config?: CLIConfigStore;
+  readonly costs?: CLICostStore;
+  readonly now?: () => number;
 }
 
 export interface CLICommandRunnerOptions {
@@ -502,6 +508,18 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
     return runUsage(raw, options.io, options.runtime);
   if (command === "usage") return runUsage(raw.slice(1), options.io, options.runtime);
   if (command === "providers") return runProviders(raw.slice(1), options.io, options.runtime);
+  if (command === "cost")
+    return runCost(
+      raw.slice(1),
+      options.io,
+      options.runtime.costs === undefined
+        ? undefined
+        : {
+            costs: options.runtime.costs,
+            providers: options.runtime.providers,
+            ...(options.runtime.now === undefined ? {} : { now: options.runtime.now }),
+          },
+    );
   if (command === "config")
     return runConfig(
       raw.slice(1),
@@ -534,6 +552,8 @@ export const makeNodeCLIProviderRuntime = (
 ): CLIProviderRuntime => {
   const configPath = resolveCLIConfigPath(environment);
   const configRepository = makeNodeConfigRepository(configPath);
+  const databasePath = join(dirname(configPath), "usage.sqlite");
+  let costPersistencePromise: Promise<NodeSqlitePersistence> | undefined;
   const credentials = makeNativeCredentialStore();
   const environmentSettings = makeEnvironmentProviderSettings(environment);
   const codexCredential = discoverCodexCredential({ environment });
@@ -570,6 +590,13 @@ export const makeNodeCLIProviderRuntime = (
     })),
     fetch: (providerId, context) => Effect.runPromise(runtime.fetch(providerId, context)),
     config: makeNodeCLIConfigStore(configRepository, configPath),
+    costs: {
+      list: async (providerId, since, limit) => {
+        costPersistencePromise ??= Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+        const persistence = await costPersistencePromise;
+        return Effect.runPromise(persistence.costs.list(providerId, since, limit));
+      },
+    },
   };
 };
 
