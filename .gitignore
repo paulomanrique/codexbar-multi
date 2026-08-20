@@ -10,6 +10,7 @@ xcuserdata/
 DerivedData
 node_modules/
 dist/
+dist-sea/
 dist-electron/
 .vite-plus/
 .codexbar-multi/

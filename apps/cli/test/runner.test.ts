@@ -54,6 +54,14 @@ const capture = (): {
 };
 
 describe("CodexBar Multi CLI runner", () => {
+  it("prints top-level help without initializing a provider request", async () => {
+    const output = capture();
+    const result = await runCLI({ argv: ["--help"], io: output.io, runtime: runtime() });
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    expect(output.stdout[0]).toContain("Usage: codexbar-multi");
+    expect(output.stderr).toEqual([]);
+  });
+
   it("runs implicit usage and retains positional-provider compatibility", async () => {
     const implicit = capture();
     const implicitResult = await runCLI({ argv: ["openai"], io: implicit.io, runtime: runtime() });

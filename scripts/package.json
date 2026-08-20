@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsgo --build --pretty false"
+    "typecheck": "tsgo --build --pretty false",
+    "test": "node --test --experimental-strip-types cli-sea.test.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "postject": "catalog:",
     "typescript": "catalog:"
   }
 }

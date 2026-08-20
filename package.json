@@ -6,6 +6,7 @@
     "build": "vp run -r build",
     "build:desktop": "vp run --filter @codexbar/desktop build",
     "build:cli": "vp run --filter @codexbar/cli build",
+    "build:cli:artifact": "node scripts/build-cli-artifact.ts",
     "typecheck": "vp run -r typecheck",
     "test": "vp run -r test",
     "lint": "vp lint --report-unused-disable-directives apps packages scripts/build-cli-artifact.ts scripts/build-desktop-artifact.ts scripts/check-architecture.ts scripts/local-gate.ts scripts/upstream/accept.ts scripts/upstream/report.ts scripts/package.json scripts/tsconfig.json",

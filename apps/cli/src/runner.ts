@@ -522,6 +522,10 @@ const runUsage = async (
 export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLICommandResult> => {
   const raw = [...options.argv];
   const command = raw[0];
+  if ((command === "--help" || command === "-h" || command === "help") && raw.length === 1) {
+    options.io.stdout(usageHelp);
+    return { exitCode: CLIExitCode.success };
+  }
   if (command === undefined || command.startsWith("-"))
     return runUsage(raw, options.io, options.runtime);
   if (command === "usage") return runUsage(raw.slice(1), options.io, options.runtime);

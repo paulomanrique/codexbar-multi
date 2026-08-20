@@ -52,7 +52,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.
   - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.
-  - [ ] Connect standalone cookie/plugin host adapters, complete serve Web UI/cache parity, and produce Node SEA artifacts.
+  - [ ] Connect standalone cookie/plugin host adapters, complete serve Web UI/cache parity, and produce the remaining Node SEA target matrix.
+  - [x] Produce a host-native Node SEA CLI executable with a verified extracted keyring addon; cross-compilation and release archives remain disabled.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
 - [ ] Connect legacy import UI/CLI and a separately-approved native credential migration.
 
