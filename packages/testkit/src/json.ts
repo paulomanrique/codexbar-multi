@@ -1,3 +1,5 @@
+import { decodeUsageSnapshot, encodeUsageSnapshot } from "@codexbar/contracts";
+
 /** JSON-compatible values used by fixture tests. No filesystem, network, or credential access. */
 export type JsonValue =
   | null
@@ -44,5 +46,21 @@ export function jsonParityEqual(
 ): boolean {
   return (
     JSON.stringify(normalizeJson(left, options)) === JSON.stringify(normalizeJson(right, options))
+  );
+}
+
+/**
+ * Produces the canonical Swift-compatible JSON projection of a usage snapshot.
+ * This deliberately goes through the contracts codec so parity tests catch changes to omission,
+ * null-lane, legacy identity, and date rules instead of comparing arbitrary DTO object shapes.
+ */
+export function normalizeUsageSnapshotJson(value: unknown): JsonValue {
+  return normalizeJson(encodeUsageSnapshot(decodeUsageSnapshot(value)));
+}
+
+export function usageSnapshotParityEqual(left: unknown, right: unknown): boolean {
+  return (
+    JSON.stringify(normalizeUsageSnapshotJson(left)) ===
+    JSON.stringify(normalizeUsageSnapshotJson(right))
   );
 }

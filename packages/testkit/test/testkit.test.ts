@@ -3,8 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   compareWithOracle,
   jsonParityEqual,
+  normalizeJson,
   normalizeJsonText,
+  normalizeUsageSnapshotJson,
   runSwiftOracle,
+  usageSnapshotParityEqual,
   validateFixtureManifest,
   type FixtureManifest,
 } from "../src/index.ts";
@@ -48,5 +51,37 @@ describe("parity testkit", () => {
       equal: true,
       oracle: { accessToken: "[REDACTED]", used: 12 },
     });
+  });
+
+  it("matches the checked-in Swift UsageSnapshot fixture byte-for-byte after canonicalization", async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        new URL(
+          "../../../Tests/CodexBarTests/Fixtures/usage-snapshot-current.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as unknown;
+
+    const fixtureObject = fixture as {
+      primary: Record<string, unknown>;
+    } & Record<string, unknown>;
+    const { resetDescription: _omittedResetDescription, ...canonicalPrimary } =
+      fixtureObject.primary;
+    const expectedCanonical = normalizeJson({
+      ...fixtureObject,
+      primary: canonicalPrimary,
+    });
+    expect(normalizeUsageSnapshotJson(fixture)).toEqual(expectedCanonical);
+    expect(
+      usageSnapshotParityEqual(fixture, {
+        ...fixtureObject,
+        primary: {
+          ...fixtureObject.primary,
+          resetsAt: "2026-08-02T17:00:00.000Z",
+        },
+      }),
+    ).toBe(true);
   });
 });

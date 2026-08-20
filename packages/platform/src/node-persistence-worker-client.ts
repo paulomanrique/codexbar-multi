@@ -21,9 +21,16 @@ type WorkerRequest =
   | {
       readonly version: 1;
       readonly id: string;
+      readonly type: "latest-history";
+      readonly providerId: string;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
       readonly type: "list-history";
       readonly providerId: string;
       readonly since: number;
+      readonly limit?: number;
     }
   | {
       readonly version: 1;
@@ -37,6 +44,7 @@ type WorkerRequest =
       readonly type: "list-cost";
       readonly providerId: string;
       readonly since: number;
+      readonly limit?: number;
     }
   | { readonly version: 1; readonly id: string; readonly type: "close" }
   | { readonly version: 1; readonly id: string; readonly type: "cancel" };
@@ -152,19 +160,26 @@ class NodeSqliteWorkerClient {
   persistence(): NodeSqliteWorkerPersistence {
     const history: HistoryRepositoryService = {
       append: (record) => this.effect("append-history", { record }, "append history record"),
-      list: (providerId, since) =>
-        this.effect("list-history", { providerId, since }, "list history records") as Effect.Effect<
-          ReadonlyArray<HistoryRecord>,
+      latest: (providerId) =>
+        this.effect("latest-history", { providerId }, "get latest history record") as Effect.Effect<
+          HistoryRecord | undefined,
           InfrastructureError
         >,
+      list: (providerId, since, limit) =>
+        this.effect(
+          "list-history",
+          { providerId, since, ...(limit === undefined ? {} : { limit }) },
+          "list history records",
+        ) as Effect.Effect<ReadonlyArray<HistoryRecord>, InfrastructureError>,
     };
     const costs: CostUsageRepositoryService = {
       append: (record) => this.effect("append-cost", { record }, "append cost usage record"),
-      list: (providerId, since) =>
-        this.effect("list-cost", { providerId, since }, "list cost usage records") as Effect.Effect<
-          ReadonlyArray<CostUsageRecord>,
-          InfrastructureError
-        >,
+      list: (providerId, since, limit) =>
+        this.effect(
+          "list-cost",
+          { providerId, since, ...(limit === undefined ? {} : { limit }) },
+          "list cost usage records",
+        ) as Effect.Effect<ReadonlyArray<CostUsageRecord>, InfrastructureError>,
     };
     return { history, costs, close: this.close() };
   }
@@ -284,11 +299,18 @@ class NodeSqliteWorkerClient {
   }
 }
 
-type RequestType = "append-history" | "list-history" | "append-cost" | "list-cost" | "close";
+type RequestType =
+  | "append-history"
+  | "latest-history"
+  | "list-history"
+  | "append-cost"
+  | "list-cost"
+  | "close";
 type RequestPayload =
   | { readonly record: HistoryRecord }
   | { readonly record: CostUsageRecord }
-  | { readonly providerId: string; readonly since: number }
+  | { readonly providerId: string }
+  | { readonly providerId: string; readonly since: number; readonly limit?: number }
   | Record<never, never>;
 
 interface PendingRequest {

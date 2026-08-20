@@ -19,8 +19,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add platform-independent core capabilities and classified fetch/fallback pipeline.
 - [x] Add canonical fixture normalization and a bounded Swift-oracle runner.
 - [x] Port the adaptive refresh decision table and its Swift boundary cases.
-- [ ] Complete snapshot serialization parity against Swift goldens.
-- [ ] Port quota/reset, pace, cost, history, and config migration behavior.
+- [x] Complete snapshot serialization parity against the checked-in Swift golden and preserve legacy identity keys.
+- [x] Port quota warnings, reset backfill/boundaries, and linear/workday pace behavior.
+- [ ] Port full cost scanning, history retention, and config migration behavior.
 
 ## Milestone 2 — first vertical slice
 
@@ -31,13 +32,14 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add the first `codexbar-multi usage` CLI path.
 - [x] Add native keyring-backed credentials with explicit failure and no plaintext fallback.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
-- [ ] Add desktop history/cost APIs and persisted overview snapshots.
+- [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.
+- [ ] Wire provider refresh results into persisted overview/history records.
 - [ ] Run native smoke tests on Windows, Linux, and macOS.
 
 ## Milestone 3 — core, persistence, CLI, and legacy import
 
 - [x] Add the SQLite worker, migrations, concurrency, backup, lock, and failure tests.
-- [ ] Complete retention/export/pruning policies and full crash/disk-full parity tests.
+- [ ] Complete retention/pruning policies and full crash/disk-full parity tests.
 - [ ] Complete atomic config/history JSON persistence and migrations.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.

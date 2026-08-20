@@ -218,9 +218,14 @@ export interface HistoryRecord {
 
 export interface HistoryRepositoryService {
   readonly append: (record: HistoryRecord) => Effect.Effect<void, InfrastructureError>;
+  /** Constant-size lookup for overview composition; history remains append-only. */
+  readonly latest: (
+    providerId: ProviderId,
+  ) => Effect.Effect<HistoryRecord | undefined, InfrastructureError>;
   readonly list: (
     providerId: ProviderId,
     since: number,
+    limit?: number,
   ) => Effect.Effect<ReadonlyArray<HistoryRecord>, InfrastructureError>;
 }
 export const HistoryRepository = Context.Service<HistoryRepositoryService>(
@@ -240,6 +245,7 @@ export interface CostUsageRepositoryService {
   readonly list: (
     providerId: ProviderId,
     since: number,
+    limit?: number,
   ) => Effect.Effect<ReadonlyArray<CostUsageRecord>, InfrastructureError>;
 }
 export const CostUsageRepository = Context.Service<CostUsageRepositoryService>(

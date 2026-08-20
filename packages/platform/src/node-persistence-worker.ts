@@ -21,9 +21,16 @@ type WorkerRequest =
   | {
       readonly version: 1;
       readonly id: string;
+      readonly type: "latest-history";
+      readonly providerId: string;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
       readonly type: "list-history";
       readonly providerId: string;
       readonly since: number;
+      readonly limit?: number;
     }
   | {
       readonly version: 1;
@@ -37,6 +44,7 @@ type WorkerRequest =
       readonly type: "list-cost";
       readonly providerId: string;
       readonly since: number;
+      readonly limit?: number;
     }
   | { readonly version: 1; readonly id: string; readonly type: "close" }
   | { readonly version: 1; readonly id: string; readonly type: "cancel" };
@@ -100,6 +108,7 @@ const isRequest = (value: unknown): value is WorkerRequest => {
     return false;
   return (
     message.type === "append-history" ||
+    message.type === "latest-history" ||
     message.type === "list-history" ||
     message.type === "append-cost" ||
     message.type === "list-cost" ||
@@ -129,15 +138,27 @@ const runRequest = async (request: WorkerRequest): Promise<unknown> => {
   switch (request.type) {
     case "append-history":
       return Effect.runPromise(persistence.history.append(request.record));
+    case "latest-history":
+      return Effect.runPromise(
+        persistence.history.latest(request.providerId as HistoryRecord["providerId"]),
+      );
     case "list-history":
       return Effect.runPromise(
-        persistence.history.list(request.providerId as HistoryRecord["providerId"], request.since),
+        persistence.history.list(
+          request.providerId as HistoryRecord["providerId"],
+          request.since,
+          request.limit,
+        ),
       );
     case "append-cost":
       return Effect.runPromise(persistence.costs.append(request.record));
     case "list-cost":
       return Effect.runPromise(
-        persistence.costs.list(request.providerId as CostUsageRecord["providerId"], request.since),
+        persistence.costs.list(
+          request.providerId as CostUsageRecord["providerId"],
+          request.since,
+          request.limit,
+        ),
       );
     case "close":
       closing = true;

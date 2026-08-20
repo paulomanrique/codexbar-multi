@@ -59,7 +59,7 @@ const definition: ProviderDefinition = {
       return `https://api.openai.com${path}?${query.join("&")}`;
     }
     function ranges() {
-      const today: any = new Date();
+      const today: any = ctx.date.now();
       today.setUTCHours(0, 0, 0, 0);
       let cursor: any = Math.floor(today.getTime() / 1000) - (historyDays - 1) * 86400;
       let remaining: any = historyDays;

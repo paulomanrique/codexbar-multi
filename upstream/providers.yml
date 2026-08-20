@@ -37,20 +37,23 @@ providers:
   - id: openai
     swiftGlobs:
       - Sources/CodexBar/Providers/OpenAI/**/*.swift
+      - Sources/CodexBarCore/Providers/OpenAI/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/openai.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*OpenAI*Tests.swift
         - TestsLinux/*OpenAI*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/vertical-slice-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenAI/**/*
     tsPaths:
       expected: [packages/providers/src/providers/openai.ts]
       real:
         - packages/providers/src/providers/openai.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/vertical-slice-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: azureopenai
@@ -92,6 +95,8 @@ providers:
   - id: clinepass
     swiftGlobs:
       - Sources/CodexBar/Providers/ClinePass/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/clinepass.js
+      - Sources/CodexBarCore/Resources/Plugins/clinepass.ts
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*ClinePass*Tests.swift
@@ -330,6 +335,7 @@ providers:
   - id: zai
     swiftGlobs:
       - Sources/CodexBar/Providers/Zai/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/zai.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Zai*Tests.swift
@@ -367,6 +373,7 @@ providers:
   - id: manus
     swiftGlobs:
       - Sources/CodexBar/Providers/Manus/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/manus.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Manus*Tests.swift
@@ -532,20 +539,23 @@ providers:
   - id: t3chat
     swiftGlobs:
       - Sources/CodexBar/Providers/T3Chat/**/*.swift
+      - Sources/CodexBarCore/Providers/T3Chat/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/t3chat.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*T3Chat*Tests.swift
         - TestsLinux/*T3Chat*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/vertical-slice-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/T3Chat/**/*
     tsPaths:
       expected: [packages/providers/src/providers/t3chat.ts]
       real:
         - packages/providers/src/providers/t3chat.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/vertical-slice-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: ollama
@@ -569,6 +579,7 @@ providers:
   - id: synthetic
     swiftGlobs:
       - Sources/CodexBar/Providers/Synthetic/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/synthetic.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Synthetic*Tests.swift
@@ -588,6 +599,7 @@ providers:
   - id: openrouter
     swiftGlobs:
       - Sources/CodexBar/Providers/OpenRouter/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/openrouter.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*OpenRouter*Tests.swift
@@ -681,6 +693,7 @@ providers:
   - id: perplexity
     swiftGlobs:
       - Sources/CodexBar/Providers/Perplexity/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/perplexity.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Perplexity*Tests.swift
@@ -848,6 +861,8 @@ providers:
   - id: crof
     swiftGlobs:
       - Sources/CodexBar/Providers/Crof/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/crof.js
+      - Sources/CodexBarCore/Resources/Plugins/crof.ts
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Crof*Tests.swift
@@ -867,6 +882,7 @@ providers:
   - id: venice
     swiftGlobs:
       - Sources/CodexBar/Providers/Venice/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/venice.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Venice*Tests.swift
@@ -904,6 +920,7 @@ providers:
   - id: qoder
     swiftGlobs:
       - Sources/CodexBar/Providers/Qoder/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/qoder.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Qoder*Tests.swift
@@ -1034,6 +1051,7 @@ providers:
   - id: deepgram
     swiftGlobs:
       - Sources/CodexBar/Providers/Deepgram/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/deepgram.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Deepgram*Tests.swift
@@ -1053,6 +1071,7 @@ providers:
   - id: poe
     swiftGlobs:
       - Sources/CodexBar/Providers/Poe/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/poe.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Poe*Tests.swift
@@ -1110,6 +1129,7 @@ providers:
   - id: clawrouter
     swiftGlobs:
       - Sources/CodexBar/Providers/ClawRouter/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/clawrouter.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*ClawRouter*Tests.swift
@@ -1147,6 +1167,7 @@ providers:
   - id: sub2api
     swiftGlobs:
       - Sources/CodexBar/Providers/Sub2API/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/sub2api.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Sub2API*Tests.swift
@@ -1239,6 +1260,7 @@ providers:
   - id: xai
     swiftGlobs:
       - Sources/CodexBar/Providers/XAI/**/*.swift
+      - Sources/CodexBarCore/Resources/Plugins/xai.js
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*XAI*Tests.swift

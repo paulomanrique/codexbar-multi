@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { ProviderId, ProviderInstanceId, ProviderSourceMode, ProviderStatus } from "./provider.ts";
 import { ProviderError } from "./errors.ts";
-import { ProviderCost, ProviderIdentity, UsageSnapshot } from "./usage.ts";
+import { ISODateString, ProviderCost, ProviderIdentity, UsageSnapshot } from "./usage.ts";
 
 export const ProviderPayload = Schema.Struct({
   provider: ProviderInstanceId,
@@ -19,9 +19,9 @@ export type ProviderUsageDTO = ProviderPayload;
 export const DashboardWindowDTO = Schema.Struct({
   kind: Schema.String,
   label: Schema.String,
-  usedPercent: Schema.Number,
-  remainingPercent: Schema.Number,
-  resetAt: Schema.optional(Schema.String),
+  usedPercent: Schema.Finite,
+  remainingPercent: Schema.Finite,
+  resetAt: Schema.optional(ISODateString),
 });
 export type DashboardWindowDTO = Schema.Schema.Type<typeof DashboardWindowDTO>;
 
@@ -35,17 +35,81 @@ export const DashboardProviderDTO = Schema.Struct({
   windows: Schema.Array(DashboardWindowDTO),
   cost: Schema.optional(ProviderCost),
   error: Schema.optional(ProviderError),
-  updatedAt: Schema.optional(Schema.String),
+  updatedAt: Schema.optional(ISODateString),
 });
 export type DashboardProviderDTO = Schema.Schema.Type<typeof DashboardProviderDTO>;
 
 export const DashboardSnapshotDTO = Schema.Struct({
-  schemaVersion: Schema.Number,
-  generatedAt: Schema.String,
-  staleAfterSeconds: Schema.Number,
+  schemaVersion: Schema.Literal(1),
+  generatedAt: ISODateString,
+  staleAfterSeconds: Schema.Natural,
   providers: Schema.Array(DashboardProviderDTO),
 });
 export type DashboardSnapshotDTO = Schema.Schema.Type<typeof DashboardSnapshotDTO>;
+
+const TimestampMilliseconds = Schema.Natural;
+const QueryLimit = Schema.Natural.pipe(
+  Schema.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(10_000)),
+);
+
+/** A bounded, provider-scoped history query. Export stays renderer-local; it never writes a file. */
+export const HistoryQueryDTO = Schema.Struct({
+  provider: ProviderId,
+  since: Schema.optional(TimestampMilliseconds),
+  limit: Schema.optional(QueryLimit),
+});
+export type HistoryQueryDTO = Schema.Schema.Type<typeof HistoryQueryDTO>;
+
+export const HistoryRecordDTO = Schema.Struct({
+  providerId: ProviderId,
+  recordedAt: TimestampMilliseconds,
+  snapshot: UsageSnapshot,
+});
+export type HistoryRecordDTO = Schema.Schema.Type<typeof HistoryRecordDTO>;
+
+export const HistoryQueryResultDTO = Schema.Struct({
+  records: Schema.Array(HistoryRecordDTO).pipe(Schema.check(Schema.isMaxLength(10_000))),
+  truncated: Schema.Boolean,
+});
+export type HistoryQueryResultDTO = Schema.Schema.Type<typeof HistoryQueryResultDTO>;
+
+export const HistoryExportDTO = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  exportedAt: ISODateString,
+  records: Schema.Array(HistoryRecordDTO).pipe(Schema.check(Schema.isMaxLength(10_000))),
+  truncated: Schema.Boolean,
+});
+export type HistoryExportDTO = Schema.Schema.Type<typeof HistoryExportDTO>;
+
+export const CostUsageRecordDTO = Schema.Struct({
+  providerId: ProviderId,
+  recordedAt: TimestampMilliseconds,
+  inputTokens: Schema.Natural,
+  outputTokens: Schema.Natural,
+  costUsd: Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type CostUsageRecordDTO = Schema.Schema.Type<typeof CostUsageRecordDTO>;
+
+export const CostUsageQueryDTO = Schema.Struct({
+  provider: ProviderId,
+  since: Schema.optional(TimestampMilliseconds),
+  limit: Schema.optional(QueryLimit),
+});
+export type CostUsageQueryDTO = Schema.Schema.Type<typeof CostUsageQueryDTO>;
+
+export const CostUsageQueryResultDTO = Schema.Struct({
+  records: Schema.Array(CostUsageRecordDTO).pipe(Schema.check(Schema.isMaxLength(10_000))),
+  truncated: Schema.Boolean,
+});
+export type CostUsageQueryResultDTO = Schema.Schema.Type<typeof CostUsageQueryResultDTO>;
+
+export const CostUsageExportDTO = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  exportedAt: ISODateString,
+  records: Schema.Array(CostUsageRecordDTO).pipe(Schema.check(Schema.isMaxLength(10_000))),
+  truncated: Schema.Boolean,
+});
+export type CostUsageExportDTO = Schema.Schema.Type<typeof CostUsageExportDTO>;
 
 export const LoginRequestDTO = Schema.Struct({
   provider: ProviderId,
@@ -62,6 +126,10 @@ export type LoginResultDTO = Schema.Schema.Type<typeof LoginResultDTO>;
 
 export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-usage"), provider: Schema.optional(ProviderId) }),
+  Schema.Struct({ type: Schema.Literal("get-history"), query: HistoryQueryDTO }),
+  Schema.Struct({ type: Schema.Literal("export-history"), query: HistoryQueryDTO }),
+  Schema.Struct({ type: Schema.Literal("get-costs"), query: CostUsageQueryDTO }),
+  Schema.Struct({ type: Schema.Literal("export-costs"), query: CostUsageQueryDTO }),
   Schema.Struct({ type: Schema.Literal("get-config") }),
   Schema.Struct({
     type: Schema.Literal("set-provider-enabled"),
@@ -77,6 +145,10 @@ export type IPCRequest = Schema.Schema.Type<typeof IPCRequest>;
 export const IPCResponse = Schema.Union([
   Schema.Struct({ type: Schema.Literal("usage"), payload: ProviderPayload }),
   Schema.Struct({ type: Schema.Literal("dashboard"), payload: DashboardSnapshotDTO }),
+  Schema.Struct({ type: Schema.Literal("history"), payload: HistoryQueryResultDTO }),
+  Schema.Struct({ type: Schema.Literal("history-export"), payload: HistoryExportDTO }),
+  Schema.Struct({ type: Schema.Literal("costs"), payload: CostUsageQueryResultDTO }),
+  Schema.Struct({ type: Schema.Literal("costs-export"), payload: CostUsageExportDTO }),
   Schema.Struct({ type: Schema.Literal("config"), payload: Schema.Unknown }),
   Schema.Struct({ type: Schema.Literal("error"), error: ProviderError }),
 ]);

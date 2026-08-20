@@ -15,11 +15,13 @@ components:
     tsPaths:
       - packages/contracts/src/usage.ts
       - packages/contracts/src/provider.ts
+      - packages/testkit/src/json.ts
     tests:
       - Tests/CodexBarTests/UsageSnapshotTests.swift
       - Tests/CodexBarTests/ProviderDetailSectionTests.swift
       - TestsLinux/*UsageSnapshot*Tests.swift
       - packages/contracts/test/*.test.ts
+      - packages/testkit/test/testkit.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
       - Tests/CodexBarTests/Fixtures/Providers/**/*.json
@@ -60,6 +62,30 @@ components:
       - packages/core/test/provider-fetch-pipeline.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: quota-reset-pace
+    description: Quota warning transitions, reset backfill/boundaries and linear/workday pace calculations.
+    swiftGlobs:
+      - Sources/CodexBarCore/UsagePace.swift
+      - Sources/CodexBarCore/UsageFetcher.swift
+      - Sources/CodexBar/UsageStore+HistoricalPace.swift
+      - Sources/CodexBar/UsageStore+ResetBoundaryRefresh.swift
+      - Sources/CodexBar/UsageStore+LimitResetBoundary.swift
+      - Sources/CodexBar/UsageStore+QuotaWarnings.swift
+      - Sources/CodexBar/SessionQuotaNotifications.swift
+    tsPaths:
+      - packages/core/src/quota.ts
+      - packages/core/src/reset.ts
+      - packages/core/src/usage-pace.ts
+    tests:
+      - Tests/CodexBarTests/UsagePaceTests.swift
+      - Tests/CodexBarTests/ResetTimeBackfillTests.swift
+      - Tests/CodexBarTests/UsageStoreResetBoundaryRefreshTests.swift
+      - Tests/CodexBarTests/RateWindowSyntheticPlaceholderTests.swift
+      - packages/core/test/quota-reset-pace.test.ts
+    fixtures: []
     status: partial
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
 
@@ -113,10 +139,14 @@ components:
       - packages/core/src/services.ts
       - packages/contracts/src/usage.ts
       - packages/platform/src/**/*.ts
+      - apps/desktop/src/main/history-api.ts
+      - apps/desktop/src/main/overview.ts
     tests:
       - Tests/CodexBarTests/CostUsage*Tests.swift
       - Tests/CodexBarTests/SpendDashboard*Tests.swift
       - Tests/CodexBarTests/Issue2037*Tests.swift
+      - packages/platform/test/node-persistence*.test.ts
+      - apps/desktop/test/history-api.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/CostUsage/**/*.json
       - Tests/CodexBarTests/Fixtures/CostUsage/**/*.jsonl

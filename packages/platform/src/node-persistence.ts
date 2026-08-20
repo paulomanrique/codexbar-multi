@@ -238,15 +238,28 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
             .run(record.providerId, record.recordedAt, snapshotJson);
         });
       }),
-    list: (providerId, since) =>
-      queuedSqlite(queue, "list history records", () =>
-        database
+    latest: (providerId) =>
+      queuedSqlite(queue, "get latest history record", () => {
+        assertProviderId(providerId);
+        const row = database
           .prepare(
-            "SELECT provider_id, recorded_at, snapshot_json FROM history_records WHERE provider_id = ? AND recorded_at >= ? ORDER BY recorded_at, id",
+            "SELECT provider_id, recorded_at, snapshot_json FROM history_records WHERE provider_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1",
           )
-          .all(providerId, since)
-          .map(decodeHistoryRecord),
-      ),
+          .get(providerId);
+        return row === undefined ? undefined : decodeHistoryRecord(row as Record<string, unknown>);
+      }),
+    list: (providerId, since, limit) =>
+      queuedSqlite(queue, "list history records", () => {
+        assertProviderId(providerId);
+        assertListBounds(since, limit);
+        return queryRows(
+          database,
+          "SELECT provider_id, recorded_at, snapshot_json FROM history_records WHERE provider_id = ? AND recorded_at >= ? ORDER BY recorded_at, id",
+          providerId,
+          since,
+          limit,
+        ).map(decodeHistoryRecord);
+      }),
   };
   const costs: CostUsageRepositoryService = {
     append: (record) =>
@@ -267,15 +280,18 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
             );
         });
       }),
-    list: (providerId, since) =>
-      queuedSqlite(queue, "list cost usage records", () =>
-        database
-          .prepare(
-            "SELECT provider_id, recorded_at, input_tokens, output_tokens, cost_usd FROM cost_usage_records WHERE provider_id = ? AND recorded_at >= ? ORDER BY recorded_at, id",
-          )
-          .all(providerId, since)
-          .map(decodeCostUsageRecord),
-      ),
+    list: (providerId, since, limit) =>
+      queuedSqlite(queue, "list cost usage records", () => {
+        assertProviderId(providerId);
+        assertListBounds(since, limit);
+        return queryRows(
+          database,
+          "SELECT provider_id, recorded_at, input_tokens, output_tokens, cost_usd FROM cost_usage_records WHERE provider_id = ? AND recorded_at >= ? ORDER BY recorded_at, id",
+          providerId,
+          since,
+          limit,
+        ).map(decodeCostUsageRecord);
+      }),
   };
 
   return {
@@ -344,21 +360,43 @@ const decodeCostUsageRecord = (row: Record<string, unknown>): CostUsageRecord =>
 
 const assertCostUsageRecord = (record: CostUsageRecord): void => {
   assertProviderId(record.providerId);
-  for (const [name, value] of Object.entries({
-    recordedAt: record.recordedAt,
-    inputTokens: record.inputTokens,
-    outputTokens: record.outputTokens,
-    costUsd: record.costUsd,
-  })) {
-    if (!Number.isFinite(value)) throw new Error(`${name} must be a finite number`);
+  assertNatural(record.recordedAt, "recordedAt");
+  assertNatural(record.inputTokens, "inputTokens");
+  assertNatural(record.outputTokens, "outputTokens");
+  if (!Number.isFinite(record.costUsd) || record.costUsd < 0) {
+    throw new Error("costUsd must be a non-negative finite number");
   }
 };
 
 const assertHistoryRecord = (record: HistoryRecord): void => {
   assertProviderId(record.providerId);
-  if (!Number.isFinite(record.recordedAt)) throw new Error("recordedAt must be a finite number");
+  assertNatural(record.recordedAt, "recordedAt");
   Schema.decodeUnknownSync(UsageSnapshot)(record.snapshot);
 };
+
+const assertListBounds = (since: number, limit: number | undefined): void => {
+  assertNatural(since, "since");
+  if (limit !== undefined) assertNatural(limit, "limit");
+};
+
+const assertNatural = (value: number, name: string): void => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+};
+
+const queryRows = (
+  database: DatabaseSync,
+  query: string,
+  providerId: string,
+  since: number,
+  limit: number | undefined,
+): Array<Record<string, unknown>> =>
+  limit === undefined
+    ? (database.prepare(query).all(providerId, since) as Array<Record<string, unknown>>)
+    : (database.prepare(`${query} LIMIT ?`).all(providerId, since, limit) as Array<
+        Record<string, unknown>
+      >);
 
 const assertProviderId = (providerId: string): void => {
   Schema.decodeUnknownSync(ProviderId)(providerId);

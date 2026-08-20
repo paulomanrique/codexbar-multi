@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 
 interface Baseline {
   readonly codexBar: { readonly commit: string };
@@ -16,7 +16,11 @@ const canonicalProviderIds = (source: string): readonly string[] => {
   return [...body.matchAll(/"([a-z0-9-]+)"/g)].map((match) => match[1] ?? "");
 };
 
-const validateProviderMatrix = (source: string, canonical: readonly string[]): void => {
+const validateProviderMatrix = (
+  source: string,
+  canonical: readonly string[],
+  pluginResourceFiles: readonly string[],
+): void => {
   const ids = matrixProviderIds(source);
   if (ids.length !== 69) {
     throw new Error(`upstream/providers.yml must contain exactly 69 entries (found ${ids.length})`);
@@ -52,6 +56,19 @@ const validateProviderMatrix = (source: string, canonical: readonly string[]): v
       }
     }
   }
+
+  for (const file of pluginResourceFiles) {
+    const id = file.replace(/\.(?:js|ts)$/, "");
+    if (!canonical.includes(id)) continue;
+    const entry = entries.find((candidate) =>
+      new RegExp(`^\\s+- id:\\s*${id}$`, "m").test(candidate),
+    );
+    if (entry === undefined) throw new Error(`bundled plugin ${file} has no provider matrix entry`);
+    const expectedPath = `Sources/CodexBarCore/Resources/Plugins/${file}`;
+    if (!entry.includes(`- ${expectedPath}`)) {
+      throw new Error(`provider ${id} does not track its bundled upstream source ${expectedPath}`);
+    }
+  }
 };
 
 const escapeRegularExpression = (value: string): string =>
@@ -67,7 +84,15 @@ const globRegularExpression = (glob: string): RegExp => {
   return new RegExp(`^${escaped}$`, "i");
 };
 
-const providerPathMatchers = (
+const expandBraceGlobs = (glob: string): readonly string[] => {
+  const match = /\{([^{}]+)\}/.exec(glob);
+  if (match === null) return [glob];
+  const token = match[0];
+  const choices = match[1]?.split(",") ?? [];
+  return choices.flatMap((choice) => expandBraceGlobs(glob.replace(token, choice)));
+};
+
+const semanticPathMatchers = (
   source: string,
 ): ReadonlyArray<{ readonly id: string; readonly patterns: ReadonlyArray<RegExp> }> =>
   source
@@ -75,8 +100,8 @@ const providerPathMatchers = (
     .filter((entry) => /^\s+- id:\s/m.test(entry))
     .map((entry) => ({
       id: /^\s+- id:\s*([a-z0-9-]+)/m.exec(entry)?.[1] ?? "unknown",
-      patterns: [...entry.matchAll(/^\s+- ((?:Sources|Tests|TestsLinux)\/[^\n]+)$/gm)].map(
-        (match) => globRegularExpression(match[1] ?? ""),
+      patterns: [...entry.matchAll(/^\s+- ((?:Sources|Tests|TestsLinux)\/[^\n]+)$/gm)].flatMap(
+        (match) => expandBraceGlobs(match[1] ?? "").map(globRegularExpression),
       ),
     }));
 
@@ -88,11 +113,19 @@ const providerMatrix = await readFile(
   new URL("../../upstream/providers.yml", import.meta.url),
   "utf8",
 );
+const componentMatrix = await readFile(
+  new URL("../../upstream/components.yml", import.meta.url),
+  "utf8",
+);
 const canonical = canonicalProviderIds(
   await readFile(new URL("../../packages/contracts/src/provider.ts", import.meta.url), "utf8"),
 );
-validateProviderMatrix(providerMatrix, canonical);
-const providerMatchers = providerPathMatchers(providerMatrix);
+const pluginResourceFiles = await readdir(
+  new URL("../../Sources/CodexBarCore/Resources/Plugins/", import.meta.url),
+);
+validateProviderMatrix(providerMatrix, canonical, pluginResourceFiles);
+const providerMatchers = semanticPathMatchers(providerMatrix);
+const componentMatchers = semanticPathMatchers(componentMatrix);
 const target = process.argv[2] ?? "upstream/main";
 const diff = execFileSync(
   "git",
@@ -126,7 +159,10 @@ const rows =
         const providers = providerMatchers
           .filter((provider) => provider.patterns.some((pattern) => pattern.test(path)))
           .map((provider) => provider.id);
-        return { status, path, categories: classify(path), providers };
+        const components = componentMatchers
+          .filter((component) => component.patterns.some((pattern) => pattern.test(path)))
+          .map((component) => component.id);
+        return { status, path, categories: classify(path), providers, components };
       });
 
 console.log(`# CodexBar upstream semantic report\n`);
@@ -136,10 +172,10 @@ console.log(`Changed files: ${rows.length}\n`);
 if (rows.length === 0) {
   console.log("No upstream changes detected.");
 } else {
-  console.log("| Status | Categories | Providers | Upstream path |");
-  console.log("| --- | --- | --- | --- |");
+  console.log("| Status | Categories | Components | Providers | Upstream path |");
+  console.log("| --- | --- | --- | --- | --- |");
   for (const row of rows)
     console.log(
-      `| ${row.status} | ${row.categories.join(", ")} | ${row.providers.join(", ") || "—"} | \`${row.path}\` |`,
+      `| ${row.status} | ${row.categories.join(", ")} | ${row.components.join(", ") || "—"} | ${row.providers.join(", ") || "—"} | \`${row.path}\` |`,
     );
 }

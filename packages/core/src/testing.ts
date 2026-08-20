@@ -75,10 +75,20 @@ export const MemoryHistoryRepository = Layer.sync(HistoryRepository, () => {
       Effect.sync(() => {
         records.push(record);
       }),
-    list: (providerId: HistoryRecord["providerId"], since: number) =>
+    latest: (providerId: HistoryRecord["providerId"]) =>
       Effect.sync(() =>
-        records.filter((record) => record.providerId === providerId && record.recordedAt >= since),
+        records.reduce<HistoryRecord | undefined>((latest, record) => {
+          if (record.providerId !== providerId) return latest;
+          return latest === undefined || record.recordedAt >= latest.recordedAt ? record : latest;
+        }, undefined),
       ),
+    list: (providerId: HistoryRecord["providerId"], since: number, limit?: number) =>
+      Effect.sync(() => {
+        const matching = records.filter(
+          (record) => record.providerId === providerId && record.recordedAt >= since,
+        );
+        return limit === undefined ? matching : matching.slice(0, limit);
+      }),
   };
 });
 
@@ -89,10 +99,13 @@ export const MemoryCostUsageRepository = Layer.sync(CostUsageRepository, () => {
       Effect.sync(() => {
         records.push(record);
       }),
-    list: (providerId: CostUsageRecord["providerId"], since: number) =>
-      Effect.sync(() =>
-        records.filter((record) => record.providerId === providerId && record.recordedAt >= since),
-      ),
+    list: (providerId: CostUsageRecord["providerId"], since: number, limit?: number) =>
+      Effect.sync(() => {
+        const matching = records.filter(
+          (record) => record.providerId === providerId && record.recordedAt >= since,
+        );
+        return limit === undefined ? matching : matching.slice(0, limit);
+      }),
   };
 });
 
@@ -114,6 +127,10 @@ export const EmptyHostCapabilities = Layer.mergeAll(
   }),
   Layer.succeed(ProcessEnumerator, { list: Effect.succeed([]) }),
   Layer.succeed(BrowserSessionBroker, { sessionFor: () => Effect.succeed(undefined) }),
-  Layer.succeed(HistoryRepository, { append: () => Effect.void, list: () => Effect.succeed([]) }),
+  Layer.succeed(HistoryRepository, {
+    append: () => Effect.void,
+    latest: () => Effect.succeed(undefined),
+    list: () => Effect.succeed([]),
+  }),
   Layer.succeed(CostUsageRepository, { append: () => Effect.void, list: () => Effect.succeed([]) }),
 );

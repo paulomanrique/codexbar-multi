@@ -29,7 +29,7 @@ First-party providers are trusted TypeScript modules. Installed user providers r
 - `multi` is the persistent TypeScript migration branch and receives every relevant milestone.
 - `main`/`master` remains free to follow the original repository; the TypeScript rewrite is never merged there.
 - `upstream/baseline.json` pins the last reviewed commits.
-- `upstream/providers.yml`, `upstream/components.yml`, and `upstream/fixtures.manifest.json` keep semantic correspondence.
+- `upstream/providers.yml`, `upstream/components.yml`, and `upstream/fixtures.manifest.json` keep semantic correspondence. The report verifies every bundled upstream JS/TS provider source is owned by its provider entry and reports affected components as well as providers.
 - `pnpm upstream:report [ref]` classifies upstream changes by provider, auth, parser, config, cost/history, plugin runtime, fixture, and test.
 - `pnpm upstream:accept <commit>` only advances the reviewed baseline after the full local gate succeeds.
 
@@ -41,7 +41,10 @@ Upstream workflows are preserved as inert reference material in `upstream-refere
 - Closed 69-provider ID roster and a registry that makes unported entries explicit rather than silently omitting them.
 - Executable TypeScript modules for 31 providers: the 16 already shipped upstream as JavaScript/TypeScript plugins, Codex's first OAuth slice, and the first 14-provider HTTP wave. They remain `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
 - A minimal Codex OAuth vertical slice with cross-platform `auth.json` discovery in the CLI composition root and shared `wham/usage` parsing.
-- Node/platform adapters, native keyring credentials, SQLite WAL/migrations in a dedicated worker, first CLI usage path, Electron tray/popup shell, typed preload IPC, and React overview.
+- Swift-compatible UsageSnapshot wire codecs preserve stable null lanes, omission defaults, legacy identity keys, bounded details, ISO dates, and persisted provider enrichments.
+- Shared quota warning, reset boundary/backfill, and linear/workday pace calculations are ported from the Swift decision tables.
+- Node/platform adapters, native keyring credentials, SQLite WAL/migrations in a dedicated worker, bounded history/cost queries, constant-size latest-snapshot overview reads, first CLI usage path, Electron tray/popup shell, typed preload IPC, and React overview.
+- OpenAI and T3 Chat now have dedicated Swift-derived vertical-slice goldens; five provider entries are behaviorally `partial` in the semantic matrix while the other executable modules remain awaiting dedicated parity tests.
 - QuickJS manifest inspection, approval binding, and transport-neutral capability/HTTP broker with the upstream limits and security fields.
 
 This is an implementation milestone, not feature parity. Entries remain `partial` until their Swift tests/fixtures and native smoke scenarios pass. Packaging scripts deliberately fail closed until the cross-platform parity gate is approved.
