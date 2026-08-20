@@ -52,6 +52,14 @@ export interface ServeRuntime extends Pick<
   "providers" | "fetch" | "costs" | "now"
 > {
   readonly version?: string;
+  /** Opaque, secret-free fingerprint of the effective provider/config account state. */
+  readonly configFingerprint?: () => string | undefined;
+}
+
+export interface ServeHandler {
+  (request: ServeRequest): Promise<ServeResponse>;
+  /** Cancels background SWR and all still-owned source operations. */
+  readonly shutdown: () => void;
 }
 
 export interface StartedServeServer {
@@ -375,19 +383,315 @@ const cacheable = (value: unknown): boolean =>
     ? !value.some((row) => typeof row === "object" && row !== null && "error" in row)
     : true;
 
-class ServeCache {
-  readonly #entries = new Map<string, { readonly expiresAt: number; readonly value: unknown }>();
-  get(key: string, now: number): unknown | undefined {
-    const entry = this.#entries.get(key);
-    if (entry === undefined || entry.expiresAt <= now) {
-      this.#entries.delete(key);
-      return undefined;
-    }
-    return entry.value;
+export interface ServeCoordinatorSnapshot {
+  readonly operationCount: number;
+  readonly waiterCount: number;
+  readonly isShutdown: boolean;
+}
+
+export interface ServeOperationRequest<Value> {
+  readonly key: string;
+  readonly fingerprint: string;
+  readonly timeoutMs?: number;
+  readonly timeoutValue: Value;
+  readonly signal?: AbortSignal;
+  readonly operation: (signal: AbortSignal) => Promise<Value>;
+  readonly accept?: (value: Value) => Promise<Value> | Value;
+}
+
+type ServeWaiter<Value> = {
+  resolve: (value: Value) => void;
+  timeoutValue: Value;
+  timer?: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
+
+type ServeFlight<Value> = {
+  readonly fingerprint: string;
+  readonly controller: AbortController;
+  readonly operation: (signal: AbortSignal) => Promise<Value>;
+  readonly accept: (value: Value) => Promise<Value>;
+  readonly waiters: Set<ServeWaiter<Value>>;
+  timedOut: boolean;
+};
+
+type ServeSlot<Value> = { active?: ServeFlight<Value>; pending?: ServeFlight<Value> };
+
+/**
+ * Keeps one source operation per logical cache key. A cancelled/timed-out
+ * source remains owned until it settles; this is what prevents retries from
+ * stacking subprocesses or provider HTTP calls after an advisory abort.
+ */
+export class ServeOperationCoordinator<Value> {
+  readonly #slots = new Map<string, ServeSlot<Value>>();
+  #isShutdown = false;
+
+  snapshot(): ServeCoordinatorSnapshot {
+    const flights = [...this.#slots.values()].flatMap((slot) =>
+      [slot.active, slot.pending].filter(
+        (value): value is ServeFlight<Value> => value !== undefined,
+      ),
+    );
+    return {
+      operationCount: flights.length,
+      waiterCount: flights.reduce((total, flight) => total + flight.waiters.size, 0),
+      isShutdown: this.#isShutdown,
+    };
   }
-  set(key: string, value: unknown, ttlSeconds: number, now: number): void {
-    if (ttlSeconds > 0 && cacheable(value))
-      this.#entries.set(key, { expiresAt: now + ttlSeconds * 1_000, value });
+
+  shutdown(): void {
+    if (this.#isShutdown) return;
+    this.#isShutdown = true;
+    for (const slot of this.#slots.values()) {
+      for (const flight of [slot.active, slot.pending]) {
+        if (flight === undefined) continue;
+        flight.timedOut = true;
+        flight.controller.abort(new Error("serve shutdown"));
+        this.#resolveWaiters(flight, undefined);
+      }
+    }
+    this.#slots.clear();
+  }
+
+  value(request: ServeOperationRequest<Value>): Promise<Value> {
+    if (this.#isShutdown) return Promise.resolve(request.timeoutValue);
+    const slot = this.#slots.get(request.key) ?? {};
+    this.#discardUnusablePending(request.key, slot);
+    if (slot.active === undefined) {
+      const active = this.#flight(request);
+      slot.active = active;
+      this.#slots.set(request.key, slot);
+      this.#start(request.key, active);
+      return this.#wait(request.key, active, request);
+    }
+    if (!slot.active.timedOut && slot.active.fingerprint === request.fingerprint)
+      return this.#wait(request.key, slot.active, request);
+    if (slot.pending?.fingerprint === request.fingerprint)
+      return this.#wait(request.key, slot.pending, request);
+    if (slot.pending !== undefined)
+      this.#timeoutFlight(request.key, slot.pending, "pending superseded");
+    const pending = this.#flight(request);
+    slot.pending = pending;
+    this.#slots.set(request.key, slot);
+    return this.#wait(request.key, pending, request);
+  }
+
+  #flight(request: ServeOperationRequest<Value>): ServeFlight<Value> {
+    return {
+      fingerprint: request.fingerprint,
+      controller: new AbortController(),
+      operation: request.operation,
+      accept: async (value) => (request.accept === undefined ? value : request.accept(value)),
+      waiters: new Set(),
+      timedOut: false,
+    };
+  }
+
+  #start(key: string, flight: ServeFlight<Value>): void {
+    void flight
+      .operation(flight.controller.signal)
+      .then((value) => flight.accept(value))
+      .then((value) => this.#completed(key, flight, value))
+      .catch(() => this.#completed(key, flight, undefined));
+  }
+
+  #wait(
+    key: string,
+    flight: ServeFlight<Value>,
+    request: ServeOperationRequest<Value>,
+  ): Promise<Value> {
+    return new Promise((resolve) => {
+      const waiter: ServeWaiter<Value> = { resolve, timeoutValue: request.timeoutValue };
+      const finish = (value: Value) => this.#finishWaiter(flight, waiter, value);
+      // Insert before examining an already-aborted signal. Otherwise `finish`
+      // observes no waiter and the Promise is left unresolved forever.
+      flight.waiters.add(waiter);
+      const timeoutMs = request.timeoutMs;
+      if (timeoutMs !== undefined)
+        waiter.timer = setTimeout(() => finish(request.timeoutValue), timeoutMs);
+      if (request.signal !== undefined) {
+        waiter.signal = request.signal;
+        waiter.onAbort = () => finish(request.timeoutValue);
+        request.signal.addEventListener("abort", waiter.onAbort, { once: true });
+        if (request.signal.aborted) finish(request.timeoutValue);
+      }
+      if (this.#isShutdown) finish(request.timeoutValue);
+    });
+  }
+
+  #finishWaiter(flight: ServeFlight<Value>, waiter: ServeWaiter<Value>, value: Value): void {
+    if (!flight.waiters.delete(waiter)) return;
+    if (waiter.timer !== undefined) clearTimeout(waiter.timer);
+    if (waiter.signal !== undefined && waiter.onAbort !== undefined)
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+    waiter.resolve(value);
+    if (flight.waiters.size === 0 && !flight.timedOut) {
+      flight.timedOut = true;
+      flight.controller.abort(new Error("all serve waiters left"));
+    }
+  }
+
+  #resolveWaiters(flight: ServeFlight<Value>, value: Value | undefined): void {
+    for (const waiter of flight.waiters)
+      this.#finishWaiter(flight, waiter, value ?? waiter.timeoutValue);
+  }
+
+  #timeoutFlight(key: string, flight: ServeFlight<Value>, reason: string): void {
+    flight.timedOut = true;
+    flight.controller.abort(new Error(reason));
+    this.#resolveWaiters(flight, undefined);
+    const slot = this.#slots.get(key);
+    if (slot?.pending === flight) {
+      delete slot.pending;
+      this.#store(key, slot);
+    }
+  }
+
+  #completed(key: string, flight: ServeFlight<Value>, value: Value | undefined): void {
+    const slot = this.#slots.get(key);
+    if (slot?.active !== flight) return;
+    delete slot.active;
+    this.#discardUnusablePending(key, slot);
+    if (value !== undefined && !this.#isShutdown) {
+      if (
+        flight.timedOut &&
+        slot.pending !== undefined &&
+        slot.pending.fingerprint === flight.fingerprint
+      ) {
+        const pending = slot.pending;
+        delete slot.pending;
+        this.#store(key, slot);
+        this.#resolveWaiters(pending, value);
+        return;
+      }
+      if (!flight.timedOut) this.#resolveWaiters(flight, value);
+    } else {
+      this.#resolveWaiters(flight, undefined);
+    }
+    this.#store(key, slot);
+    if (!this.#isShutdown && slot.pending !== undefined && this.#isUsablePending(slot.pending)) {
+      const pending = slot.pending;
+      delete slot.pending;
+      slot.active = pending;
+      this.#slots.set(key, slot);
+      this.#start(key, pending);
+    }
+  }
+
+  #store(key: string, slot: ServeSlot<Value>): void {
+    if (slot.active === undefined && slot.pending === undefined) this.#slots.delete(key);
+    else this.#slots.set(key, slot);
+  }
+
+  #isUsablePending(flight: ServeFlight<Value>): boolean {
+    return !flight.timedOut && flight.waiters.size > 0;
+  }
+
+  #discardUnusablePending(key: string, slot: ServeSlot<Value>): void {
+    if (slot.pending === undefined || this.#isUsablePending(slot.pending)) return;
+    delete slot.pending;
+    this.#store(key, slot);
+  }
+}
+
+type CachedServeResponse = { readonly expiresAt: number; readonly response: ServeResponse };
+
+export class ServeResponseCache {
+  static readonly maximumStaleTtlSeconds = 3_600;
+  readonly #fresh = new Map<string, CachedServeResponse>();
+  readonly #lastGood = new Map<
+    string,
+    { readonly recordedAt: number; readonly response: ServeResponse }
+  >();
+  readonly #operations = new ServeOperationCoordinator<ServeResponse>();
+
+  readonly #now: () => number;
+
+  constructor(now: () => number = () => Date.now()) {
+    this.#now = now;
+  }
+
+  shutdown(): void {
+    this.#operations.shutdown();
+    this.#fresh.clear();
+    this.#lastGood.clear();
+  }
+
+  snapshot(): ServeCoordinatorSnapshot {
+    return this.#operations.snapshot();
+  }
+
+  async response(options: {
+    readonly key: string;
+    readonly fingerprint: string;
+    readonly refreshIntervalSeconds: number;
+    readonly requestTimeoutMs?: number;
+    readonly signal: AbortSignal;
+    readonly makeResponse: (signal: AbortSignal) => Promise<ServeResponse>;
+  }): Promise<ServeResponse> {
+    const now = this.#now();
+    const fresh = this.#fresh.get(options.key);
+    if (fresh !== undefined && fresh.expiresAt > now) return fresh.response;
+    this.#fresh.delete(options.key);
+    const stale = this.#stale(options.key, options.refreshIntervalSeconds, now);
+    if (stale !== undefined) {
+      // Stale-while-revalidate intentionally has no client signal: an aborted
+      // browser navigation must not abandon the bounded shared refresh.
+      void this.#refresh(options, new AbortController().signal);
+      return stale;
+    }
+    return this.#refresh(options, options.signal);
+  }
+
+  #stale(key: string, refreshIntervalSeconds: number, now: number): ServeResponse | undefined {
+    if (refreshIntervalSeconds <= 0) return undefined;
+    const lastGood = this.#lastGood.get(key);
+    const ttl = Math.min(
+      Math.max(refreshIntervalSeconds * 10, 300),
+      ServeResponseCache.maximumStaleTtlSeconds,
+    );
+    if (lastGood !== undefined && now - lastGood.recordedAt <= ttl * 1_000)
+      return lastGood.response;
+    this.#lastGood.delete(key);
+    return undefined;
+  }
+
+  #refresh(
+    options: Parameters<ServeResponseCache["response"]>[0],
+    signal: AbortSignal,
+  ): Promise<ServeResponse> {
+    const timeout = errorResponse(504, "request timed out");
+    return this.#operations.value({
+      key: options.key,
+      fingerprint: options.fingerprint,
+      ...(options.requestTimeoutMs === undefined ? {} : { timeoutMs: options.requestTimeoutMs }),
+      timeoutValue: timeout,
+      signal,
+      operation: options.makeResponse,
+      accept: async (response) =>
+        this.#complete(options.key, response, options.refreshIntervalSeconds),
+    });
+  }
+
+  #complete(key: string, response: ServeResponse, refreshIntervalSeconds: number): ServeResponse {
+    const now = this.#now();
+    if (this.#isCacheableResponse(response)) {
+      this.#lastGood.set(key, { recordedAt: now, response });
+      if (refreshIntervalSeconds > 0)
+        this.#fresh.set(key, { expiresAt: now + refreshIntervalSeconds * 1_000, response });
+      return response;
+    }
+    return this.#stale(key, refreshIntervalSeconds, now) ?? response;
+  }
+
+  #isCacheableResponse(response: ServeResponse): boolean {
+    if (response.status !== 200) return false;
+    try {
+      return cacheable(JSON.parse(response.body) as unknown);
+    } catch {
+      return true;
+    }
   }
 }
 
@@ -542,14 +846,19 @@ const webUi =
 const lastQueryValue = (query: URLSearchParams, name: string): string | undefined =>
   query.getAll(name).at(-1)?.trim() || undefined;
 
+export const serveCacheKey = (
+  configuration: string | undefined,
+  path: string,
+  provider: string | undefined,
+  identity: IdentityMode | undefined,
+): string => `${configuration ?? "uncached"}:${path}:${provider ?? "all"}:${identity ?? ""}`;
+
 /** Creates a pure-ish router handler. Network integration only adapts Node HTTP to this surface. */
-export const makeServeHandler = (
-  options: ServeOptions,
-  runtime: ServeRuntime,
-): ((request: ServeRequest) => Promise<ServeResponse>) => {
-  const cache = new ServeCache();
+export const makeServeHandler = (options: ServeOptions, runtime: ServeRuntime): ServeHandler => {
+  const cache = new ServeResponseCache(() => runtime.now?.() ?? Date.now());
   const dataRoutesRequireAuth = !isLoopbackServeHost(options.host);
-  return async (request) => {
+  let uncacheableRequestSequence = 0;
+  const handler = (async (request: ServeRequest) => {
     if (request.bodyBytes > maximumRequestBodyBytes)
       return errorResponse(413, "request body too large");
     if (
@@ -588,39 +897,65 @@ export const makeServeHandler = (
         headers: { "WWW-Authenticate": "Bearer", "Cache-Control": "no-store" },
         body: JSON.stringify({ error: "unauthorized" }),
       };
+    // Do not start (or join) provider work for a request that was already
+    // cancelled before routing. The generic message is intentional: abort
+    // reasons may contain browser, proxy, or credential-adjacent text.
+    if (request.signal.aborted) return noStore(errorResponse(500, "Request failed"));
     const provider = lastQueryValue(request.query, "provider");
-    const cacheKey = `${request.path}:${provider ?? "all"}:${isDashboard ? options.identity : ""}`;
-    const now = runtime.now?.() ?? Date.now();
-    const cached = cache.get(cacheKey, now);
-    if (cached !== undefined) return noStore(jsonResponse(cached));
+    const configuration = runtime.configFingerprint?.();
+    // Until the CLI exposes an opaque effective-config fingerprint, caching is
+    // disabled rather than replaying one account's stale response after a
+    // credential/config change. Such requests also receive unique operation
+    // keys, since coalescing them could itself cross an unknown account boundary.
+    const refreshIntervalSeconds = configuration === undefined ? 0 : options.refreshIntervalSeconds;
+    const cacheKey =
+      configuration === undefined
+        ? `uncached-request:${++uncacheableRequestSequence}`
+        : serveCacheKey(
+            configuration,
+            request.path,
+            provider,
+            isDashboard ? options.identity : undefined,
+          );
     const outerMs =
       options.requestTimeoutSeconds === 0
         ? undefined
         : Math.min(options.requestTimeoutSeconds, maximumRequestTimeoutSeconds) * 1_000;
     const providerMs = outerMs === undefined ? undefined : outerMs * 0.8;
-    try {
-      const value = await timeoutRace(
-        async (signal) => {
-          if (request.path === "/usage") return usagePayload(runtime, provider, signal);
-          if (request.path === "/cost") return costPayload(runtime, provider);
-          const detail = lastQueryValue(request.query, "detail");
-          if (detail !== undefined && detail !== "shell" && detail !== "full")
-            throw new Error(`Unknown dashboard detail '${detail}'`);
-          return dashboardPayload(runtime, provider, options.identity, signal);
-        },
-        providerMs,
-        request.signal,
-      );
-      cache.set(cacheKey, value, options.refreshIntervalSeconds, now);
-      return noStore(jsonResponse(value));
-    } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : "request failed";
-      const isInputError = rawMessage.startsWith("Unknown ");
-      const isTimeout = rawMessage === "request timed out";
-      const message = isInputError ? rawMessage : isTimeout ? rawMessage : "Request failed";
-      return noStore(errorResponse(isTimeout ? 504 : isInputError ? 400 : 500, message));
-    }
-  };
+    const response = await cache.response({
+      key: cacheKey,
+      fingerprint: configuration ?? cacheKey,
+      refreshIntervalSeconds,
+      ...(outerMs === undefined ? {} : { requestTimeoutMs: outerMs }),
+      signal: request.signal,
+      makeResponse: async (signal) => {
+        try {
+          const value = await timeoutRace(
+            async (providerSignal) => {
+              if (request.path === "/usage") return usagePayload(runtime, provider, providerSignal);
+              if (request.path === "/cost") return costPayload(runtime, provider);
+              const detail = lastQueryValue(request.query, "detail");
+              if (detail !== undefined && detail !== "shell" && detail !== "full")
+                throw new Error(`Unknown dashboard detail '${detail}'`);
+              return dashboardPayload(runtime, provider, options.identity, providerSignal);
+            },
+            providerMs,
+            signal,
+          );
+          return jsonResponse(value);
+        } catch (error) {
+          const rawMessage = error instanceof Error ? error.message : "request failed";
+          const isInputError = rawMessage.startsWith("Unknown ");
+          const isTimeout = rawMessage === "request timed out";
+          const message = isInputError ? rawMessage : isTimeout ? rawMessage : "Request failed";
+          return errorResponse(isTimeout ? 504 : isInputError ? 400 : 500, message);
+        }
+      },
+    });
+    return noStore(response);
+  }) as ServeHandler;
+  Object.defineProperty(handler, "shutdown", { value: () => cache.shutdown() });
+  return handler;
 };
 
 const duplicates = (rawHeaders: readonly string[], name: string): number =>
@@ -714,6 +1049,9 @@ export const startServeServer = async (
   server.requestTimeout = 10_000;
   server.keepAliveTimeout = 1;
   server.on("clientError", (_error, socket) => socket.destroy());
+  // `Server.close()` can also be invoked by an embedding host. Tie every
+  // close path to cache shutdown, not just the public StartedServeServer.close.
+  server.on("close", handler.shutdown);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, options.host, () => {
@@ -723,19 +1061,23 @@ export const startServeServer = async (
   });
   const address = server.address();
   if (address === null || typeof address === "string") {
+    handler.shutdown();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     throw new Error("server did not expose a TCP address");
   }
+  const close = (): Promise<void> => {
+    handler.shutdown();
+    return server.listening
+      ? new Promise((resolve, reject) =>
+          server.close((error) => (error === undefined ? resolve() : reject(error))),
+        )
+      : Promise.resolve();
+  };
   return {
     server,
     host: options.host,
     port: address.port,
-    close: () =>
-      server.listening
-        ? new Promise((resolve, reject) =>
-            server.close((error) => (error === undefined ? resolve() : reject(error))),
-          )
-        : Promise.resolve(),
+    close,
   };
 };
 

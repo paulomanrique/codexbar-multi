@@ -7,7 +7,11 @@ import {
   makeServeHandler,
   normalizeServeHost,
   parseServeArguments,
+  serveCacheKey,
+  ServeOperationCoordinator,
+  ServeResponseCache,
   startServeServer,
+  type ServeResponse,
   type ServeRequest,
   type ServeRuntime,
 } from "../src/serve.ts";
@@ -35,6 +39,7 @@ const runtime = (fetch?: ServeRuntime["fetch"]): ServeRuntime => ({
     })),
   costs: { list: async () => [] },
   now: () => 1_700_000_000_000,
+  configFingerprint: () => "test-config",
   version: "0.1.0-test",
 });
 
@@ -54,6 +59,239 @@ const request = (
 });
 
 describe("CLI serve", () => {
+  it("coalesces equal route fingerprints into one source operation", async () => {
+    const coordinator = new ServeOperationCoordinator<string>();
+    let starts = 0;
+    let release: (() => void) | undefined;
+    const source = () =>
+      new Promise<string>((resolve) => {
+        starts += 1;
+        release = () => resolve("shared");
+      });
+    const first = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutValue: "timeout",
+      operation: async () => source(),
+    });
+    const second = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutValue: "timeout",
+      operation: async () => source(),
+    });
+    expect(starts).toBe(1);
+    release?.();
+    await expect(first).resolves.toBe("shared");
+    await expect(second).resolves.toBe("shared");
+    expect(coordinator.snapshot().operationCount).toBe(0);
+  });
+
+  it("settles an already-aborted waiter immediately without retaining it", async () => {
+    const coordinator = new ServeOperationCoordinator<string>();
+    const controller = new AbortController();
+    controller.abort(new Error("already cancelled"));
+    const result = await coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutValue: "cancelled",
+      signal: controller.signal,
+      operation: async () => new Promise<string>(() => {}),
+    });
+    expect(result).toBe("cancelled");
+    expect(coordinator.snapshot()).toMatchObject({ waiterCount: 0, operationCount: 1 });
+    coordinator.shutdown();
+  });
+
+  it("keeps a timed-out source owned and gives a same-fingerprint successor its late result", async () => {
+    const coordinator = new ServeOperationCoordinator<string>();
+    let starts = 0;
+    let release: (() => void) | undefined;
+    const source = () =>
+      new Promise<string>((resolve) => {
+        starts += 1;
+        release = () => resolve("late-success");
+      });
+    const first = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutMs: 5,
+      timeoutValue: "timeout",
+      operation: async () => source(),
+    });
+    await expect(first).resolves.toBe("timeout");
+    const successor = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutValue: "timeout",
+      operation: async () => source(),
+    });
+    expect(starts).toBe(1);
+    release?.();
+    await expect(successor).resolves.toBe("late-success");
+    expect(starts).toBe(1);
+  });
+
+  it("serializes a changed fingerprint behind timed-out work and cancels waiters on shutdown", async () => {
+    const coordinator = new ServeOperationCoordinator<string>();
+    let active = 0;
+    let peak = 0;
+    let release: (() => void) | undefined;
+    const slow = () =>
+      new Promise<string>((resolve) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        release = () => {
+          active -= 1;
+          resolve("old");
+        };
+      });
+    const first = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutMs: 5,
+      timeoutValue: "timeout-a",
+      operation: async () => slow(),
+    });
+    await expect(first).resolves.toBe("timeout-a");
+    const successor = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-b",
+      timeoutValue: "timeout-b",
+      operation: async () => "new",
+    });
+    expect(peak).toBe(1);
+    release?.();
+    await expect(successor).resolves.toBe("new");
+    const shutdown = coordinator.value({
+      key: "cost:all",
+      fingerprint: "config-a",
+      timeoutValue: "shutdown",
+      operation: async () => new Promise<string>(() => {}),
+    });
+    coordinator.shutdown();
+    await expect(shutdown).resolves.toBe("shutdown");
+    expect(coordinator.snapshot()).toMatchObject({
+      operationCount: 0,
+      waiterCount: 0,
+      isShutdown: true,
+    });
+  });
+
+  it("does not start a pending operation after all of its waiters timed out", async () => {
+    const coordinator = new ServeOperationCoordinator<string>();
+    let releaseActive: (() => void) | undefined;
+    let secondStarts = 0;
+    const first = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-a",
+      timeoutMs: 100,
+      timeoutValue: "timeout-a",
+      operation: async () =>
+        new Promise<string>((resolve) => {
+          releaseActive = () => resolve("active");
+        }),
+    });
+    const pending = coordinator.value({
+      key: "usage:all",
+      fingerprint: "config-b",
+      timeoutMs: 5,
+      timeoutValue: "timeout-b",
+      operation: async () => {
+        secondStarts += 1;
+        return "should-not-run";
+      },
+    });
+    await expect(pending).resolves.toBe("timeout-b");
+    releaseActive?.();
+    await expect(first).resolves.toBe("active");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(secondStarts).toBe(0);
+    expect(coordinator.snapshot().operationCount).toBe(0);
+  });
+
+  it("uses fresh, stale-while-revalidate, and last-good cache windows without caching failures", async () => {
+    let now = 1_000;
+    const cache = new ServeResponseCache(() => now);
+    let count = 0;
+    let releaseRefresh: (() => void) | undefined;
+    const fresh = (body: string): ServeResponse => ({ status: 200, body });
+    const first = await cache.response({
+      key: "dashboard:all",
+      fingerprint: "config-a",
+      refreshIntervalSeconds: 1,
+      signal: new AbortController().signal,
+      makeResponse: async () => {
+        count += 1;
+        return fresh('{"value":"first"}');
+      },
+    });
+    expect(first.body).toContain("first");
+    now += 1_001;
+    const stale = await cache.response({
+      key: "dashboard:all",
+      fingerprint: "config-a",
+      refreshIntervalSeconds: 1,
+      signal: new AbortController().signal,
+      makeResponse: async () => {
+        count += 1;
+        return new Promise<ServeResponse>((resolve) => {
+          releaseRefresh = () => resolve(fresh('{"value":"refreshed"}'));
+        });
+      },
+    });
+    expect(stale.body).toContain("first");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(count).toBe(2);
+    releaseRefresh?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      (
+        await cache.response({
+          key: "dashboard:all",
+          fingerprint: "config-a",
+          refreshIntervalSeconds: 1,
+          signal: new AbortController().signal,
+          makeResponse: async () => fresh('{"value":"unexpected"}'),
+        })
+      ).body,
+    ).toContain("refreshed");
+    now += 300_001;
+    const failure = await cache.response({
+      key: "dashboard:all",
+      fingerprint: "config-a",
+      refreshIntervalSeconds: 1,
+      signal: new AbortController().signal,
+      makeResponse: async () => ({ status: 500, body: '{"error":"failed"}' }),
+    });
+    expect(failure.status).toBe(500);
+  });
+
+  it("does not replay last-good state across a changed effective config fingerprint", async () => {
+    let now = 1_000;
+    const cache = new ServeResponseCache(() => now);
+    const accountA = serveCacheKey("account-a", "/usage", undefined, undefined);
+    const accountB = serveCacheKey("account-b", "/usage", undefined, undefined);
+    expect(accountA).not.toBe(accountB);
+    await cache.response({
+      key: accountA,
+      fingerprint: "account-a",
+      refreshIntervalSeconds: 1,
+      signal: new AbortController().signal,
+      makeResponse: async () => ({ status: 200, body: '{"account":"a"}' }),
+    });
+    now += 1_001;
+    const second = await cache.response({
+      key: accountB,
+      fingerprint: "account-b",
+      refreshIntervalSeconds: 1,
+      signal: new AbortController().signal,
+      makeResponse: async () => ({ status: 200, body: '{"account":"b"}' }),
+    });
+    expect(second.body).toContain('"b"');
+    cache.shutdown();
+  });
+
   it("defaults to loopback and enforces the upstream non-loopback token matrix", () => {
     expect(normalizeServeHost(" localhost ")).toBe("127.0.0.1");
     expect(normalizeServeHost("01.2.3.4")).toBeUndefined();
@@ -212,6 +450,47 @@ describe("CLI serve", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       await expect(response.json()).resolves.toMatchObject({ status: "ok", version: "0.1.0-test" });
+    } finally {
+      await started.close();
+    }
+  });
+
+  it("cancels live serve operations when the server lifecycle closes", async () => {
+    let aborted = false;
+    let sourceStarted: (() => void) | undefined;
+    const waitForSource = new Promise<void>((resolve) => {
+      sourceStarted = resolve;
+    });
+    const started = await startServeServer(
+      {
+        host: "127.0.0.1",
+        port: 0,
+        refreshIntervalSeconds: 60,
+        requestTimeoutSeconds: 10,
+        allowPlainHttp: false,
+        identity: "full",
+      },
+      runtime(
+        (_provider, _context, signal) =>
+          new Promise((_, reject) => {
+            sourceStarted?.();
+            signal?.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          }),
+      ),
+    );
+    try {
+      const response = fetch(`http://127.0.0.1:${started.port}/usage`);
+      await waitForSource;
+      await started.close();
+      expect(aborted).toBe(true);
+      await expect(response).resolves.toHaveProperty("status", 504);
     } finally {
       await started.close();
     }
