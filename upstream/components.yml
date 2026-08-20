@@ -248,12 +248,14 @@ components:
       - Sources/CodexBar/Localization.swift
     tsPaths:
       - apps/desktop/src/renderer/**/*.tsx
+      - apps/desktop/src/renderer/localization.ts
+      - apps/desktop/test/localization.test.ts
     tests:
       - Tests/CodexBarTests/Localization*Tests.swift
       - Tests/CodexBarTests/Provider*Label*Tests.swift
     fixtures:
       - Sources/CodexBar/Resources/en.lproj/Localizable.strings
-    status: unported
+    status: partial
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
 
   - id: apple-only-exclusions

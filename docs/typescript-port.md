@@ -46,5 +46,6 @@ Upstream workflows are preserved as inert reference material in `upstream-refere
 - Node/platform adapters, native keyring credentials, normalized atomic config, SQLite WAL/migrations in a dedicated worker, a dedicated WAL reader outside the writer FIFO, bounded history/cost queries, persisted provider refresh, constant-size latest-snapshot overview reads, first CLI framework, Electron tray/popup shell, typed preload IPC, and React overview.
 - The semantic provider matrix contains all 69 provider IDs as `partial`, with dedicated contract coverage and parser/fixture coverage growing provider-by-provider; no entry is called `parity` before its Swift fixtures, fallback rules, and native scenario pass.
 - Opt-in data-only legacy import rescans bounded JSON/JSONL, disables imported hooks, copies plugins without approvals, journals rollback, and never imports credentials implicitly.
+- The renderer now resolves all 23 upstream locale IDs, regional/script fallbacks, plurals, and RTL direction for its current message surface; the full upstream string catalog remains a tracked parity gap.
 
 This is an implementation milestone, not feature parity. Entries remain `partial` until their Swift tests/fixtures and native smoke scenarios pass. Packaging scripts deliberately fail closed until the cross-platform parity gate is approved.
