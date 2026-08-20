@@ -13,6 +13,10 @@ import {
   type HistoryRecord,
   type HistoryRepositoryService,
   InfrastructureError,
+  type UsageRecordRetentionRequest,
+  type UsageRecordRetentionResult,
+  type UsageRecordRetentionService,
+  assertUsageRecordRetentionRequest,
 } from "@codexbar/core";
 import { ProviderId, ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { makeNodePrivateFileStore } from "./node.ts";
@@ -67,6 +71,8 @@ export interface NodeSqlitePersistenceOptions {
 export interface NodeSqlitePersistence {
   readonly history: HistoryRepositoryService;
   readonly costs: CostUsageRepositoryService;
+  /** Shared history/cost retention, committed as one SQLite transaction. */
+  readonly retention: UsageRecordRetentionService;
   readonly close: Effect.Effect<void, InfrastructureError>;
 }
 
@@ -358,15 +364,62 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
         ).map(decodeCostUsageRecord);
       }),
   };
+  const retention: UsageRecordRetentionService = {
+    prune: (request: UsageRecordRetentionRequest) =>
+      queuedSqlite(queue, "prune usage records", async () => {
+        assertUsageRecordRetentionRequest(request);
+        if (request.historyProviderId !== undefined)
+          assertProviderInstanceId(request.historyProviderId);
+        if (request.costProviderId !== undefined) assertProviderId(request.costProviderId);
+        let result: UsageRecordRetentionResult = {
+          deletedHistoryRecords: 0,
+          deletedCostUsageRecords: 0,
+        };
+        await inImmediateTransactionWithRetry(database, () => {
+          result = {
+            deletedHistoryRecords: deleteRecordsBefore(
+              database,
+              "history_records",
+              request.before,
+              request.historyProviderId,
+            ),
+            deletedCostUsageRecords: deleteRecordsBefore(
+              database,
+              "cost_usage_records",
+              request.before,
+              request.costProviderId,
+            ),
+          };
+        });
+        return result;
+      }),
+  };
 
   return {
     history,
     costs,
+    retention,
     close: queuedSqlite(queue, "close SQLite persistence", () => {
       if (reader !== database) reader.close();
       database.close();
     }),
   };
+};
+
+const deleteRecordsBefore = (
+  database: DatabaseSync,
+  table: "history_records" | "cost_usage_records",
+  before: number,
+  providerId: string | undefined,
+): number => {
+  const statement =
+    providerId === undefined
+      ? database.prepare(`DELETE FROM ${table} WHERE recorded_at < ?`)
+      : database.prepare(`DELETE FROM ${table} WHERE provider_id = ? AND recorded_at < ?`);
+  if (providerId === undefined) statement.run(before);
+  else statement.run(providerId, before);
+  const row = database.prepare("SELECT changes() AS deleted_rows").get() as Record<string, unknown>;
+  return readNaturalRowValue(row, "deleted_rows");
 };
 
 class SerializedDatabaseQueue {
@@ -539,6 +592,14 @@ const readFiniteNumber = (row: Record<string, unknown>, column: string): number 
   const value = row[column];
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`SQLite column ${column} is not a finite number`);
+  }
+  return value;
+};
+
+const readNaturalRowValue = (row: Record<string, unknown>, column: string): number => {
+  const value = readFiniteNumber(row, column);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`SQLite column ${column} is not a non-negative safe integer`);
   }
   return value;
 };

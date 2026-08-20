@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { Effect } from "effect";
-import type { CostUsageRecord, HistoryRecord } from "@codexbar/core";
+import type { CostUsageRecord, HistoryRecord, UsageRecordRetentionRequest } from "@codexbar/core";
 import { InfrastructureError } from "@codexbar/core";
 import {
   makeNodeSqlitePersistence,
@@ -51,6 +51,12 @@ type WorkerRequest =
       readonly providerId: string;
       readonly since: number;
       readonly limit?: number;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "prune-usage-records";
+      readonly request: UsageRecordRetentionRequest;
     }
   | { readonly version: 1; readonly id: string; readonly type: "close" }
   | { readonly version: 1; readonly id: string; readonly type: "cancel" };
@@ -119,6 +125,7 @@ const isRequest = (value: unknown): value is WorkerRequest => {
     message.type === "remove-provider-history" ||
     message.type === "append-cost" ||
     message.type === "list-cost" ||
+    message.type === "prune-usage-records" ||
     message.type === "close" ||
     message.type === "cancel"
   );
@@ -171,6 +178,8 @@ const runRequest = async (request: WorkerRequest): Promise<unknown> => {
           request.limit,
         ),
       );
+    case "prune-usage-records":
+      return Effect.runPromise(persistence.retention.prune(request.request));
     case "close":
       closing = true;
       return Effect.runPromise(persistence.close);

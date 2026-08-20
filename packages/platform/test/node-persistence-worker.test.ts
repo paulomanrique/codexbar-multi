@@ -95,6 +95,43 @@ describe("Node SQLite worker persistence", () => {
     }
   });
 
+  it("routes atomic retention through the SQLite worker", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-retention-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    try {
+      for (const recordedAt of [1, 2]) {
+        await Effect.runPromise(
+          persistence.history.append({
+            providerId: "codex" as ProviderId,
+            recordedAt,
+            snapshot: snapshot(`2026-01-01T00:00:0${recordedAt}Z`),
+          }),
+        );
+        await Effect.runPromise(
+          persistence.costs.append({
+            providerId: "codex" as ProviderId,
+            recordedAt,
+            inputTokens: recordedAt,
+            outputTokens: recordedAt,
+            costUsd: recordedAt / 100,
+          }),
+        );
+      }
+      await expect(Effect.runPromise(persistence.retention.prune({ before: 2 }))).resolves.toEqual({
+        deletedHistoryRecords: 1,
+        deletedCostUsageRecords: 1,
+      });
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toHaveLength(
+        1,
+      );
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(1);
+    } finally {
+      await Effect.runPromise(persistence.close).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("gets the latest history record in the worker with ID tie-breaking", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-latest-"));
     const databasePath = join(directory, "usage.sqlite");

@@ -5,6 +5,9 @@ import type {
   CostUsageRepositoryService,
   HistoryRecord,
   HistoryRepositoryService,
+  UsageRecordRetentionRequest,
+  UsageRecordRetentionResult,
+  UsageRecordRetentionService,
 } from "@codexbar/core";
 import { InfrastructureError } from "@codexbar/core";
 import type { NodeSqlitePersistenceOptions } from "./node-persistence.ts";
@@ -52,6 +55,12 @@ type WorkerRequest =
       readonly since: number;
       readonly limit?: number;
     }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "prune-usage-records";
+      readonly request: UsageRecordRetentionRequest;
+    }
   | { readonly version: 1; readonly id: string; readonly type: "close" }
   | { readonly version: 1; readonly id: string; readonly type: "cancel" };
 
@@ -81,6 +90,7 @@ type WorkerResponse =
 export interface NodeSqliteWorkerPersistence {
   readonly history: HistoryRepositoryService;
   readonly costs: CostUsageRepositoryService;
+  readonly retention: UsageRecordRetentionService;
   /** Graceful shutdown waits for queued work, closes SQLite, then exits the worker. */
   readonly close: Effect.Effect<void, InfrastructureError>;
 }
@@ -193,7 +203,14 @@ class NodeSqliteWorkerClient {
           "list cost usage records",
         ) as Effect.Effect<ReadonlyArray<CostUsageRecord>, InfrastructureError>,
     };
-    return { history, costs, close: this.close() };
+    const retention: UsageRecordRetentionService = {
+      prune: (request) =>
+        this.effect("prune-usage-records", { request }, "prune usage records") as Effect.Effect<
+          UsageRecordRetentionResult,
+          InfrastructureError
+        >,
+    };
+    return { history, costs, retention, close: this.close() };
   }
 
   private effect(
@@ -318,10 +335,12 @@ type RequestType =
   | "remove-provider-history"
   | "append-cost"
   | "list-cost"
+  | "prune-usage-records"
   | "close";
 type RequestPayload =
   | { readonly record: HistoryRecord }
   | { readonly record: CostUsageRecord }
+  | { readonly request: UsageRecordRetentionRequest }
   | { readonly providerId: string }
   | { readonly providerId: string; readonly since: number; readonly limit?: number }
   | Record<never, never>;

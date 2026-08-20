@@ -17,6 +17,123 @@ import {
 const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
 
 describe("Node SQLite persistence", () => {
+  it("prunes only records strictly before the inclusive retention edge and honors namespaces", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-retention-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    try {
+      for (const [providerId, recordedAt] of [
+        ["fixture-meter", 1],
+        ["fixture-meter", 2],
+        ["other-meter", 1],
+      ] as const) {
+        await Effect.runPromise(
+          persistence.history.append({
+            providerId,
+            recordedAt,
+            snapshot: snapshot(`2026-01-01T00:00:0${recordedAt}Z`),
+          }),
+        );
+      }
+      for (const [providerId, recordedAt] of [
+        ["codex", 1],
+        ["codex", 2],
+        ["claude", 1],
+      ] as const) {
+        await Effect.runPromise(
+          persistence.costs.append({
+            providerId,
+            recordedAt,
+            inputTokens: recordedAt,
+            outputTokens: recordedAt,
+            costUsd: recordedAt / 100,
+          }),
+        );
+      }
+
+      // Swift CostUsageStore retention keeps both requested-window edges.
+      await expect(
+        Effect.runPromise(
+          persistence.retention.prune({
+            before: 2,
+            historyProviderId: "fixture-meter",
+            costProviderId: "codex",
+          }),
+        ),
+      ).resolves.toEqual({ deletedHistoryRecords: 1, deletedCostUsageRecords: 1 });
+      await expect(
+        Effect.runPromise(persistence.history.list("fixture-meter", 0)),
+      ).resolves.toEqual([
+        {
+          providerId: "fixture-meter",
+          recordedAt: 2,
+          snapshot: snapshot("2026-01-01T00:00:02Z"),
+        },
+      ]);
+      await expect(
+        Effect.runPromise(persistence.history.list("other-meter", 0)),
+      ).resolves.toHaveLength(1);
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual([
+        { providerId: "codex", recordedAt: 2, inputTokens: 2, outputTokens: 2, costUsd: 0.02 },
+      ]);
+      await expect(Effect.runPromise(persistence.costs.list("claude", 0))).resolves.toHaveLength(1);
+    } finally {
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back history and cost pruning together when SQLite rejects either delete", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-retention-atomic-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    try {
+      for (const recordedAt of [1, 2]) {
+        await Effect.runPromise(
+          persistence.history.append({
+            providerId: "codex" as ProviderId,
+            recordedAt,
+            snapshot: snapshot(`2026-01-01T00:00:0${recordedAt}Z`),
+          }),
+        );
+        await Effect.runPromise(
+          persistence.costs.append({
+            providerId: "codex" as ProviderId,
+            recordedAt,
+            inputTokens: recordedAt,
+            outputTokens: recordedAt,
+            costUsd: recordedAt / 100,
+          }),
+        );
+      }
+      const inspection = new DatabaseSync(databasePath);
+      try {
+        inspection.exec(`
+          CREATE TRIGGER fixture_abort_cost_retention
+          BEFORE DELETE ON cost_usage_records
+          WHEN OLD.recorded_at = 2
+          BEGIN SELECT RAISE(ABORT, 'fixture retention failure'); END;
+        `);
+      } finally {
+        inspection.close();
+      }
+
+      await expect(
+        Effect.runPromise(persistence.retention.prune({ before: 3 })),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "prune usage records",
+      });
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toHaveLength(
+        2,
+      );
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(2);
+    } finally {
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps user-plugin history isolated and removes only the requested instance", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-plugin-history-"));
     const databasePath = join(directory, "usage.sqlite");
