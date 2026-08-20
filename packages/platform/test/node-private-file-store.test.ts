@@ -150,7 +150,7 @@ describe("Node private file store", () => {
         sidReads += 1;
         return "S-1-5-21-101-202-303-1001";
       },
-      grantCurrentUserFullControl: async (path: string, sid: string) => {
+      replaceWithCurrentUserDacl: async (path: string, sid: string) => {
         grants.push({ path, sid });
       },
     };
@@ -171,12 +171,12 @@ describe("Node private file store", () => {
   });
 
   it("fails closed when the Windows SID adapter returns invalid data", async () => {
-    const grantCurrentUserFullControl = async (): Promise<void> => {
+    const replaceWithCurrentUserDacl = async (): Promise<void> => {
       throw new Error("must not grant an invalid SID");
     };
     const restrict = makeNodePrivateFileRestriction({
       platform: "win32",
-      windowsAcl: { currentUserSid: async () => "not-a-sid", grantCurrentUserFullControl },
+      windowsAcl: { currentUserSid: async () => "not-a-sid", replaceWithCurrentUserDacl },
     });
     await expect(restrict("C:\\data\\credentials.json")).rejects.toThrow("SID is invalid");
   });

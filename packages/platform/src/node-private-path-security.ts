@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
-import { chmod } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, rm, writeFile } from "node:fs/promises";
+import { win32 as windowsPath } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -13,8 +15,8 @@ const WINDOWS_SID = /^S-\d+(?:-\d+)+$/iu;
 export interface WindowsAclAdapter {
   /** Returns the SID for the account running this process, never a user name. */
   readonly currentUserSid: () => Promise<string>;
-  /** Replaces inherited access with full control for that SID. */
-  readonly grantCurrentUserFullControl: (path: string, sid: string) => Promise<void>;
+  /** Replaces the complete DACL with full control for that SID. */
+  readonly replaceWithCurrentUserDacl: (path: string, sid: string) => Promise<void>;
 }
 
 export interface NodePrivatePathRestrictionOptions {
@@ -38,7 +40,7 @@ export const makeNodePrivateFileRestriction = (
   let sid: Promise<string> | undefined;
   return async (path) => {
     sid ??= acl.currentUserSid().then(validateWindowsSid);
-    await acl.grantCurrentUserFullControl(path, await sid);
+    await acl.replaceWithCurrentUserDacl(path, await sid);
   };
 };
 
@@ -53,7 +55,7 @@ export const makeNodePrivateDirectoryRestriction = (
   let sid: Promise<string> | undefined;
   return async (path) => {
     sid ??= acl.currentUserSid().then(validateWindowsSid);
-    await acl.grantCurrentUserFullControl(path, await sid);
+    await acl.replaceWithCurrentUserDacl(path, await sid);
   };
 };
 
@@ -69,15 +71,28 @@ const nativeWindowsAcl: WindowsAclAdapter = {
     const sid = lastCsvField(stdout.trim());
     return validateWindowsSid(sid);
   },
-  grantCurrentUserFullControl: async (path, sid) => {
-    // The leading `*` tells icacls this is a SID, avoiding localization and
-    // account-name resolution. Output is discarded so paths never leak via
-    // logs, and a non-zero exit makes the private write fail closed.
-    await execFileAsync("icacls.exe", [path, "/inheritance:r", "/grant:r", `*${sid}:(F)`], {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024,
-      windowsHide: true,
-    });
+  replaceWithCurrentUserDacl: async (path, sid) => {
+    const name = windowsPath.basename(path);
+    if (name.length === 0 || name === "." || name === ".." || /[\\/\u0000-\u001f]/u.test(name)) {
+      throw new Error("Windows private path basename is invalid");
+    }
+    const parent = windowsPath.dirname(path);
+    const restoreFile = windowsPath.join(parent, `.codexbar-multi-acl-${randomUUID()}.txt`);
+    // icacls /restore uses a UTF-16LE ACL file with a path relative to the
+    // supplied parent. `P` marks a protected DACL, replacing all inherited
+    // and explicit ACEs rather than merely adding a current-user grant.
+    const sddl = `${name}\r\nD:P(A;;FA;;;${sid})\r\n`;
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(sddl, "utf16le")]);
+    try {
+      await writeFile(restoreFile, bytes, { flag: "wx", mode: 0o600 });
+      await execFileAsync("icacls.exe", [parent, "/restore", restoreFile, "/c"], {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024,
+        windowsHide: true,
+      });
+    } finally {
+      await rm(restoreFile, { force: true });
+    }
   },
 };
 
