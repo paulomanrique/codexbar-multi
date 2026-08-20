@@ -69,7 +69,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Port the complete 14-provider simple HTTP wave with dedicated TypeScript tests.
 - [ ] Finish Swift-oracle/native parity gates for the simple HTTP wave.
 - [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial).
-- [ ] Port cookie/web providers using isolated Electron sessions plus manual fallback.
+- [ ] Port cookie/web providers using isolated Electron sessions plus manual fallback (Cursor, OpenCode, OpenCode Go, Alibaba, Alibaba Token Plan, Qwen Cloud, Devin, Factory, and Kimi are partial).
 - [ ] Port local/CLI/OAuth-complex providers and their platform adapters.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
 

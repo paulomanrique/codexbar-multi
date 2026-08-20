@@ -119,128 +119,149 @@ providers:
   - id: cursor
     swiftGlobs:
       - Sources/CodexBar/Providers/Cursor/**/*.swift
+      - Sources/CodexBarCore/Providers/Cursor/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Cursor*Tests.swift
         - TestsLinux/*Cursor*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Cursor/**/*
     tsPaths:
       expected: [packages/providers/src/providers/cursor.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/cursor.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-wave-a.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: opencode
     swiftGlobs:
       - Sources/CodexBar/Providers/OpenCode/**/*.swift
+      - Sources/CodexBarCore/Providers/OpenCode/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*OpenCode*Tests.swift
         - TestsLinux/*OpenCode*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenCode/**/*
     tsPaths:
       expected: [packages/providers/src/providers/opencode.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/opencode.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-wave-a.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: opencodego
     swiftGlobs:
       - Sources/CodexBar/Providers/OpenCodeGo/**/*.swift
+      - Sources/CodexBarCore/Providers/OpenCodeGo/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*OpenCodeGo*Tests.swift
         - TestsLinux/*OpenCodeGo*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenCodeGo/**/*
     tsPaths:
       expected: [packages/providers/src/providers/opencodego.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/opencodego.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-wave-a.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: alibaba
     swiftGlobs:
       - Sources/CodexBar/Providers/Alibaba/**/*.swift
+      - Sources/CodexBarCore/Providers/Alibaba/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Alibaba*Tests.swift
         - TestsLinux/*Alibaba*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Alibaba/**/*
     tsPaths:
       expected: [packages/providers/src/providers/alibaba.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/alibaba.ts
+    tsTestGlobs:
+      - packages/providers/test/alibaba-qwen-provider-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: alibabatokenplan
     swiftGlobs:
       - Sources/CodexBar/Providers/Alibaba/**/*.swift
+      - Sources/CodexBarCore/Providers/Alibaba/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Alibaba*Tests.swift
         - TestsLinux/*Alibaba*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/AlibabaTokenPlan/**/*
     tsPaths:
       expected: [packages/providers/src/providers/alibabatokenplan.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/alibabatokenplan.ts
+    tsTestGlobs:
+      - packages/providers/test/alibaba-qwen-provider-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: qwencloud
     swiftGlobs:
       - Sources/CodexBar/Providers/QwenCloud/**/*.swift
+      - Sources/CodexBarCore/Providers/QwenCloud/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*QwenCloud*Tests.swift
         - TestsLinux/*QwenCloud*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/QwenCloud/**/*
       - Tests/CodexBarTests/Fixtures/QwenCloud/**/*
     tsPaths:
       expected: [packages/providers/src/providers/qwencloud.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/qwencloud.ts
+    tsTestGlobs:
+      - packages/providers/test/alibaba-qwen-provider-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: factory
     swiftGlobs:
       - Sources/CodexBar/Providers/Factory/**/*.swift
+      - Sources/CodexBarCore/Providers/Factory/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Factory*Tests.swift
         - TestsLinux/*Factory*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-c.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Factory/**/*
     tsPaths:
       expected: [packages/providers/src/providers/factory.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/factory.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-c.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: fireworks
@@ -327,19 +348,22 @@ providers:
   - id: devin
     swiftGlobs:
       - Sources/CodexBar/Providers/Devin/**/*.swift
+      - Sources/CodexBarCore/Providers/Devin/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Devin*Tests.swift
         - TestsLinux/*Devin*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-c.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Devin/**/*
     tsPaths:
       expected: [packages/providers/src/providers/devin.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/devin.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-c.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: zai
@@ -406,19 +430,22 @@ providers:
   - id: kimi
     swiftGlobs:
       - Sources/CodexBar/Providers/Kimi/**/*.swift
+      - Sources/CodexBarCore/Providers/Kimi/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Kimi*Tests.swift
         - TestsLinux/*Kimi*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-c.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Kimi/**/*
     tsPaths:
       expected: [packages/providers/src/providers/kimi.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/kimi.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-c.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: kilo
