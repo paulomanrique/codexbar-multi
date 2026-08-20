@@ -35,11 +35,15 @@ components:
       - Sources/CodexBar/Config/**/*.swift
     tsPaths:
       - packages/contracts/src/config.ts
+      - packages/core/src/config.ts
       - packages/core/src/services.ts
+      - packages/platform/src/node-persistence.ts
     tests:
       - Tests/CodexBarTests/CLIConfigCommandTests.swift
       - Tests/CodexBarTests/Config*.swift
       - packages/contracts/test/*.test.ts
+      - packages/core/test/config.test.ts
+      - packages/platform/test/node-persistence.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Config/*.json
       - Tests/CodexBarTests/Fixtures/codex-config-*.toml
@@ -163,6 +167,7 @@ components:
       - packages/plugin-runtime/src/**/*.ts
       - packages/contracts/src/usage.ts
       - packages/testkit/src/**/*.ts
+      - apps/desktop/src/main/plugin-sandbox-*.ts
     tests:
       - TestsPlugin/**/*.swift
       - Tests/CodexBarTests/Sub2APIPluginGoldenTests.swift
@@ -170,6 +175,28 @@ components:
     fixtures:
       - Sources/CodexBarCore/Resources/Plugins/*.js
       - Sources/CodexBarCore/Resources/Plugins/*.ts
+    status: partial
+    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+
+  - id: legacy-import
+    description: Opt-in Swift data inspection, safe config/history/cost/plugin import, journal, and rollback.
+    swiftGlobs:
+      - Sources/CodexBarCore/Config/**/*.swift
+      - Sources/CodexBarCore/Stores/**/*.swift
+      - Sources/CodexBarCore/Plugins/**/*.swift
+      - Sources/CodexBar/PlanUtilizationHistoryStore.swift
+    tsPaths:
+      - packages/core/src/legacy-import.ts
+      - packages/platform/src/legacy-import.ts
+    tests:
+      - Tests/CodexBarTests/Config*.swift
+      - Tests/CodexBarTests/CostUsage*Tests.swift
+      - TestsPlugin/**/*.swift
+      - packages/core/test/legacy-import.test.ts
+      - packages/platform/test/legacy-import.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/CostUsage/**/*
+      - Tests/CodexBarTests/Fixtures/Config/*
     status: partial
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
 

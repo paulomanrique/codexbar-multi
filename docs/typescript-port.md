@@ -21,7 +21,7 @@ contracts <- core <- providers
 
 The React renderer receives high-level DTOs through an explicit frozen preload API. It has no raw IPC, filesystem, process, cookie, token, or credential-store access. Browser windows use context isolation, sandboxing, disabled Node integration, a restrictive CSP, and denied popup/navigation defaults.
 
-First-party providers are trusted TypeScript modules. Installed user providers remain untrusted and execute in QuickJS with the upstream security surface: a 1 MiB source/response budget, 64 MiB heap, 2 MiB JavaScript stack, 20 second execution deadline, declared origins/auth/secrets/capabilities/cookie domains, and approval bindings that invalidate on capability drift. A transport-neutral host broker now enforces redirect, response-size, request-timeout, auth-header, cookie-domain, cancellation, and approval-drift policy; the Electron utility-process transport still needs to be connected. The package API does not expose Node or Electron to the guest.
+First-party providers are trusted TypeScript modules. Installed user providers remain untrusted and execute in QuickJS with the upstream security surface: a 1 MiB source/response budget, 64 MiB heap, 2 MiB JavaScript stack, 20 second execution deadline, declared origins/auth/secrets/capabilities/cookie domains, and approval bindings that invalidate on capability drift. A transport-neutral host broker enforces redirect, response-size, request-timeout, auth-header, cookie-domain, cancellation, and approval-drift policy. The Electron utility process is kill-and-recreate, serializes QuickJS work, preserves synchronous declared settings, bounds a per-plugin cache, and does not expose Node or Electron to the guest. Product-level plugin installation/approval IPC and snapshot persistence remain intentionally unwired until the complete upstream plugin suite passes.
 
 ## Upstream maintenance
 
@@ -39,12 +39,12 @@ Upstream workflows are preserved as inert reference material in `upstream-refere
 
 - Workspace, strict TypeScript configuration, Effect contracts/services, architecture gate, and oracle normalization.
 - Closed 69-provider ID roster and a registry that makes unported entries explicit rather than silently omitting them.
-- Executable TypeScript modules for 31 providers: the 16 already shipped upstream as JavaScript/TypeScript plugins, Codex's first OAuth slice, and the first 14-provider HTTP wave. They remain `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
+- Executable TypeScript modules for 34 providers: the 16 already shipped upstream as JavaScript/TypeScript plugins, Codex's first OAuth slice, the complete first 14-provider HTTP wave, and the initial Azure OpenAI/Gemini/Vertex AI cloud slice. They remain `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
 - A minimal Codex OAuth vertical slice with cross-platform `auth.json` discovery in the CLI composition root and shared `wham/usage` parsing.
 - Swift-compatible UsageSnapshot wire codecs preserve stable null lanes, omission defaults, legacy identity keys, bounded details, ISO dates, and persisted provider enrichments.
 - Shared quota warning, reset boundary/backfill, and linear/workday pace calculations are ported from the Swift decision tables.
-- Node/platform adapters, native keyring credentials, SQLite WAL/migrations in a dedicated worker, bounded history/cost queries, constant-size latest-snapshot overview reads, first CLI usage path, Electron tray/popup shell, typed preload IPC, and React overview.
-- OpenAI and T3 Chat now have dedicated Swift-derived vertical-slice goldens; five provider entries are behaviorally `partial` in the semantic matrix while the other executable modules remain awaiting dedicated parity tests.
-- QuickJS manifest inspection, approval binding, and transport-neutral capability/HTTP broker with the upstream limits and security fields.
+- Node/platform adapters, native keyring credentials, normalized atomic config, SQLite WAL/migrations in a dedicated worker, bounded history/cost queries, persisted provider refresh, constant-size latest-snapshot overview reads, first CLI framework, Electron tray/popup shell, typed preload IPC, and React overview.
+- The semantic provider matrix contains 24 `partial` entries with dedicated coverage growing provider-by-provider; no entry is called `parity` before its Swift fixtures, fallback rules, and native scenario pass.
+- Opt-in data-only legacy import rescans bounded JSON/JSONL, disables imported hooks, copies plugins without approvals, journals rollback, and never imports credentials implicitly.
 
 This is an implementation milestone, not feature parity. Entries remain `partial` until their Swift tests/fixtures and native smoke scenarios pass. Packaging scripts deliberately fail closed until the cross-platform parity gate is approved.

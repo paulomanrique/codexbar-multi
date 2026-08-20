@@ -59,19 +59,22 @@ providers:
   - id: azureopenai
     swiftGlobs:
       - Sources/CodexBar/Providers/AzureOpenAI/**/*.swift
+      - Sources/CodexBarCore/Providers/AzureOpenAI/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*AzureOpenAI*Tests.swift
         - TestsLinux/*AzureOpenAI*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/cloud-parity-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/AzureOpenAI/**/*
     tsPaths:
       expected: [packages/providers/src/providers/azureopenai.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/azureopenai.ts
+    tsTestGlobs:
+      - packages/providers/test/cloud-parity-wave-a.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: claude
@@ -265,19 +268,22 @@ providers:
   - id: gemini
     swiftGlobs:
       - Sources/CodexBar/Providers/Gemini/**/*.swift
+      - Sources/CodexBarCore/Providers/Gemini/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Gemini*Tests.swift
         - TestsLinux/*Gemini*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/cloud-parity-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Gemini/**/*
     tsPaths:
       expected: [packages/providers/src/providers/gemini.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/gemini.ts
+    tsTestGlobs:
+      - packages/providers/test/cloud-parity-wave-a.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: antigravity
@@ -450,19 +456,22 @@ providers:
   - id: vertexai
     swiftGlobs:
       - Sources/CodexBar/Providers/VertexAI/**/*.swift
+      - Sources/CodexBarCore/Providers/VertexAI/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*VertexAI*Tests.swift
         - TestsLinux/*VertexAI*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/cloud-parity-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/VertexAI/**/*
     tsPaths:
       expected: [packages/providers/src/providers/vertexai.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/vertexai.ts
+    tsTestGlobs:
+      - packages/providers/test/cloud-parity-wave-a.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: augment
@@ -636,8 +645,9 @@ providers:
       expected: [packages/providers/src/providers/elevenlabs.ts]
       real:
         - packages/providers/src/providers/elevenlabs.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-three.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: warp
@@ -655,8 +665,9 @@ providers:
       expected: [packages/providers/src/providers/warp.ts]
       real:
         - packages/providers/src/providers/warp.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: windsurf
@@ -749,8 +760,9 @@ providers:
       expected: [packages/providers/src/providers/doubao.ts]
       real:
         - packages/providers/src/providers/doubao.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: sakana
@@ -862,8 +874,9 @@ providers:
       expected: [packages/providers/src/providers/codebuff.ts]
       real:
         - packages/providers/src/providers/codebuff.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-three.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: crof
@@ -1036,8 +1049,9 @@ providers:
       expected: [packages/providers/src/providers/llmproxy.ts]
       real:
         - packages/providers/src/providers/llmproxy.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-three.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: litellm
@@ -1114,8 +1128,9 @@ providers:
       expected: [packages/providers/src/providers/chutes.ts]
       real:
         - packages/providers/src/providers/chutes.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: neuralwatt
@@ -1133,8 +1148,9 @@ providers:
       expected: [packages/providers/src/providers/neuralwatt.ts]
       real:
         - packages/providers/src/providers/neuralwatt.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-three.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: clawrouter
@@ -1246,8 +1262,9 @@ providers:
       expected: [packages/providers/src/providers/aiand.ts]
       real:
         - packages/providers/src/providers/aiand.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-three.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: zoommate
@@ -1321,7 +1338,8 @@ providers:
       expected: [packages/providers/src/providers/ibmbob.ts]
       real:
         - packages/providers/src/providers/ibmbob.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
