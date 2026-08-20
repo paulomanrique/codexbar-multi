@@ -1,13 +1,24 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { DashboardSnapshotDTO } from "@codexbar/contracts";
 
+import { createLocalization } from "./localization.ts";
 import "./styles.css";
 
 function App() {
+  const localization = useMemo(() => createLocalization("system", navigator.languages), []);
   const [snapshot, setSnapshot] = useState<DashboardSnapshotDTO>();
   const [error, setError] = useState<string>();
   const [t3Status, setT3Status] = useState<"idle" | "waiting" | "connected">("idle");
+  useEffect(() => {
+    document.documentElement.lang = localization.locale;
+    document.documentElement.dir = localization.direction;
+    return () => {
+      document.documentElement.lang = "en";
+      document.documentElement.dir = "ltr";
+    };
+  }, [localization]);
+
   useEffect(() => {
     window.codexbar
       .getOverview()
@@ -20,10 +31,10 @@ function App() {
     <main>
       <header>
         <div>
-          <small>USAGE OVERVIEW</small>
+          <small>{localization.t("usageOverview")}</small>
           <h1>CodexBar Multi</h1>
         </div>
-        <span className="platform">TypeScript</span>
+        <span className="platform">{localization.t("platform")}</span>
       </header>
       {error === undefined ? null : <p className="error">{error}</p>}
       <div className="login-actions">
@@ -41,10 +52,10 @@ function App() {
           }}
         >
           {t3Status === "waiting"
-            ? "Aguardando login…"
+            ? localization.t("loginWaiting")
             : t3Status === "connected"
-              ? "T3 Chat conectado"
-              : "Entrar no T3 Chat"}
+              ? localization.t("loginConnected")
+              : localization.t("loginStart")}
         </button>
         {t3Status === "connected" ? (
           <button
@@ -55,20 +66,20 @@ function App() {
                 .then(() => setT3Status("idle"));
             }}
           >
-            Sair
+            {localization.t("logout")}
           </button>
         ) : null}
       </div>
       {snapshot === undefined ? (
-        <p className="muted">Carregando providers…</p>
+        <p className="muted">{localization.t("loadingProviders")}</p>
       ) : (
         <>
           <p className="muted">
-            {
+            {localization.providerSummary(
               snapshot.providers.filter((provider) => provider.implementationStatus === "partial")
-                .length
-            }{" "}
-            de {snapshot.providers.length} providers no primeiro corte.
+                .length,
+              snapshot.providers.length,
+            )}
           </p>
           <section>
             {snapshot.providers.map((provider) => (
@@ -78,12 +89,14 @@ function App() {
                   <strong>{provider.name}</strong>
                   <small>
                     {provider.implementationStatus === "partial"
-                      ? "Portado"
-                      : "Aguardando paridade"}
+                      ? localization.t("ported")
+                      : localization.t("awaitingParity")}
                   </small>
                 </div>
                 <span className={provider.implementationStatus === "partial" ? "ready" : "pending"}>
-                  {provider.implementationStatus === "partial" ? "ready" : "queued"}
+                  {provider.implementationStatus === "partial"
+                    ? localization.t("ready")
+                    : localization.t("queued")}
                 </span>
               </article>
             ))}
