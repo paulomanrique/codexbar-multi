@@ -9,5 +9,5 @@
     "rootDir": ".",
     "tsBuildInfoFile": "dist-types/.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "vite*.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.json", "test/**/*.ts", "vite*.config.ts"]
 }

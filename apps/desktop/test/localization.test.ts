@@ -2,10 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   LOCALE_METADATA,
+  UPSTREAM_CATALOGS,
   UPSTREAM_LOCALE_RESOURCE_PATHS,
   UPSTREAM_LOCALE_IDS,
   createLocalization,
   resolveLocale,
+  translateUpstream,
 } from "../src/renderer/localization.ts";
 
 describe("renderer localization catalog", () => {
@@ -18,6 +20,22 @@ describe("renderer localization catalog", () => {
       expect(UPSTREAM_LOCALE_RESOURCE_PATHS[locale]).toContain(
         `/Resources/${locale}.lproj/Localizable.strings`,
       );
+    }
+  });
+
+  it("ships the complete generated upstream catalogs", () => {
+    const englishKeys = Object.keys(UPSTREAM_CATALOGS.en.messages).sort();
+    expect(englishKeys).toHaveLength(1445);
+    expect(Object.keys(UPSTREAM_CATALOGS.en.plurals)).toHaveLength(2);
+    expect(Object.keys(UPSTREAM_CATALOGS.en.plurals).sort()).toEqual([
+      "Weekly can run out ≈%d windows early",
+      "≈%d full 5h windows of weekly left · %d windows until reset",
+    ]);
+    for (const locale of UPSTREAM_LOCALE_IDS) {
+      const catalog = UPSTREAM_CATALOGS[locale];
+      expect(catalog.source).toBe(UPSTREAM_LOCALE_RESOURCE_PATHS[locale]);
+      expect(Object.keys(catalog.messages).length).toBeGreaterThanOrEqual(englishKeys.length);
+      expect(Object.keys(catalog.plurals)).toHaveLength(2);
     }
   });
 
@@ -48,6 +66,16 @@ describe("renderer localization catalog", () => {
     const portuguese = createLocalization("pt-BR");
     expect(portuguese.providerSummary(1, 16)).toBe("1 de 16 provider no primeiro corte.");
     expect(portuguese.providerSummary(2, 16)).toBe("2 de 16 providers no primeiro corte.");
+  });
+
+  it("resolves upstream strings and stringsdict values", () => {
+    expect(translateUpstream("en", "About")).toBe("About");
+    expect(translateUpstream("de", "About")).toBe("Über");
+    const key = "≈%d full 5h windows of weekly left · %d windows until reset";
+    expect(translateUpstream("en", key, { left: 1, until: 2 })).toBe(
+      "≈1 full 5h window of weekly left · 2 windows until reset",
+    );
+    expect(createLocalization("en").upstream("About")).toBe("About");
   });
 
   it("falls back missing translations to the English source copy", () => {

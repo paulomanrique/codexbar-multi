@@ -3,10 +3,70 @@
  *
  * This module deliberately has no React, Electron, or Node dependency. The
  * locale IDs and native labels mirror the upstream AppLanguage catalog. The
- * message set is intentionally the small set currently rendered by the
- * TypeScript popup; the remaining upstream strings are tracked as a later
- * parity slice rather than silently pretending they have been ported.
+ * generated JSON catalogs are a lossless, reviewable representation of the
+ * Swift .strings/.stringsdict resources and remain keyed by upstream copy.
  */
+
+import ar from "./locales/ar.json" with { type: "json" };
+import ca from "./locales/ca.json" with { type: "json" };
+import de from "./locales/de.json" with { type: "json" };
+import en from "./locales/en.json" with { type: "json" };
+import es from "./locales/es.json" with { type: "json" };
+import fa from "./locales/fa.json" with { type: "json" };
+import fr from "./locales/fr.json" with { type: "json" };
+import gl from "./locales/gl.json" with { type: "json" };
+import id from "./locales/id.json" with { type: "json" };
+import it from "./locales/it.json" with { type: "json" };
+import ja from "./locales/ja.json" with { type: "json" };
+import ko from "./locales/ko.json" with { type: "json" };
+import nl from "./locales/nl.json" with { type: "json" };
+import pl from "./locales/pl.json" with { type: "json" };
+import ptBR from "./locales/pt-BR.json" with { type: "json" };
+import ru from "./locales/ru.json" with { type: "json" };
+import sv from "./locales/sv.json" with { type: "json" };
+import th from "./locales/th.json" with { type: "json" };
+import tr from "./locales/tr.json" with { type: "json" };
+import uk from "./locales/uk.json" with { type: "json" };
+import vi from "./locales/vi.json" with { type: "json" };
+import zhHans from "./locales/zh-Hans.json" with { type: "json" };
+import zhHant from "./locales/zh-Hant.json" with { type: "json" };
+
+export interface PluralCatalog {
+  readonly format: string;
+  readonly variables: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}
+
+export interface LocaleCatalog {
+  readonly source: string;
+  readonly messages: Readonly<Record<string, string>>;
+  readonly plurals: Readonly<Record<string, PluralCatalog>>;
+}
+
+export const UPSTREAM_CATALOGS: Readonly<Record<LocaleId, LocaleCatalog>> = {
+  ar,
+  ca,
+  de,
+  en,
+  es,
+  fa,
+  fr,
+  gl,
+  id,
+  it,
+  ja,
+  ko,
+  nl,
+  pl,
+  "pt-BR": ptBR,
+  ru,
+  sv,
+  th,
+  tr,
+  uk,
+  vi,
+  "zh-Hans": zhHans,
+  "zh-Hant": zhHant,
+};
 
 export const UPSTREAM_LOCALE_IDS = [
   "en",
@@ -108,7 +168,8 @@ export type MessageKey =
   | "ported"
   | "awaitingParity"
   | "ready"
-  | "queued";
+  | "queued"
+  | (string & {});
 
 export interface ProviderSummaryMessages {
   readonly one: string;
@@ -516,7 +577,9 @@ export interface Localization {
   readonly locale: LocaleId;
   readonly direction: TextDirection;
   readonly nativeName: string;
-  readonly t: (key: MessageKey) => string;
+  readonly catalog: LocaleCatalog;
+  readonly t: (key: MessageKey, values?: Readonly<Record<string, number | string>>) => string;
+  readonly upstream: (key: string, values?: Readonly<Record<string, number | string>>) => string;
   readonly providerSummary: (count: number, total: number) => string;
 }
 
@@ -584,6 +647,53 @@ function interpolate(
     .replaceAll("{total}", String(values.total));
 }
 
+function selectPlural(
+  locale: LocaleId,
+  count: number,
+  values: Readonly<Record<string, number | string>>,
+): string {
+  const category = new Intl.PluralRules(locale).select(count);
+  return String(values[category] ?? values.other ?? values.one ?? "");
+}
+
+/** Resolve a key from the complete upstream catalog, including .stringsdict. */
+export function translateUpstream(
+  locale: LocaleId,
+  key: string,
+  values: Readonly<Record<string, number | string>> = {},
+): string {
+  const catalog = UPSTREAM_CATALOGS[locale];
+  const plural =
+    catalog.plurals[key] ?? (locale === "en" ? undefined : UPSTREAM_CATALOGS.en.plurals[key]);
+  if (plural !== undefined) {
+    let format = plural.format;
+    for (const [name, variants] of Object.entries(plural.variables)) {
+      const count = Number(values[name] ?? values.count ?? 0);
+      const selected = selectPlural(locale, count, variants).replaceAll(
+        /%[dif]/gu,
+        String(values[name] ?? values.count ?? count),
+      );
+      format = format.replaceAll(`%#@${name}@`, selected);
+    }
+    let index = 0;
+    return format.replaceAll(/%[@dif]/gu, (token) => {
+      if (token === "%@" || token === "%d" || token === "%i" || token === "%f") {
+        const value = Object.values(values)[index++];
+        return value === undefined ? token : String(value);
+      }
+      return token;
+    });
+  }
+  const message =
+    catalog.messages[key] ?? (locale === "en" ? undefined : UPSTREAM_CATALOGS.en.messages[key]);
+  if (message === undefined) return key;
+  let index = 0;
+  return message.replaceAll(/%[@difs]/gu, (token) => {
+    const value = Object.values(values)[index++];
+    return value === undefined ? token : String(value);
+  });
+}
+
 export function createLocalization(
   preference: LocalePreference = "system",
   preferredLocales: readonly string[] = [],
@@ -592,11 +702,19 @@ export function createLocalization(
   const metadata = LOCALE_METADATA[locale];
   const messages = mergeMessages(locale);
   const pluralRules = new Intl.PluralRules(locale);
+  const catalog = UPSTREAM_CATALOGS[locale];
+  const upstream = (key: string, values: Readonly<Record<string, number | string>> = {}) =>
+    translateUpstream(locale, key, values);
   return {
     locale,
     direction: metadata.direction,
     nativeName: metadata.nativeName,
-    t: (key) => messages[key] as string,
+    catalog,
+    upstream,
+    t: (key, values = {}) => {
+      if (Object.hasOwn(messages, key)) return messages[key as keyof MessageBundle] as string;
+      return upstream(key, values);
+    },
     providerSummary: (count, total) => {
       const category = pluralRules.select(count) === "one" ? "one" : "other";
       return interpolate(messages.providerSummary[category], { count, total });

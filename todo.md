@@ -82,6 +82,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Port tray/settings/accounts/history/cost/notifications/autostart/shortcuts/privacy UI.
 - [ ] Port all 23 languages, pluralization, RTL, and visual tests.
   - [x] Establish the 23-locale catalog, current renderer messages, plural rules, and RTL direction.
+  - [x] Import the complete upstream `.strings`/`.stringsdict` catalogs with deterministic regeneration and English fallback.
+  - [ ] Apply the full catalog throughout the parity UI and complete locale/RTL visual tests.
 - [ ] Pass functional, security, persistence, cancellation, renderer, and provider gates.
 - [ ] Remove Swift, SwiftPM, and CQuickJS from TypeScript `multi` only after parity.
 - [ ] Add new TypeScript CI only after local parity gates pass.
