@@ -1,5 +1,5 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { mkdir } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Schema } from "effect";
 import {
@@ -222,10 +222,35 @@ const openReadConnection = (databasePath: string): DatabaseSync => {
 const restrictPrivateDatabaseArtifacts = async (databasePath: string): Promise<void> => {
   for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
     try {
-      await restrictPrivateFile(path);
+      await restrictExistingPrivateFile(path);
     } catch (error) {
       if (!isMissingFile(error)) throw error;
     }
+  }
+};
+
+/**
+ * SQLite may checkpoint and remove a sidecar between discovery and ACL setup.
+ * On Windows `icacls` reports that race as exit code 2 (not Node's ENOENT), so
+ * confirm the file still exists before treating it as a real ACL failure.
+ */
+const restrictExistingPrivateFile = async (path: string): Promise<void> => {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (isMissingFile(error)) return;
+    throw error;
+  }
+  try {
+    await restrictPrivateFile(path);
+  } catch (error) {
+    try {
+      await lstat(path);
+    } catch (afterRestrictionError) {
+      if (isMissingFile(afterRestrictionError)) return;
+      throw error;
+    }
+    throw error;
   }
 };
 

@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -89,18 +89,19 @@ describe("Node cost JSONL adapter", () => {
     }
   });
 
-  it("fails closed when the path is replaced after the handle is open", async () => {
+  it("fails closed when a source changes after the handle is open", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-cost-jsonl-swap-"));
     const path = join(directory, "session.jsonl");
-    const replacement = join(directory, "replacement.jsonl");
     try {
       await writeFile(path, "{}\n");
-      await writeFile(replacement, "{}\n");
       await expect(
         scanNodeCodexCostJsonl({
           path,
           beforeSourceRevalidation: async () => {
-            await rename(replacement, path);
+            // Replacing an open destination is deliberately denied by Windows
+            // sharing semantics. An in-place mutation reaches the same
+            // revalidation boundary on every supported filesystem.
+            await writeFile(path, '{"changed":true}\n');
           },
         }),
       ).rejects.toBeInstanceOf(CostJsonlSourceChangedError);
