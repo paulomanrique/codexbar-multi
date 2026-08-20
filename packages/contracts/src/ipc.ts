@@ -141,6 +141,37 @@ export const RefreshProviderResultDTO = Schema.Struct({
 });
 export type RefreshProviderResultDTO = Schema.Schema.Type<typeof RefreshProviderResultDTO>;
 
+/**
+ * The deliberately small settings projection available to the desktop UI.
+ * It is first-party only and intentionally omits every provider extension,
+ * secret, cookie, endpoint and plugin value from the renderer boundary.
+ */
+export const ProviderSettingsDTO = Schema.Struct({
+  provider: ProviderId,
+  enabled: Schema.Boolean,
+  source: ProviderSourceMode,
+  /** `auto` plus the single runtime-backed explicit mode for this provider. */
+  availableSources: Schema.Array(ProviderSourceMode).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(2)),
+  ),
+});
+export type ProviderSettingsDTO = Schema.Schema.Type<typeof ProviderSettingsDTO>;
+
+export const ProviderSettingsListDTO = Schema.Struct({
+  providers: Schema.Array(ProviderSettingsDTO).pipe(Schema.check(Schema.isMaxLength(69))),
+});
+export type ProviderSettingsListDTO = Schema.Schema.Type<typeof ProviderSettingsListDTO>;
+
+/** A complete replacement prevents an ambiguous partial write in the renderer. */
+export const UpdateProviderSettingsRequestDTO = Schema.Struct({
+  provider: ProviderId,
+  enabled: Schema.Boolean,
+  source: ProviderSourceMode,
+});
+export type UpdateProviderSettingsRequestDTO = Schema.Schema.Type<
+  typeof UpdateProviderSettingsRequestDTO
+>;
+
 export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-usage"), provider: Schema.optional(ProviderId) }),
   Schema.Struct({ type: Schema.Literal("refresh-provider"), request: RefreshProviderRequestDTO }),
@@ -149,6 +180,7 @@ export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-costs"), query: CostUsageQueryDTO }),
   Schema.Struct({ type: Schema.Literal("export-costs"), query: CostUsageQueryDTO }),
   Schema.Struct({ type: Schema.Literal("get-config") }),
+  Schema.Struct({ type: Schema.Literal("get-provider-settings") }),
   Schema.Struct({
     type: Schema.Literal("set-provider-enabled"),
     provider: ProviderInstanceId,
@@ -169,6 +201,7 @@ export const IPCResponse = Schema.Union([
   Schema.Struct({ type: Schema.Literal("costs"), payload: CostUsageQueryResultDTO }),
   Schema.Struct({ type: Schema.Literal("costs-export"), payload: CostUsageExportDTO }),
   Schema.Struct({ type: Schema.Literal("config"), payload: Schema.Unknown }),
+  Schema.Struct({ type: Schema.Literal("provider-settings"), payload: ProviderSettingsListDTO }),
   Schema.Struct({ type: Schema.Literal("error"), error: ProviderError }),
 ]);
 export type IPCResponse = Schema.Schema.Type<typeof IPCResponse>;

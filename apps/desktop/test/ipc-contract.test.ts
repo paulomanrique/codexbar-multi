@@ -8,6 +8,8 @@ import {
   LoginRequestDTO,
   PluginApprovalRequestDTO,
   PluginSecretRequestDTO,
+  ProviderSettingsDTO,
+  ProviderSettingsListDTO,
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
 } from "@codexbar/contracts";
@@ -62,6 +64,64 @@ describe("desktop IPC boundary", () => {
       provider: "openai",
       source: "api",
     });
+  });
+
+  it("allows only a bounded first-party provider settings projection", () => {
+    const decodeSettings = Schema.decodeUnknownSync(ProviderSettingsDTO);
+    const decodeList = Schema.decodeUnknownSync(ProviderSettingsListDTO);
+    expect(
+      decodeSettings({
+        provider: "openai",
+        enabled: true,
+        source: "api",
+        availableSources: ["auto", "api"],
+      }),
+    ).toEqual({
+      provider: "openai",
+      enabled: true,
+      source: "api",
+      availableSources: ["auto", "api"],
+    });
+    expect(() =>
+      decodeSettings({
+        provider: "fixture-plugin",
+        enabled: true,
+        source: "api",
+        availableSources: ["auto", "api"],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeSettings({
+        provider: "openai",
+        enabled: true,
+        source: "endpoint-override",
+        availableSources: ["auto", "api"],
+      }),
+    ).toThrow();
+    expect(
+      decodeSettings({
+        provider: "openai",
+        enabled: true,
+        source: "api",
+        availableSources: ["auto", "api"],
+        apiKey: "must never cross IPC",
+      }),
+    ).toEqual({
+      provider: "openai",
+      enabled: true,
+      source: "api",
+      availableSources: ["auto", "api"],
+    });
+    expect(() =>
+      decodeList({
+        providers: Array.from({ length: 70 }, () => ({
+          provider: "openai",
+          enabled: true,
+          source: "api",
+          availableSources: ["auto", "api"],
+        })),
+      }),
+    ).toThrow();
   });
 
   it("uses unique, high-level channels", () => {

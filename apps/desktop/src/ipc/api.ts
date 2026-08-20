@@ -21,6 +21,9 @@ import type {
   TestPluginResultDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
+  ProviderSettingsDTO,
+  ProviderSettingsListDTO,
+  UpdateProviderSettingsRequestDTO,
 } from "@codexbar/contracts";
 
 export const DesktopChannels = Object.freeze({
@@ -33,6 +36,8 @@ export const DesktopChannels = Object.freeze({
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
   refreshProvider: "codexbar-multi:refresh-provider",
+  getProviderSettings: "codexbar-multi:get-provider-settings",
+  updateProviderSettings: "codexbar-multi:update-provider-settings",
   listPlugins: "codexbar-multi:list-plugins",
   installPlugin: "codexbar-multi:install-plugin",
   previewPluginApproval: "codexbar-multi:preview-plugin-approval",
@@ -54,6 +59,11 @@ export interface CodexBarDesktopApi {
   readonly refreshProvider: (
     request: RefreshProviderRequestDTO,
   ) => Promise<RefreshProviderResultDTO>;
+  /** First-party enablement/source projection only; no config document or secrets. */
+  readonly getProviderSettings: () => Promise<ProviderSettingsListDTO>;
+  readonly updateProviderSettings: (
+    request: UpdateProviderSettingsRequestDTO,
+  ) => Promise<ProviderSettingsDTO>;
   readonly listPlugins: () => Promise<PluginListResultDTO>;
   readonly installPlugin: (request: InstallPluginRequestDTO) => Promise<InstalledPluginDTO>;
   readonly previewPluginApproval: (

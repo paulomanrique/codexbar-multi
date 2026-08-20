@@ -22,6 +22,9 @@ import {
   DashboardSnapshotDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
+  ProviderSettingsDTO,
+  ProviderSettingsListDTO,
+  UpdateProviderSettingsRequestDTO,
   HistoryExportDTO,
   HistoryQueryDTO,
   HistoryQueryResultDTO,
@@ -58,6 +61,13 @@ import { loadPersistedOverview } from "./overview.js";
 import { DesktopPluginManager } from "./plugin-manager.js";
 import { makePluginCredentialBrowserSessions } from "./plugin-browser-session.js";
 import { makeElectronPluginSandbox } from "./plugin-sandbox-process.js";
+import {
+  DesktopConfigMutations,
+  providerSettingsFor,
+  providerSettingsProjection,
+  providerSettingsSourcesForKind,
+  updateSupportedFirstPartyProviderSettings,
+} from "./provider-settings.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | undefined;
@@ -67,6 +77,14 @@ let providerRuntime: ProviderRuntimeService | undefined;
 let desktopConfig: PersistedCodexBarConfig | undefined;
 let pluginManager: DesktopPluginManager | undefined;
 let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
+const desktopConfigMutations = new DesktopConfigMutations();
+const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
+  id: provider.descriptor.id,
+  availableSources: providerSettingsSourcesForKind(provider.kind),
+}));
+const providerSettingsCapabilitiesById = new Map(
+  providerSettingsCapabilities.map((capability) => [capability.id, capability]),
+);
 /** Latest user-plugin snapshots are host-only and are cleared with the plugin. */
 const pluginSnapshots = new Map<string, UsageSnapshot>();
 const providerClock = makeSystemClock();
@@ -91,10 +109,13 @@ const overviewProviders = () => {
   const byId = new Map(desktopConfig?.providers.map((provider) => [provider.id, provider]));
   return PROVIDERS.map((provider) => {
     const configured = byId.get(provider.id);
+    const availableSources = providerSettingsCapabilitiesById.get(provider.id)
+      ?.availableSources ?? ["auto"];
+    const source = configured?.source;
     return {
       ...provider,
       enabled: configured?.enabled ?? provider.id === "codex",
-      source: configured?.source ?? "auto",
+      source: source !== undefined && availableSources.includes(source) ? source : "auto",
     } as const;
   });
 };
@@ -162,6 +183,22 @@ void app
         pluginProviderIds,
       },
     );
+    const mutateDesktopConfig = <Value>(
+      mutation: (current: PersistedCodexBarConfig) => Promise<{
+        readonly next: PersistedCodexBarConfig;
+        readonly value: Value;
+      }>,
+    ): Promise<Value> =>
+      desktopConfigMutations.run(async () => {
+        const current = desktopConfig;
+        if (current === undefined) throw new Error("Desktop config is not ready");
+        const result = await mutation(current);
+        // The repository performs a same-directory atomic replacement. Do not
+        // update the in-memory view until that replacement has succeeded.
+        await Effect.runPromise(configRepository.save(result.next));
+        desktopConfig = result.next;
+        return result.value;
+      });
     const credentials = makeNativeCredentialStore();
     providerRuntime = makeFirstPartyProviderRuntime({
       providers: FIRST_PARTY_PROVIDERS,
@@ -205,13 +242,14 @@ void app
       removeHistory: (pluginId) =>
         Effect.runPromise(activePersistence().history.removeProvider(pluginId)),
       removeConfig: async (pluginId) => {
-        const current = desktopConfig;
-        if (current === undefined) throw new Error("Desktop config is not ready");
-        const providers = current.providers.filter((provider) => provider.id !== pluginId);
-        if (providers.length === current.providers.length) return;
-        const next = { ...current, providers };
-        await Effect.runPromise(configRepository.save(next));
-        desktopConfig = next;
+        await mutateDesktopConfig(async (current) => {
+          const providers = current.providers.filter((provider) => provider.id !== pluginId);
+          return {
+            next:
+              providers.length === current.providers.length ? current : { ...current, providers },
+            value: undefined,
+          };
+        });
       },
       finalizeRemove: async (pluginId) => {
         pluginProviderIds.delete(pluginId);
@@ -237,6 +275,11 @@ void app
     const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
+    const decodeProviderSettings = Schema.decodeUnknownPromise(ProviderSettingsDTO);
+    const decodeProviderSettingsList = Schema.decodeUnknownPromise(ProviderSettingsListDTO);
+    const decodeUpdateProviderSettings = Schema.decodeUnknownPromise(
+      UpdateProviderSettingsRequestDTO,
+    );
     const decodeInstallPlugin = Schema.decodeUnknownPromise(InstallPluginRequestDTO);
     const decodeInstalledPlugin = Schema.decodeUnknownPromise(InstalledPluginDTO);
     const decodePluginList = Schema.decodeUnknownPromise(PluginListResultDTO);
@@ -317,6 +360,32 @@ void app
           source: outcome.source,
           snapshot: outcome.snapshot,
         });
+      }),
+    );
+    ipcMain.handle(DesktopChannels.getProviderSettings, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        const current = desktopConfig;
+        if (current === undefined) throw new Error("Desktop config is not ready");
+        return decodeProviderSettingsList({
+          providers: providerSettingsProjection(current, providerSettingsCapabilities),
+        });
+      }),
+    );
+    ipcMain.handle(DesktopChannels.updateProviderSettings, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeUpdateProviderSettings(input);
+        const saved = await mutateDesktopConfig(async (current) => {
+          const next = updateSupportedFirstPartyProviderSettings(
+            current,
+            request,
+            providerSettingsCapabilities,
+          );
+          return { next, value: next };
+        });
+        const projected = providerSettingsFor(saved, request, providerSettingsCapabilities);
+        if (projected === undefined) throw new Error("Provider settings are not available");
+        return decodeProviderSettings(projected);
       }),
     );
     ipcMain.handle(DesktopChannels.listPlugins, (_event, input: unknown) =>

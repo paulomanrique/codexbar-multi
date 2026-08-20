@@ -5,6 +5,9 @@ import type {
   DashboardProviderDTO,
   DashboardSnapshotDTO,
   HistoryQueryResultDTO,
+  ProviderSettingsDTO,
+  ProviderSettingsListDTO,
+  UpdateProviderSettingsRequestDTO,
 } from "@codexbar/contracts";
 
 import { createLocalization } from "./localization.ts";
@@ -16,6 +19,7 @@ import {
   implementationPresentation,
   safeDateFromTimestamp,
 } from "./view-model.ts";
+import { isAvailableProviderSource } from "./settings-view-model.ts";
 import "./styles.css";
 
 type DashboardTab = "usage" | "history" | "costs" | "settings";
@@ -285,9 +289,14 @@ function CostsPanel({
 
 function SettingsPanel({
   provider,
+  settings,
   copy,
+  pending,
+  error,
+  onUpdate,
 }: {
   readonly provider: DashboardProviderDTO;
+  readonly settings: ProviderSettingsDTO | undefined;
   readonly copy: {
     readonly enabled: string;
     readonly disabled: string;
@@ -296,19 +305,63 @@ function SettingsPanel({
     readonly source: string;
     readonly unavailable: string;
     readonly parityPending: string;
+    readonly refreshing: string;
   };
+  readonly pending: boolean;
+  readonly error: string | undefined;
+  readonly onUpdate: (request: UpdateProviderSettingsRequestDTO) => void;
 }) {
+  const providerId = settings?.provider ?? firstPartyProviderId(provider.id);
+  const disabled = providerId === undefined || settings === undefined || pending;
   return (
     <>
       <h2>{copy.settings}</h2>
       <label className="settings-toggle">
-        <input checked={provider.enabled} disabled type="checkbox" />
-        <span>{provider.enabled ? copy.enabled : copy.disabled}</span>
+        <input
+          checked={settings?.enabled ?? provider.enabled}
+          disabled={disabled}
+          type="checkbox"
+          onChange={(event) => {
+            if (providerId === undefined || settings === undefined) return;
+            onUpdate({
+              provider: providerId,
+              enabled: event.target.checked,
+              source: settings.source,
+            });
+          }}
+        />
+        <span>{(settings?.enabled ?? provider.enabled) ? copy.enabled : copy.disabled}</span>
       </label>
-      <p className="muted">
-        Provider enablement is read-only in this desktop slice. A settings IPC is required before it
-        can be changed safely.
-      </p>
+      <label className="settings-source">
+        <span>{copy.source}</span>
+        <select
+          aria-label={copy.source}
+          disabled={disabled}
+          value={settings?.source ?? provider.source}
+          onChange={(event) => {
+            if (providerId === undefined || settings === undefined) return;
+            const source = event.target.value;
+            if (!isAvailableProviderSource(source, settings.availableSources)) return;
+            onUpdate({
+              provider: providerId,
+              enabled: settings.enabled,
+              source,
+            });
+          }}
+        >
+          {(settings?.availableSources ?? []).map((source) => (
+            <option key={source} value={source}>
+              {source}
+            </option>
+          ))}
+        </select>
+      </label>
+      {pending ? <p className="muted">{copy.refreshing}</p> : null}
+      {error === undefined ? null : (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       <dl className="settings-summary">
         <div>
           <dt>{copy.provider}</dt>
@@ -316,7 +369,7 @@ function SettingsPanel({
         </div>
         <div>
           <dt>{copy.source}</dt>
-          <dd>{provider.source}</dd>
+          <dd>{settings?.source ?? provider.source}</dd>
         </div>
         <div>
           <dt>TypeScript</dt>
@@ -334,11 +387,17 @@ function SettingsPanel({
 function App() {
   const localization = useMemo(() => createLocalization("system", navigator.languages), []);
   const [snapshot, setSnapshot] = useState<DashboardSnapshotDTO>();
+  const [providerSettings, setProviderSettings] = useState<ProviderSettingsListDTO>();
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<DashboardTab>("usage");
   const [selectedProviderId, setSelectedProviderId] = useState<string>();
   const [providerSearch, setProviderSearch] = useState("");
   const [refreshingProviderId, setRefreshingProviderId] = useState<string>();
+  const [savingProviderId, setSavingProviderId] = useState<string>();
+  const [settingsError, setSettingsError] = useState<{
+    readonly provider: string;
+    readonly message: string;
+  }>();
   const [history, setHistory] = useState<HistoryQueryResultDTO>();
   const [costs, setCosts] = useState<CostUsageQueryResultDTO>();
   const [activityLoading, setActivityLoading] = useState(false);
@@ -350,6 +409,9 @@ function App() {
   );
   const selectedProviderFirstPartyId =
     selectedProvider === undefined ? undefined : firstPartyProviderId(selectedProvider.id);
+  const selectedProviderSettings = providerSettings?.providers.find(
+    (settings) => settings.provider === selectedProviderFirstPartyId,
+  );
   const filteredProviders =
     snapshot?.providers.filter((provider) => {
       const query = providerSearch.trim().toLocaleLowerCase(localization.locale);
@@ -361,8 +423,12 @@ function App() {
     }) ?? [];
   const loadOverview = async (): Promise<void> => {
     try {
-      const overview = await window.codexbar.getOverview();
+      const [overview, settings] = await Promise.all([
+        window.codexbar.getOverview(),
+        window.codexbar.getProviderSettings(),
+      ]);
       setSnapshot(overview);
+      setProviderSettings(settings);
       setSelectedProviderId((current) => current ?? overview.providers[0]?.id);
       setError(undefined);
     } catch {
@@ -423,6 +489,20 @@ function App() {
       .then(() => setActivityVersion((version) => version + 1))
       .catch(() => setError(localization.upstream("Unavailable")))
       .finally(() => setRefreshingProviderId(undefined));
+  };
+  const updateProviderSettings = (request: UpdateProviderSettingsRequestDTO): void => {
+    setSavingProviderId(request.provider);
+    setSettingsError(undefined);
+    void window.codexbar
+      .updateProviderSettings(request)
+      .then(loadOverview)
+      .catch(() =>
+        setSettingsError({
+          provider: request.provider,
+          message: localization.upstream("Unavailable"),
+        }),
+      )
+      .finally(() => setSavingProviderId(undefined));
   };
   const partialCount = snapshot?.providers.filter(
     (provider) => implementationPresentation(provider) === "parity-pending",
@@ -618,7 +698,16 @@ function App() {
         {selectedProvider === undefined ? (
           <p className="muted">{copy.noUsageYet}</p>
         ) : (
-          <SettingsPanel provider={selectedProvider} copy={copy} />
+          <SettingsPanel
+            provider={selectedProvider}
+            settings={selectedProviderSettings}
+            copy={copy}
+            error={
+              settingsError?.provider === selectedProvider.id ? settingsError.message : undefined
+            }
+            pending={savingProviderId === selectedProvider.id}
+            onUpdate={updateProviderSettings}
+          />
         )}
       </section>
       <section className="providers-panel" aria-label={localization.upstream("Providers")}>
