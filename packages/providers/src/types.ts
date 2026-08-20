@@ -64,6 +64,8 @@ export type ProviderEndpoint =
   | {
       readonly setting: string;
       readonly policy: "https" | "https-or-loopback-http" | "https-or-private-network-http";
+      /** Safe provider-owned default; renderer input never controls this value. */
+      readonly default?: string;
     }
   | {
       /** Allow only this exact DNS suffix (or a direct host), never a wildcard. */

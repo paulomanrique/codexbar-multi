@@ -151,7 +151,7 @@ const endpointOrigins = (
       }
       continue;
     }
-    const configured = setting(endpoint.setting);
+    const configured = setting(endpoint.setting) ?? endpoint.default;
     if (configured === undefined) continue;
     const transport =
       endpoint.policy === "https"

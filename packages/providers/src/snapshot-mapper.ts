@@ -1,4 +1,4 @@
-import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
+import type { ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 
 const MAXIMUM_STRING_BYTES = 256;
 const MAXIMUM_EXTRA_WINDOWS = 64;
@@ -217,7 +217,7 @@ function mapDetails(root: JsonObject) {
   });
 }
 
-function mapIdentity(root: JsonObject, providerId: ProviderId) {
+function mapIdentity(root: JsonObject, providerId: ProviderInstanceId) {
   const source = optionalObject(root.identity, "identity");
   if (source === undefined) return undefined;
   return {
@@ -255,7 +255,7 @@ function mapIdentity(root: JsonObject, providerId: ProviderId) {
  */
 export function mapProviderSnapshot(
   value: unknown,
-  providerId: ProviderId,
+  providerId: ProviderInstanceId,
   now: Date,
 ): UsageSnapshot {
   const root = object(value, "fetchUsage result");
