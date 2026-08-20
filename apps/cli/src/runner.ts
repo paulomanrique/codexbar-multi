@@ -665,6 +665,12 @@ export const makeNodeCLIProviderRuntime = (
           hasValue(codexCredential.accountId)
         )
           return Effect.succeed(codexCredential.accountId);
+        if (
+          providerId === "codex" &&
+          setting === "CODEX_PERSONAL_ACCESS_TOKEN" &&
+          hasValue(codexCredential.personalAccessToken)
+        )
+          return Effect.succeed(codexCredential.personalAccessToken);
         return environmentSettings.read(providerId, setting);
       },
     },

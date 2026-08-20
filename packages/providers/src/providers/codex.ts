@@ -4,6 +4,7 @@ import type {
   ProviderDefinition,
   ProviderDescriptor,
 } from "../types.ts";
+import { fetchCodexPATUsage, isCodexPATAuthenticationFailure } from "./codex-pat.ts";
 
 interface CodexWindow {
   readonly used_percent: number;
@@ -64,65 +65,100 @@ function optionalNumber(value: unknown): number | undefined {
 const definition: ProviderDefinition = {
   id: "codex",
   name: "Codex",
-  endpoints: ["https://chatgpt.com"],
-  auth: { type: "bearer", secret: "CODEX_ACCESS_TOKEN" },
+  endpoints: ["https://chatgpt.com", "https://auth.openai.com"],
   settings: [
     { key: "CODEX_ACCESS_TOKEN", title: "Codex OAuth access token", type: "secure" },
+    {
+      key: "CODEX_PERSONAL_ACCESS_TOKEN",
+      title: "Codex personal access token",
+      type: "secure",
+    },
     { key: "CODEX_ACCOUNT_ID", title: "ChatGPT account ID", type: "plain" },
+    { key: "CODEX_CLI_USER_AGENT", title: "Codex CLI user agent", type: "plain" },
   ],
   fetchUsage: async (ctx: ProviderContext) => {
-    const accountId = ctx.settings.get("CODEX_ACCOUNT_ID");
-    const response = await ctx.http.getJSON("https://chatgpt.com/backend-api/wham/usage", {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "CodexBar Multi",
-        ...(accountId === undefined ? {} : { "ChatGPT-Account-Id": accountId }),
-      },
-    });
-    if (response.status === 401 || response.status === 403) {
-      throw ctx.fail.authenticationExpired(
-        "Codex OAuth token expired or invalid. Run `codex login` to re-authenticate.",
+    const pat = optionalString(ctx.settings.getSecret("CODEX_PERSONAL_ACCESS_TOKEN"));
+    const oauth = optionalString(ctx.settings.getSecret("CODEX_ACCESS_TOKEN"));
+    if (ctx.sourceMode !== "oauth" && pat !== undefined) {
+      try {
+        return await fetchCodexPATUsage(ctx, pat);
+      } catch (error) {
+        // Upstream only falls through from an unusable PAT in Auto mode. A
+        // malformed/server response remains terminal so it cannot hide data
+        // corruption or an API outage behind a different credential.
+        if (
+          ctx.sourceMode === "auto" &&
+          oauth !== undefined &&
+          isCodexPATAuthenticationFailure(error)
+        ) {
+          return fetchOAuthUsage(ctx, oauth);
+        }
+        throw error;
+      }
+    }
+    if (ctx.sourceMode === "api") {
+      throw ctx.fail.missingCredential(
+        "Missing Codex personal access token. Run `codex login` to re-authenticate.",
       );
     }
-    if (response.status === 429)
-      throw ctx.fail.rateLimited("Codex usage API rate limited the request");
-    if (response.status < 200 || response.status >= 300) {
-      throw ctx.fail.apiFailure(`Codex usage API error: HTTP ${response.status}`);
+    if (oauth === undefined) {
+      throw ctx.fail.missingCredential(
+        "Missing Codex personal access token or OAuth access token. Run `codex login` to re-authenticate.",
+      );
     }
-    if (
-      typeof response.json !== "object" ||
-      response.json === null ||
-      Array.isArray(response.json)
-    ) {
-      throw ctx.fail.parseFailure("Invalid response from Codex usage API");
-    }
-    const payload = response.json as CodexUsagePayload;
-    const primary = parseWindow(ctx, payload.rate_limit?.primary_window, "primary_window");
-    const secondary = parseWindow(ctx, payload.rate_limit?.secondary_window, "secondary_window");
-    const balance = optionalNumber(payload.credits?.balance);
-    return {
-      ...(primary === undefined ? {} : { primary }),
-      ...(secondary === undefined ? {} : { secondary }),
-      identity: {
-        providerId: "codex",
-        accountId:
-          optionalString(payload.account_id) ?? optionalString(payload.accountId) ?? accountId,
-        loginMethod: optionalString(payload.plan_type),
-      },
-      ...(payload.credits === undefined
-        ? {}
-        : {
-            credits: {
-              hasCredits: payload.credits.has_credits === true,
-              unlimited: payload.credits.unlimited === true,
-              ...(balance === undefined ? {} : { balance }),
-            },
-          }),
-      details: [],
-      updatedAt: ctx.date.now().toISOString(),
-      dataConfidence: primary === undefined && secondary === undefined ? "unknown" : "exact",
-    };
+    return fetchOAuthUsage(ctx, oauth);
   },
+};
+
+const fetchOAuthUsage = async (ctx: ProviderContext, accessToken: string) => {
+  const accountId = ctx.settings.get("CODEX_ACCOUNT_ID");
+  const response = await ctx.http.getJSON("https://chatgpt.com/backend-api/wham/usage", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      "User-Agent": "CodexBar Multi",
+      ...(accountId === undefined ? {} : { "ChatGPT-Account-Id": accountId }),
+    },
+  });
+  if (response.status === 401 || response.status === 403) {
+    throw ctx.fail.authenticationExpired(
+      "Codex OAuth token expired or invalid. Run `codex login` to re-authenticate.",
+    );
+  }
+  if (response.status === 429)
+    throw ctx.fail.rateLimited("Codex usage API rate limited the request");
+  if (response.status < 200 || response.status >= 300) {
+    throw ctx.fail.apiFailure(`Codex usage API error: HTTP ${response.status}`);
+  }
+  if (typeof response.json !== "object" || response.json === null || Array.isArray(response.json)) {
+    throw ctx.fail.parseFailure("Invalid response from Codex usage API");
+  }
+  const payload = response.json as CodexUsagePayload;
+  const primary = parseWindow(ctx, payload.rate_limit?.primary_window, "primary_window");
+  const secondary = parseWindow(ctx, payload.rate_limit?.secondary_window, "secondary_window");
+  const balance = optionalNumber(payload.credits?.balance);
+  return {
+    ...(primary === undefined ? {} : { primary }),
+    ...(secondary === undefined ? {} : { secondary }),
+    identity: {
+      providerId: "codex",
+      accountId:
+        optionalString(payload.account_id) ?? optionalString(payload.accountId) ?? accountId,
+      loginMethod: optionalString(payload.plan_type),
+    },
+    ...(payload.credits === undefined
+      ? {}
+      : {
+          credits: {
+            hasCredits: payload.credits.has_credits === true,
+            unlimited: payload.credits.unlimited === true,
+            ...(balance === undefined ? {} : { balance }),
+          },
+        }),
+    details: [],
+    updatedAt: ctx.date.now().toISOString(),
+    dataConfidence: primary === undefined && secondary === undefined ? "unknown" : "exact",
+  };
 };
 
 export const descriptor: ProviderDescriptor = { ...definition, status: "partial" };

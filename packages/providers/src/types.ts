@@ -61,6 +61,11 @@ export interface ProviderContext {
   /** Omitted in direct parser tests; composed runtimes always provide a fail-closed broker. */
   readonly local?: ProviderLocalCapabilities;
   readonly env: { timeZone?: string };
+  /**
+   * The host-selected source mode. Providers use it only to choose between
+   * their declared strategies; it never grants a host capability.
+   */
+  readonly sourceMode?: "auto" | "web" | "cli" | "oauth" | "api";
   readonly date: {
     now(): Date;
     nowMillis(): number;

@@ -5,6 +5,8 @@ import { join } from "node:path";
 export interface CodexCredential {
   readonly accessToken?: string;
   readonly accountId?: string;
+  /** Kept separate from OAuth because PAT identity must come from whoami. */
+  readonly personalAccessToken?: string;
 }
 
 export function accountIdFromJwt(token: string | undefined): string | undefined {
@@ -48,6 +50,12 @@ export function discoverCodexCredential(
     const idToken = tokens.id_token ?? tokens.idToken;
     const configuredAccount = tokens.account_id ?? tokens.accountId;
     const accessToken = typeof access === "string" && access !== "" ? access : undefined;
+    const personalAccessToken =
+      typeof source.personal_access_token === "string" && source.personal_access_token.trim() !== ""
+        ? source.personal_access_token.trim()
+        : typeof source.personalAccessToken === "string" && source.personalAccessToken.trim() !== ""
+          ? source.personalAccessToken.trim()
+          : undefined;
     const accountId =
       typeof configuredAccount === "string" && configuredAccount !== ""
         ? configuredAccount
@@ -55,6 +63,7 @@ export function discoverCodexCredential(
     return {
       ...(accessToken === undefined ? {} : { accessToken }),
       ...(accountId === undefined ? {} : { accountId }),
+      ...(personalAccessToken === undefined ? {} : { personalAccessToken }),
     };
   } catch {
     return {};

@@ -9,6 +9,7 @@ import type {
 import { number, object, status } from "./_http.ts";
 
 const BASE = "https://opencode.ai";
+const USAGE_API = `${BASE}/zen/go/v1/usage`;
 const BILLING = "c83b78a614689c38ebee981f9b39a8b377716db85c1fd7dbab604adc02d3313d";
 const WORKSPACES = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f";
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
@@ -71,9 +72,28 @@ const window = (raw: unknown, now: number): Window | undefined => {
       "resetSec",
     ]) ?? 0;
   if (!seconds) {
-    const resetAt = value(record, ["resetAt", "resetsAt", "reset_at", "nextReset", "renewAt"]);
-    if (resetAt !== undefined)
-      seconds = Math.max(0, ((resetAt > 10_000_000_000 ? resetAt : resetAt * 1000) - now) / 1000);
+    const resetAt = [
+      "resetAt",
+      "resetsAt",
+      "reset_at",
+      "resets_at",
+      "nextReset",
+      "next_reset",
+      "renewAt",
+      "renew_at",
+    ]
+      .map((key) => record[key])
+      .find((candidate) => number(candidate) !== undefined || typeof candidate === "string");
+    const numericResetAt = number(resetAt);
+    const resetMillis =
+      numericResetAt === undefined
+        ? typeof resetAt === "string"
+          ? Date.parse(resetAt)
+          : Number.NaN
+        : numericResetAt > 10_000_000_000
+          ? numericResetAt
+          : numericResetAt * 1000;
+    if (Number.isFinite(resetMillis)) seconds = Math.max(0, (resetMillis - now) / 1000);
   }
   return {
     percent: clamp(
@@ -114,6 +134,62 @@ const numberDeep = (input: unknown, keys: readonly string[]): number | undefined
   }
   return undefined;
 };
+const apiKey = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim();
+  if (!value) return undefined;
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  )
+    value = value.slice(1, -1).trim();
+  return value || undefined;
+};
+const apiKeyFrom = (ctx: ProviderContext): string | undefined =>
+  apiKey(ctx.settings.getSecret("OPENCODE_API_KEY") ?? ctx.settings.get("OPENCODE_API_KEY"));
+const snapshot = (ctx: ProviderContext, usage: ReturnType<typeof allWindows>) => {
+  const at = (candidate: Window | undefined) =>
+    candidate ? ctx.date.unixMillis(ctx.date.nowMillis() + candidate.seconds * 1000) : undefined;
+  if (!usage.rolling) throw ctx.fail.parseFailure("OpenCode Go response is missing usage fields.");
+  return {
+    primary: {
+      usedPercent: usage.rolling.percent,
+      windowMinutes: 300,
+      resetsAt: at(usage.rolling),
+    },
+    ...(usage.weekly
+      ? {
+          secondary: {
+            usedPercent: usage.weekly.percent,
+            windowMinutes: 10080,
+            resetsAt: at(usage.weekly),
+          },
+        }
+      : {}),
+    ...(usage.monthly
+      ? {
+          tertiary: {
+            usedPercent: usage.monthly.percent,
+            windowMinutes: 43200,
+            resetsAt: at(usage.monthly),
+          },
+        }
+      : {}),
+  };
+};
+const fetchAPI = async (ctx: ProviderContext, token: string) => {
+  const response = await ctx.http.get(USAGE_API, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "User-Agent": "CodexBar",
+    },
+  });
+  if (response.status === 401 || response.status === 403)
+    throw ctx.fail.authenticationExpired("OpenCode Go API key is invalid or expired.");
+  status(ctx, "OpenCode Go", response);
+  const usage = allWindows(parse(response.bodyText), ctx.date.nowMillis());
+  return snapshot(ctx, usage);
+};
 const cookie = async (ctx: ProviderContext) => {
   const manual =
     ctx.settings.getSecret("OPENCODEGO_COOKIE") ?? ctx.settings.get("OPENCODEGO_COOKIE");
@@ -127,12 +203,23 @@ const definition: ProviderDefinition = {
   name: "OpenCode Go",
   endpoints: [BASE],
   settings: [
+    { key: "OPENCODE_API_KEY", title: "API key", type: "secure" },
     { key: "OPENCODEGO_COOKIE", title: "Cookie header", type: "secure" },
     { key: "OPENCODEGO_WORKSPACE_ID", title: "Workspace ID", type: "plain" },
   ],
   capabilities: ["browser-cookies"],
   cookieDomains: ["opencode.ai"],
   fetchUsage: async (ctx) => {
+    // The runtime currently exposes one strategy per provider and filters explicit sourceMode
+    // by strategy.kind. Keep this strategy web-shaped for cookie mode, while selecting the API
+    // first in auto/direct calls when a key is configured; explicit api mode needs shared
+    // multi-strategy selection before the host can dispatch it here.
+    const token = apiKeyFrom(ctx);
+    const apiMode =
+      ctx.sourceMode === undefined || ctx.sourceMode === "auto" || ctx.sourceMode === "api";
+    if (token && apiMode) return fetchAPI(ctx, token);
+    if (ctx.sourceMode === "api")
+      throw ctx.fail.missingCredential("No OpenCode Go API key is configured.");
     const session = await cookie(ctx);
     let workspace = ctx.settings.get("OPENCODEGO_WORKSPACE_ID")?.trim();
     if (!workspace) {
@@ -173,38 +260,8 @@ const definition: ProviderDefinition = {
       if (error instanceof Error && error.message.startsWith("authentication-expired")) throw error;
       // The upstream balance request is optional and must not hide valid quota data.
     }
-    if (!usage.rolling && balance === undefined)
-      throw ctx.fail.parseFailure("OpenCode Go response is missing usage fields.");
-    const at = (candidate: Window | undefined) =>
-      candidate ? ctx.date.unixMillis(ctx.date.nowMillis() + candidate.seconds * 1000) : undefined;
     return {
-      ...(usage.rolling
-        ? {
-            primary: {
-              usedPercent: usage.rolling.percent,
-              windowMinutes: 300,
-              resetsAt: at(usage.rolling),
-            },
-          }
-        : {}),
-      ...(usage.weekly
-        ? {
-            secondary: {
-              usedPercent: usage.weekly.percent,
-              windowMinutes: 10080,
-              resetsAt: at(usage.weekly),
-            },
-          }
-        : {}),
-      ...(usage.monthly
-        ? {
-            tertiary: {
-              usedPercent: usage.monthly.percent,
-              windowMinutes: 43200,
-              resetsAt: at(usage.monthly),
-            },
-          }
-        : {}),
+      ...(usage.rolling ? snapshot(ctx, usage) : {}),
       ...(balance === undefined
         ? {}
         : {

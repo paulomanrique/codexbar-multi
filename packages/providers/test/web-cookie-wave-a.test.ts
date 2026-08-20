@@ -175,4 +175,50 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
       providerCost: { used: 8, limit: 0, currencyCode: "USD", period: "Zen balance" },
     });
   });
+
+  it("prefers the quoted secure API key over web cookies and maps API windows", async () => {
+    const calls: Request[] = [];
+    const snapshot = await opencodego.fetchUsage(
+      context(
+        (request) => {
+          calls.push(request);
+          expect(request.url.href).toBe("https://opencode.ai/zen/go/v1/usage");
+          expect(request.options).toMatchObject({
+            headers: {
+              Authorization: "Bearer go-fixture",
+              Accept: "application/json",
+              "User-Agent": "CodexBar",
+            },
+          });
+          return json({
+            usage: {
+              rolling: { percent: 10, resetsAt: "2026-08-20T12:05:00.000Z" },
+              weekly: { percent: 25, resetsAt: "2026-08-20T13:00:00.000Z" },
+              monthly: { percent: 50, resetsAt: "2026-08-21T12:00:00.000Z" },
+            },
+          });
+        },
+        { OPENCODE_API_KEY: '  "go-fixture"  ' },
+      ),
+    );
+    expect(calls).toHaveLength(1);
+    expect(snapshot).toEqual({
+      primary: { usedPercent: 10, windowMinutes: 300, resetsAt: "2026-08-20T12:05:00.000Z" },
+      secondary: { usedPercent: 25, windowMinutes: 10080, resetsAt: "2026-08-20T13:00:00.000Z" },
+      tertiary: { usedPercent: 50, windowMinutes: 43200, resetsAt: "2026-08-21T12:00:00.000Z" },
+    });
+  });
+
+  it("classifies OpenCode Go API key rejection as expired authentication", async () => {
+    await expect(
+      opencodego.fetchUsage(
+        context(() => response("unauthorized", 401), { OPENCODE_API_KEY: "go-fixture" }),
+      ),
+    ).rejects.toThrow("authentication-expired");
+    await expect(
+      opencodego.fetchUsage(
+        context(() => response("forbidden", 403), { OPENCODE_API_KEY: "go-fixture" }),
+      ),
+    ).rejects.toThrow("authentication-expired");
+  });
 });

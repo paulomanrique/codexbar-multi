@@ -23,6 +23,21 @@ describe("Codex credential discovery", () => {
     expect(credential).toEqual({ accessToken: "access", accountId: "account-1" });
   });
 
+  it("keeps a personal access token separate from OAuth credentials", () => {
+    const credential = discoverCodexCredential({
+      environment: { CODEX_HOME: "/isolated/codex" },
+      read: () =>
+        JSON.stringify({
+          personal_access_token: "  at-personal-token  ",
+          tokens: { access_token: "oauth-access" },
+        }),
+    });
+    expect(credential).toEqual({
+      accessToken: "oauth-access",
+      personalAccessToken: "at-personal-token",
+    });
+  });
+
   it("fails closed for malformed or unreadable credential files", () => {
     expect(
       discoverCodexCredential({

@@ -418,7 +418,7 @@ export const makeFirstPartyProviderRuntime = (
       id: provider.id,
       source: sourceFor(provider),
       isAvailable: () => Effect.succeed(true),
-      fetch: () => executeProvider(provider, options, keyFor),
+      fetch: () => executeProvider(provider, context, options, keyFor),
       shouldFallback: () => false,
     };
     return Effect.succeed([strategy]);
@@ -433,6 +433,7 @@ export const makeFirstPartyProviderRuntime = (
 
 const executeProvider = (
   provider: FirstPartyProvider,
+  fetchContext: ProviderFetchContext,
   options: FirstPartyProviderRuntimeOptions,
   keyFor: (providerId: ProviderId, setting: string) => string,
 ): Effect.Effect<UsageSnapshot, ClassifiedFetchFailure> => {
@@ -610,6 +611,7 @@ const executeProvider = (
         },
         local: localFor(descriptor.id, options.local, operationSignal),
         env: { timeZone },
+        sourceMode: fetchContext.sourceMode,
         date: {
           now,
           nowMillis: () => nowMillis,
