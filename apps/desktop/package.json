@@ -4,7 +4,6 @@
   "private": true,
   "description": "Cross-platform provider usage desktop shell for CodexBar Multi.",
   "author": "Paulo Manrique",
-  "desktopName": "codexbar-multi.desktop",
   "type": "module",
   "main": "dist/main/index.js",
   "scripts": {
@@ -16,16 +15,6 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "catalog:"
-  },
-  "optionalDependencies": {
-    "@napi-rs/keyring-darwin-arm64": "catalog:",
-    "@napi-rs/keyring-darwin-x64": "catalog:",
-    "@napi-rs/keyring-linux-arm64-gnu": "catalog:",
-    "@napi-rs/keyring-linux-arm64-musl": "catalog:",
-    "@napi-rs/keyring-linux-x64-gnu": "catalog:",
-    "@napi-rs/keyring-linux-x64-musl": "catalog:",
-    "@napi-rs/keyring-win32-arm64-msvc": "catalog:",
-    "@napi-rs/keyring-win32-x64-msvc": "catalog:"
   },
   "devDependencies": {
     "@codexbar/contracts": "workspace:*",
@@ -47,6 +36,16 @@
     "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring-darwin-arm64": "catalog:",
+    "@napi-rs/keyring-darwin-x64": "catalog:",
+    "@napi-rs/keyring-linux-arm64-gnu": "catalog:",
+    "@napi-rs/keyring-linux-arm64-musl": "catalog:",
+    "@napi-rs/keyring-linux-x64-gnu": "catalog:",
+    "@napi-rs/keyring-linux-x64-musl": "catalog:",
+    "@napi-rs/keyring-win32-arm64-msvc": "catalog:",
+    "@napi-rs/keyring-win32-x64-msvc": "catalog:"
   },
   "build": {
     "appId": "com.paulomanrique.codexbar-multi",
@@ -96,5 +95,6 @@
         "dmg"
       ]
     }
-  }
+  },
+  "desktopName": "codexbar-multi.desktop"
 }
