@@ -68,6 +68,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add write/clear-only keyring IPC for declared plugin secrets and clear them during removal.
 - [x] Persist plugin snapshots, compose browser sessions, and remove associated config/history.
 - [ ] Port the complete upstream plugin suite.
+  - [x] Add deterministic manifest/transpilation, snapshot, context, broker-policy, protocol, and QuickJS heap parity fixtures.
 
 ## Milestones 5–7 — remaining providers
 
@@ -81,6 +82,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 ## Milestones 8–9 — desktop parity and final gate
 
 - [ ] Port tray/settings/accounts/history/cost/notifications/autostart/shortcuts/privacy UI.
+  - [x] Add accessible provider cards, explicit refresh, persisted history/cost views, and an honest read-only settings shell.
+  - [ ] Add typed settings/account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
 - [ ] Port all 23 languages, pluralization, RTL, and visual tests.
   - [x] Establish the 23-locale catalog, current renderer messages, plural rules, and RTL direction.
   - [x] Import the complete upstream `.strings`/`.stringsdict` catalogs with deterministic regeneration and English fallback.

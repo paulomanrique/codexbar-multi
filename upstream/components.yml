@@ -239,6 +239,7 @@ components:
       - Tests/CodexBarTests/Menu*Tests.swift
       - Tests/CodexBarTests/Widget*Tests.swift
       - Tests/CodexBarTests/DashboardSnapshotBuilderTests.swift
+      - apps/desktop/test/renderer-view-model.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
     status: partial
