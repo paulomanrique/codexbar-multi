@@ -69,9 +69,10 @@ describe("Node private file store", () => {
         },
       });
       await Effect.runPromise(store.writeAtomic(path, new TextEncoder().encode("secret\n")));
-      expect(restricted).toHaveLength(1);
+      expect(restricted).toHaveLength(2);
       expect(restricted[0]).toContain(directory);
       expect(restricted[0]).not.toBe(path);
+      expect(restricted[1]).toBe(path);
       await expect(readFile(path, "utf8")).resolves.toBe("secret\n");
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -91,6 +92,51 @@ describe("Node private file store", () => {
         Effect.runPromise(store.writeAtomic(path, new TextEncoder().encode("secret\n"))),
       ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "write private file" });
       await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("removes newly published content when its final ACL cannot be restricted", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-private-store-final-acl-failure-"));
+    const path = join(directory, "credentials.json");
+    let calls = 0;
+    try {
+      const store = makeNodePrivateFileStore({
+        restrictFile: async () => {
+          calls += 1;
+          if (calls === 2) throw new Error("final ACL unavailable");
+        },
+      });
+      await expect(
+        Effect.runPromise(store.writeAtomic(path, new TextEncoder().encode("secret\n"))),
+      ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "write private file" });
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("restores an existing private file when final ACL restriction fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-private-store-final-acl-rollback-"));
+    const path = join(directory, "settings.json");
+    let pathRestrictions = 0;
+    try {
+      await Effect.runPromise(
+        makeNodePrivateFileStore().writeAtomic(path, new TextEncoder().encode("previous\n")),
+      );
+      const store = makeNodePrivateFileStore({
+        restrictFile: async (candidate) => {
+          if (candidate !== path) return;
+          pathRestrictions += 1;
+          // Existing target, published replacement, restored target.
+          if (pathRestrictions === 2) throw new Error("final ACL unavailable");
+        },
+      });
+      await expect(
+        Effect.runPromise(store.writeAtomic(path, new TextEncoder().encode("replacement\n"))),
+      ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "write private file" });
+      await expect(readFile(path, "utf8")).resolves.toBe("previous\n");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

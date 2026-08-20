@@ -93,8 +93,11 @@ export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = 
       Effect.tryPromise({
         try: async () => {
           await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-          await restrictDirectory(dirname(path));
-          const temporary = join(dirname(path), `.${randomUUID()}.tmp`);
+          const directory = dirname(path);
+          await restrictDirectory(directory);
+          const temporary = join(directory, `.${randomUUID()}.tmp`);
+          const previous = await preserveExistingPrivateFile(path, directory, restrictFile);
+          let preservePreviousRecovery = false;
           try {
             const file = await open(temporary, "w", 0o600);
             try {
@@ -105,9 +108,25 @@ export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = 
               await file.close();
             }
             await rename(temporary, path);
-            await syncDirectory(dirname(path));
+            // NTFS may assign a new descriptor while publishing a rename.
+            // The directory is already private, then the final name is
+            // restricted again before the operation is reported as complete.
+            try {
+              await restrictFile(path);
+            } catch (error) {
+              await removeUnsafePublishedFile(path);
+              preservePreviousRecovery = !(await restorePreviousPrivateFile(
+                previous,
+                path,
+                restrictFile,
+              ));
+              throw error;
+            }
+            await syncDirectory(directory);
           } finally {
             await rm(temporary, { force: true });
+            if (previous !== undefined && !preservePreviousRecovery)
+              await rm(previous, { force: true });
           }
         },
         catch: (error) =>
@@ -195,6 +214,59 @@ const isMissing = (error: unknown): boolean =>
 
 const isAlreadyExists = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+
+/**
+ * A post-rename ACL failure must never leave the new private content exposed.
+ * A hard link keeps the prior inode available without copying its contents,
+ * so rollback does not depend on reading or reserializing a config value.
+ */
+const preserveExistingPrivateFile = async (
+  path: string,
+  directory: string,
+  restrictFile: (path: string) => Promise<void>,
+): Promise<string | undefined> => {
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
+  // `rename` safely replaces a symlink, but it is never safe to retain one as
+  // a rollback target. The directory has already been restricted above.
+  if (info.isSymbolicLink() || !info.isFile()) return undefined;
+  await restrictFile(path);
+  const backup = join(directory, `.${randomUUID()}.previous`);
+  await link(path, backup);
+  return backup;
+};
+
+const removeUnsafePublishedFile = async (path: string): Promise<void> => {
+  try {
+    await rm(path, { force: true });
+  } catch {
+    // The caller is already failing closed. A retry below can restore only if
+    // the unsafe name was removed; otherwise the original ACL error remains.
+  }
+};
+
+const restorePreviousPrivateFile = async (
+  previous: string | undefined,
+  path: string,
+  restrictFile: (path: string) => Promise<void>,
+): Promise<boolean> => {
+  if (previous === undefined) return true;
+  try {
+    await link(previous, path);
+    await restrictFile(path);
+    return true;
+  } catch {
+    // Do not leave an uncertain final name after a failed recovery. The
+    // private previous inode remains under its staging name for recovery.
+    await rm(path, { force: true });
+    return false;
+  }
+};
 
 /** Directory fsync makes the rename durable on filesystems that support it. */
 const syncDirectory = async (path: string): Promise<void> => {
