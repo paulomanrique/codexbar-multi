@@ -271,6 +271,7 @@ providers:
   - id: fireworks
     swiftGlobs:
       - Sources/CodexBar/Providers/Fireworks/**/*.swift
+      - Sources/CodexBarCore/Providers/Fireworks/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Fireworks*Tests.swift
