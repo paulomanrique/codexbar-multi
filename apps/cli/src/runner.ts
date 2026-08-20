@@ -16,9 +16,12 @@ import {
   makeFetchHttpTransport,
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
+  makeNodeConfigRepository,
   makeSystemClock,
 } from "@codexbar/platform/node";
 import { discoverCodexCredential } from "./codex-credential.ts";
+import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config.ts";
+import { resolveCLIConfigPath } from "./config-path.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
@@ -53,6 +56,8 @@ export interface CLIProviderRuntime {
     providerId: ProviderId,
     context: ProviderFetchContext,
   ) => Promise<ProviderFetchOutcome>;
+  /** Optional in-memory/host-injected configuration store used by `config`. */
+  readonly config?: CLIConfigStore;
 }
 
 export interface CLICommandRunnerOptions {
@@ -497,6 +502,17 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
     return runUsage(raw, options.io, options.runtime);
   if (command === "usage") return runUsage(raw.slice(1), options.io, options.runtime);
   if (command === "providers") return runProviders(raw.slice(1), options.io, options.runtime);
+  if (command === "config")
+    return runConfig(
+      raw.slice(1),
+      options.io,
+      options.runtime.config === undefined
+        ? undefined
+        : {
+            config: options.runtime.config,
+            providers: options.runtime.providers,
+          },
+    );
   if (
     command === "all" ||
     command === "both" ||
@@ -516,6 +532,8 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
 export const makeNodeCLIProviderRuntime = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): CLIProviderRuntime => {
+  const configPath = resolveCLIConfigPath(environment);
+  const configRepository = makeNodeConfigRepository(configPath);
   const credentials = makeNativeCredentialStore();
   const environmentSettings = makeEnvironmentProviderSettings(environment);
   const codexCredential = discoverCodexCredential({ environment });
@@ -551,6 +569,7 @@ export const makeNodeCLIProviderRuntime = (
       ...(isPrimaryProvider === true ? { isPrimaryProvider: true } : {}),
     })),
     fetch: (providerId, context) => Effect.runPromise(runtime.fetch(providerId, context)),
+    config: makeNodeCLIConfigStore(configRepository, configPath),
   };
 };
 
