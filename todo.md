@@ -20,6 +20,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add canonical fixture normalization and a bounded Swift-oracle runner.
 - [x] Port the adaptive refresh decision table and its Swift boundary cases.
 - [x] Complete snapshot serialization parity against the checked-in Swift golden and preserve legacy identity keys.
+- [x] Execute the bounded Swift oracle offline and accept real snapshot/Qwen fixture parity.
 - [x] Port quota warnings, reset backfill/boundaries, and linear/workday pace behavior.
 - [x] Port config decoding, normalization, validation, legacy-value migration, and atomic persistence.
 - [ ] Port full cost scanning and history retention behavior.
@@ -40,7 +41,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Wire provider refresh results into persisted overview/history records.
 - [x] Keep overview enablement/source separate from TypeScript implementation status.
 - [ ] Run native smoke tests on Windows, Linux, and macOS.
-  - [x] Linux Electron smoke under an isolated profile.
+  - [x] Linux Electron and packaged-main smoke under isolated profiles.
 
 ## Milestone 3 — core, persistence, CLI, and legacy import
 
@@ -52,7 +53,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.
   - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.
-  - [ ] Connect standalone cookie/plugin host adapters, complete serve Web UI/cache parity, and produce the remaining Node SEA target matrix.
+  - [x] Connect the normal Node CLI to the sandboxed plugin lifecycle, native keyring, stdin-only secrets, and desktop-exported cookie credentials.
+  - [ ] Embed the verified plugin child in SEA, complete serve Web UI/cache parity, and produce the remaining Node SEA target matrix.
   - [x] Produce a host-native Node SEA CLI executable with a verified extracted keyring addon; cross-compilation and release archives remain disabled.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
 - [ ] Connect legacy import UI/CLI and a separately-approved native credential migration.
@@ -84,12 +86,14 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 
 - [ ] Port tray/settings/accounts/history/cost/notifications/autostart/shortcuts/privacy UI.
   - [x] Add accessible provider cards, explicit refresh, persisted history/cost views, and an honest read-only settings shell.
-  - [ ] Add typed settings/account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
+  - [x] Add schema-validated provider enablement/source mutations with serialized atomic persistence.
+  - [ ] Add account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
 - [ ] Port all 23 languages, pluralization, RTL, and visual tests.
   - [x] Establish the 23-locale catalog, current renderer messages, plural rules, and RTL direction.
   - [x] Import the complete upstream `.strings`/`.stringsdict` catalogs with deterministic regeneration and English fallback.
   - [ ] Apply the full catalog throughout the parity UI and complete locale/RTL visual tests.
 - [ ] Pass functional, security, persistence, cancellation, renderer, and provider gates.
+- [x] Add a pinned, host-native desktop artifact builder with AppImage smoke and declared NSIS/DMG targets; cross-build, signing and publication remain disabled.
 - [ ] Remove Swift, SwiftPM, and CQuickJS from TypeScript `multi` only after parity.
 - [ ] Add new TypeScript CI only after local parity gates pass.
 - [ ] Keep release, publication, signing, notarization, and updater disabled pending approval.
