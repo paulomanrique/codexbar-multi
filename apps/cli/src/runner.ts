@@ -27,6 +27,9 @@ import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config
 import { resolveCLIConfigPath } from "./config-path.ts";
 import { runCost, type CLICostStore } from "./cost.ts";
 import { runCards } from "./cards.ts";
+import { runCache, type CLICacheStore } from "./cache.ts";
+import { runDashboard } from "./dashboard.ts";
+import { runDiagnose } from "./diagnose.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
@@ -60,10 +63,12 @@ export interface CLIProviderRuntime {
   readonly fetch: (
     providerId: ProviderId,
     context: ProviderFetchContext,
+    signal?: AbortSignal,
   ) => Promise<ProviderFetchOutcome>;
   /** Optional in-memory/host-injected configuration store used by `config`. */
   readonly config?: CLIConfigStore;
   readonly costs?: CLICostStore;
+  readonly cache?: CLICacheStore;
   readonly now?: () => number;
 }
 
@@ -522,6 +527,9 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
           },
     );
   if (command === "cards") return runCards(raw.slice(1), options.io, options.runtime);
+  if (command === "dashboard") return runDashboard(raw.slice(1), options.io, options.runtime);
+  if (command === "diagnose") return runDiagnose(raw.slice(1), options.io, options.runtime);
+  if (command === "cache") return runCache(raw.slice(1), options.io, options.runtime);
   if (command === "config")
     return runConfig(
       raw.slice(1),
@@ -590,7 +598,8 @@ export const makeNodeCLIProviderRuntime = (
       status,
       ...(isPrimaryProvider === true ? { isPrimaryProvider: true } : {}),
     })),
-    fetch: (providerId, context) => Effect.runPromise(runtime.fetch(providerId, context)),
+    fetch: (providerId, context, signal) =>
+      Effect.runPromise(runtime.fetch(providerId, context), signal === undefined ? {} : { signal }),
     config: makeNodeCLIConfigStore(configRepository, configPath),
     costs: {
       list: async (providerId, since, limit) => {
@@ -598,6 +607,31 @@ export const makeNodeCLIProviderRuntime = (
         const persistence = await costPersistencePromise;
         return Effect.runPromise(persistence.costs.list(providerId, since, limit));
       },
+    },
+    cache: {
+      clearCookies: async (provider) => {
+        const ids = provider === undefined ? PROVIDERS.map(({ id }) => id) : [provider];
+        let cleared = 0;
+        let failed = 0;
+        for (const id of ids) {
+          try {
+            await Effect.runPromise(credentials.remove(`browser-session/${id}/default`));
+            cleared += 1;
+          } catch {
+            failed += 1;
+          }
+        }
+        return failed === 0
+          ? { cleared }
+          : {
+              cleared,
+              error: `Cookie cache cleanup failed for ${failed} operation${failed === 1 ? "" : "s"}`,
+            };
+      },
+      // Persisted cost records are history, not a derived scanner cache. Until
+      // the JSONL scanner cache exists in TypeScript there is nothing safe to
+      // delete here; never reinterpret `cache --cost` as history deletion.
+      clearCost: async () => ({ cleared: 0 }),
     },
   };
 };
