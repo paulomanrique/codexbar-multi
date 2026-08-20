@@ -23,6 +23,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Port quota warnings, reset backfill/boundaries, and linear/workday pace behavior.
 - [x] Port config decoding, normalization, validation, legacy-value migration, and atomic persistence.
 - [ ] Port full cost scanning and history retention behavior.
+  - [x] Add atomic SQLite pruning for history and cost rows with worker coverage.
+  - [ ] Complete incremental JSONL scanners, provenance, deduplication, and scanner cache parity.
 
 ## Milestone 2 — first vertical slice
 
@@ -48,6 +50,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Complete history JSON compatibility where SQLite parity does not apply.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.
+  - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.
+  - [ ] Connect standalone cookie/plugin host adapters, complete serve Web UI/cache parity, and produce Node SEA artifacts.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
 - [ ] Connect legacy import UI/CLI and a separately-approved native credential migration.
 
@@ -61,7 +65,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Connect schema-validated list/install/approval-preview/approve/test/remove IPC without exposing paths or source to the renderer.
 - [x] Validate plugin test snapshots with the bounded upstream-compatible mapper before IPC.
 - [x] Add write/clear-only keyring IPC for declared plugin secrets and clear them during removal.
-- [ ] Persist plugin snapshots, compose browser sessions, and remove associated config/history.
+- [x] Persist plugin snapshots, compose browser sessions, and remove associated config/history.
 - [ ] Port the complete upstream plugin suite.
 
 ## Milestones 5–7 — remaining providers
