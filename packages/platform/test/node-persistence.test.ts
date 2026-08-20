@@ -51,6 +51,8 @@ describe("Node SQLite persistence", () => {
         40,
       );
       await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(40);
+      expect((await stat(`${databasePath}-wal`)).mode & 0o777).toBe(0o600);
+      expect((await stat(`${databasePath}-shm`)).mode & 0o777).toBe(0o600);
     } finally {
       await Effect.runPromise(persistence.close);
     }
@@ -171,6 +173,64 @@ describe("Node SQLite persistence", () => {
           }),
         ),
       ).resolves.toBeUndefined();
+      await childExit;
+    } finally {
+      lockHolder.kill();
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("serves a committed read while its writer FIFO is waiting on another process", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-reader-wal-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    await Effect.runPromise(
+      persistence.history.append({
+        providerId: "codex" as ProviderId,
+        recordedAt: 1,
+        snapshot: snapshot("2026-01-01T00:00:00Z"),
+      }),
+    );
+    const lockHolder = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import { DatabaseSync } from "node:sqlite";
+         const database = new DatabaseSync(process.argv[1]);
+         database.exec("BEGIN IMMEDIATE");
+         process.stdout.write("locked\\n");
+         setTimeout(() => { database.exec("COMMIT"); database.close(); }, 400);`,
+        databasePath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const childExit = once(lockHolder, "exit");
+    try {
+      await once(lockHolder.stdout!, "data");
+      const blockedWrite = Effect.runPromise(
+        persistence.costs.append({
+          providerId: "codex" as ProviderId,
+          recordedAt: 2,
+          inputTokens: 1,
+          outputTokens: 1,
+          costUsd: 0.01,
+        }),
+      );
+      await expect(
+        Promise.race([
+          Effect.runPromise(persistence.history.list("codex", 0)),
+          new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 150)),
+        ]),
+      ).resolves.toEqual([
+        {
+          providerId: "codex",
+          recordedAt: 1,
+          snapshot: snapshot("2026-01-01T00:00:00Z"),
+        },
+      ]);
+      await expect(blockedWrite).resolves.toBeUndefined();
       await childExit;
     } finally {
       lockHolder.kill();

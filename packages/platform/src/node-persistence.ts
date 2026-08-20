@@ -92,7 +92,7 @@ export const makeNodeSqlitePersistence = (
       });
 
       try {
-        if (!options.readOnly) await chmod(options.databasePath, 0o600);
+        if (!options.readOnly) await restrictPrivateDatabaseArtifacts(options.databasePath);
         configureConnection(database, options.readOnly ?? false);
         assertQuickCheck(database);
         if (!options.readOnly) {
@@ -102,13 +102,28 @@ export const makeNodeSqlitePersistence = (
             options.migrations ?? NODE_PERSISTENCE_MIGRATIONS,
           );
           assertQuickCheck(database);
+          // SQLite creates WAL/SHM files lazily. Secure all artifacts after
+          // migrations have exercised the journal, rather than protecting
+          // only the main database file.
+          await restrictPrivateDatabaseArtifacts(options.databasePath);
+        }
+
+        // The writer owns migrations and every BEGIN IMMEDIATE transaction.
+        // A separate read-only connection lets WAL readers in another desktop
+        // or CLI process continue while this writer is waiting on a lock. It
+        // is deliberately opened only after migration, so it never observes a
+        // partially-updated schema.
+        const reader = options.readOnly ? database : openReadConnection(options.databasePath);
+        try {
+          return makeRepositories(database, reader);
+        } catch (error) {
+          if (reader !== database) reader.close();
+          throw error;
         }
       } catch (error) {
         database.close();
         throw error;
       }
-
-      return makeRepositories(database);
     },
     catch: (error) =>
       new InfrastructureError(
@@ -176,6 +191,36 @@ const configureConnection = (database: DatabaseSync, readOnly: boolean): void =>
   }
 };
 
+const openReadConnection = (databasePath: string): DatabaseSync => {
+  const reader = new DatabaseSync(databasePath, {
+    allowExtension: false,
+    enableForeignKeyConstraints: true,
+    readOnly: true,
+    timeout: SQLITE_BUSY_TIMEOUT_MS,
+  });
+  try {
+    configureConnection(reader, true);
+    return reader;
+  } catch (error) {
+    reader.close();
+    throw error;
+  }
+};
+
+/** SQLite sidecars can contain the same sensitive snapshots as the main file. */
+const restrictPrivateDatabaseArtifacts = async (databasePath: string): Promise<void> => {
+  for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
+    try {
+      await chmod(path, 0o600);
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+    }
+  }
+};
+
+const isMissingFile = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+
 const assertQuickCheck = (database: DatabaseSync): void => {
   const rows = database.prepare("PRAGMA quick_check").all();
   if (rows.length !== 1 || rows[0]?.quick_check !== "ok") {
@@ -234,7 +279,7 @@ const assertMigrationsAreOrdered = (migrations: readonly NodeSqliteMigration[]):
   }
 };
 
-const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
+const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSqlitePersistence => {
   const queue = new SerializedDatabaseQueue();
   const history: HistoryRepositoryService = {
     append: (record) =>
@@ -242,7 +287,7 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
         assertHistoryRecord(record);
         const snapshotJson = JSON.stringify(record.snapshot);
         if (snapshotJson === undefined) throw new Error("Usage snapshot is not JSON serializable");
-        inImmediateTransaction(database, () => {
+        return inImmediateTransactionWithRetry(database, () => {
           ensureProvider(database, record.providerId);
           database
             .prepare(
@@ -252,9 +297,9 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
         });
       }),
     latest: (providerId) =>
-      queuedSqlite(queue, "get latest history record", () => {
+      readSqlite("get latest history record", () => {
         assertProviderId(providerId);
-        const row = database
+        const row = reader
           .prepare(
             "SELECT provider_id, recorded_at, snapshot_json FROM history_records WHERE provider_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1",
           )
@@ -262,11 +307,11 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
         return row === undefined ? undefined : decodeHistoryRecord(row as Record<string, unknown>);
       }),
     list: (providerId, since, limit) =>
-      queuedSqlite(queue, "list history records", () => {
+      readSqlite("list history records", () => {
         assertProviderId(providerId);
         assertListBounds(since, limit);
         return queryRows(
-          database,
+          reader,
           "SELECT provider_id, recorded_at, snapshot_json FROM history_records WHERE provider_id = ? AND recorded_at >= ? ORDER BY recorded_at, id",
           providerId,
           since,
@@ -278,7 +323,7 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
     append: (record) =>
       queuedSqlite(queue, "append cost usage record", () => {
         assertCostUsageRecord(record);
-        inImmediateTransaction(database, () => {
+        return inImmediateTransactionWithRetry(database, () => {
           ensureProvider(database, record.providerId);
           database
             .prepare(
@@ -294,11 +339,11 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
         });
       }),
     list: (providerId, since, limit) =>
-      queuedSqlite(queue, "list cost usage records", () => {
+      readSqlite("list cost usage records", () => {
         assertProviderId(providerId);
         assertListBounds(since, limit);
         return queryRows(
-          database,
+          reader,
           "SELECT provider_id, recorded_at, input_tokens, output_tokens, cost_usd FROM cost_usage_records WHERE provider_id = ? AND recorded_at >= ? ORDER BY recorded_at, id",
           providerId,
           since,
@@ -310,30 +355,49 @@ const makeRepositories = (database: DatabaseSync): NodeSqlitePersistence => {
   return {
     history,
     costs,
-    close: queuedSqlite(queue, "close SQLite persistence", () => database.close()),
+    close: queuedSqlite(queue, "close SQLite persistence", () => {
+      if (reader !== database) reader.close();
+      database.close();
+    }),
   };
 };
 
 class SerializedDatabaseQueue {
   private tail: Promise<void> = Promise.resolve();
 
-  run<Value>(operation: () => Value): Promise<Value> {
+  run<Value>(operation: () => Value | Promise<Value>): Promise<Awaited<Value>> {
     const next = this.tail.then(operation, operation);
     this.tail = next.then(
       () => undefined,
       () => undefined,
     );
-    return next;
+    return next as Promise<Awaited<Value>>;
   }
 }
 
 const queuedSqlite = <Value>(
   queue: SerializedDatabaseQueue,
   operation: string,
-  run: () => Value,
-): Effect.Effect<Value, InfrastructureError> =>
+  run: () => Value | Promise<Value>,
+): Effect.Effect<Awaited<Value>, InfrastructureError> =>
   Effect.tryPromise({
     try: () => queue.run(run),
+    catch: (error) =>
+      new InfrastructureError(operation, `SQLite operation failed: ${operation}`, error),
+  });
+
+/**
+ * Reads intentionally do not enter the writer FIFO. In WAL mode the dedicated
+ * read-only connection has its own SQLite snapshot and does not acquire the
+ * writer's transaction lock. JavaScript remains single-threaded per worker;
+ * this separation is about database locking, not parallel JS execution.
+ */
+const readSqlite = <Value>(
+  operation: string,
+  run: () => Value,
+): Effect.Effect<Value, InfrastructureError> =>
+  Effect.try({
+    try: run,
     catch: (error) =>
       new InfrastructureError(operation, `SQLite operation failed: ${operation}`, error),
   });
@@ -348,6 +412,45 @@ const inImmediateTransaction = (database: DatabaseSync, work: () => void): void 
     throw error;
   }
 };
+
+/**
+ * `node:sqlite` waits synchronously for its busy timeout. That would stall
+ * all messages in the dedicated worker, including independent WAL reads. For
+ * write transactions we instead make short zero-timeout attempts and yield
+ * between them, with the same five-second upper bound. The connection is
+ * restored to the documented busy timeout before it is returned to callers.
+ */
+const inImmediateTransactionWithRetry = async (
+  database: DatabaseSync,
+  work: () => void,
+): Promise<void> => {
+  const deadline = Date.now() + SQLITE_BUSY_TIMEOUT_MS;
+  database.exec("PRAGMA busy_timeout = 0");
+  try {
+    while (true) {
+      try {
+        inImmediateTransaction(database, work);
+        return;
+      } catch (error) {
+        if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
+        await waitForSqliteRetry(Math.min(25, Math.max(1, deadline - Date.now())));
+      }
+    }
+  } finally {
+    database.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+};
+
+const isSqliteBusy = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { readonly code?: unknown; readonly message?: unknown };
+  return /SQLITE_BUSY|database is locked/i.test(
+    `${candidate.code ?? ""} ${candidate.message ?? ""}`,
+  );
+};
+
+const waitForSqliteRetry = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const rollback = (database: DatabaseSync): void => {
   if (database.isTransaction) database.exec("ROLLBACK");

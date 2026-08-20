@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -169,6 +171,69 @@ describe("Node SQLite worker persistence", () => {
         operation: "SQLite worker",
       });
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("serves reads while a lock-delayed writer yields inside the worker", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-reader-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    await Effect.runPromise(
+      persistence.history.append({
+        providerId: "codex" as ProviderId,
+        recordedAt: 1,
+        snapshot: snapshot("2026-01-01T00:00:00Z"),
+      }),
+    );
+    const lockHolder = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import { DatabaseSync } from "node:sqlite";
+         const database = new DatabaseSync(process.argv[1]);
+         database.exec("BEGIN IMMEDIATE");
+         process.stdout.write("locked\\n");
+         setTimeout(() => { database.exec("COMMIT"); database.close(); }, 500);`,
+        databasePath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const childExit = once(lockHolder, "exit");
+    let lockReleased = false;
+    void childExit.then(() => {
+      lockReleased = true;
+    });
+    try {
+      await once(lockHolder.stdout!, "data");
+      const delayedWrite = Effect.runPromise(
+        persistence.costs.append({
+          providerId: "codex" as ProviderId,
+          recordedAt: 2,
+          inputTokens: 1,
+          outputTokens: 1,
+          costUsd: 0.01,
+        }),
+      );
+      await expect(
+        Promise.race([
+          Effect.runPromise(persistence.history.list("codex", 0)),
+          new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 200)),
+        ]),
+      ).resolves.toEqual([
+        {
+          providerId: "codex",
+          recordedAt: 1,
+          snapshot: snapshot("2026-01-01T00:00:00Z"),
+        },
+      ]);
+      expect(lockReleased).toBe(false);
+      await expect(delayedWrite).resolves.toBeUndefined();
+      await childExit;
+    } finally {
+      lockHolder.kill();
+      await Effect.runPromise(persistence.close).catch(() => undefined);
       await rm(directory, { recursive: true, force: true });
     }
   });

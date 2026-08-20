@@ -46,6 +46,44 @@ describe("Node private file store", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("applies an injected native ACL policy before publishing the staged inode", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-private-store-acl-"));
+    const path = join(directory, "credentials.json");
+    const restricted: string[] = [];
+    try {
+      const store = makeNodePrivateFileStore({
+        restrictFile: async (candidate) => {
+          restricted.push(candidate);
+        },
+      });
+      await Effect.runPromise(store.writeAtomic(path, new TextEncoder().encode("secret\n")));
+      expect(restricted).toHaveLength(1);
+      expect(restricted[0]).toContain(directory);
+      expect(restricted[0]).not.toBe(path);
+      await expect(readFile(path, "utf8")).resolves.toBe("secret\n");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not publish a file when native ACL restriction fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-private-store-acl-failure-"));
+    const path = join(directory, "credentials.json");
+    try {
+      const store = makeNodePrivateFileStore({
+        restrictFile: async () => {
+          throw new Error("ACL unavailable");
+        },
+      });
+      await expect(
+        Effect.runPromise(store.writeAtomic(path, new TextEncoder().encode("secret\n"))),
+      ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "write private file" });
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("native credential store adapter", () => {

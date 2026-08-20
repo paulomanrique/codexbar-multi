@@ -21,108 +21,127 @@ export * from "./first-party-runtime.ts";
 export * from "./legacy-import.ts";
 
 /**
+ * Node exposes POSIX modes but no safe, dependency-free API for editing a
+ * Windows DACL. Hosts that own a native Windows ACL adapter can inject it
+ * here; the private-store algorithm applies it to the staged inode before it
+ * is atomically published. This keeps OS policy at the platform boundary.
+ */
+export interface NodePrivateFileStoreOptions {
+  readonly restrictFile?: (path: string) => Promise<void>;
+}
+
+/**
  * Node-only file/path adapter. It is intentionally isolated from core so a
  * renderer or another host can provide the same capabilities without Node.
  */
-export const makeNodePrivateFileStore = () => ({
-  read: (path: string) =>
-    Effect.tryPromise({
-      try: async () => {
-        try {
-          return new Uint8Array(await readFile(path));
-        } catch (error: unknown) {
-          if (isMissing(error)) return undefined;
-          throw error;
-        }
-      },
-      catch: (error) =>
-        new InfrastructureError("read private file", `Unable to read private file: ${path}`, error),
-    }),
-  writeAtomic: (path: string, content: Uint8Array) =>
-    Effect.tryPromise({
-      try: async () => {
-        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-        const temporary = join(dirname(path), `.${randomUUID()}.tmp`);
-        try {
-          const file = await open(temporary, "w", 0o600);
+export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = {}) => {
+  const restrictFile = options.restrictFile ?? ownerOnlyMode;
+  return {
+    read: (path: string) =>
+      Effect.tryPromise({
+        try: async () => {
           try {
-            await chmod(temporary, 0o600);
-            await file.writeFile(content);
-            await file.sync();
-          } finally {
-            await file.close();
-          }
-          await rename(temporary, path);
-          await syncDirectory(dirname(path));
-        } finally {
-          await rm(temporary, { force: true });
-        }
-      },
-      catch: (error) =>
-        new InfrastructureError(
-          "write private file",
-          `Unable to atomically write private file: ${path}`,
-          error,
-        ),
-    }),
-  /**
-   * Publishes a private file only when no entry already exists at `path`.
-   *
-   * `rename` intentionally is not used here: on the platforms we support it
-   * replaces an existing destination and turns a prior `exists` check into a
-   * TOCTOU bug. A same-directory hard link is an atomic create-or-exists
-   * operation on the local filesystems supported by Node. The staged inode is
-   * fsynced before publication, and only the directory entry survives after
-   * the staging name is removed.
-   */
-  writeAtomicIfAbsent: (path: string, content: Uint8Array) =>
-    Effect.tryPromise({
-      try: async () => {
-        const directory = dirname(path);
-        await mkdir(directory, { recursive: true, mode: 0o700 });
-        const temporary = join(directory, `.${randomUUID()}.tmp`);
-        try {
-          const file = await open(temporary, "wx", 0o600);
-          try {
-            await chmod(temporary, 0o600);
-            await file.writeFile(content);
-            await file.sync();
-          } finally {
-            await file.close();
-          }
-
-          try {
-            await link(temporary, path);
-          } catch (error) {
-            if (isAlreadyExists(error)) return false;
+            return new Uint8Array(await readFile(path));
+          } catch (error: unknown) {
+            if (isMissing(error)) return undefined;
             throw error;
           }
-          await syncDirectory(directory);
-          return true;
-        } finally {
-          await rm(temporary, { force: true });
-        }
-      },
-      catch: (error) =>
-        new InfrastructureError(
-          "create private file",
-          `Unable to atomically create private file: ${path}`,
-          error,
-        ),
-    }),
-  remove: (path: string) =>
-    Effect.tryPromise({
-      try: async () => {
-        await rm(path, { force: true });
-      },
-      catch: (error) =>
-        new InfrastructureError(
-          "remove private file",
-          `Unable to remove private file: ${path}`,
-          error,
-        ),
-    }),
-});
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "read private file",
+            `Unable to read private file: ${path}`,
+            error,
+          ),
+      }),
+    writeAtomic: (path: string, content: Uint8Array) =>
+      Effect.tryPromise({
+        try: async () => {
+          await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+          const temporary = join(dirname(path), `.${randomUUID()}.tmp`);
+          try {
+            const file = await open(temporary, "w", 0o600);
+            try {
+              await restrictFile(temporary);
+              await file.writeFile(content);
+              await file.sync();
+            } finally {
+              await file.close();
+            }
+            await rename(temporary, path);
+            await syncDirectory(dirname(path));
+          } finally {
+            await rm(temporary, { force: true });
+          }
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "write private file",
+            `Unable to atomically write private file: ${path}`,
+            error,
+          ),
+      }),
+    /**
+     * Publishes a private file only when no entry already exists at `path`.
+     *
+     * `rename` intentionally is not used here: on the platforms we support it
+     * replaces an existing destination and turns a prior `exists` check into a
+     * TOCTOU bug. A same-directory hard link is an atomic create-or-exists
+     * operation on the local filesystems supported by Node. The staged inode is
+     * fsynced before publication, and only the directory entry survives after
+     * the staging name is removed.
+     */
+    writeAtomicIfAbsent: (path: string, content: Uint8Array) =>
+      Effect.tryPromise({
+        try: async () => {
+          const directory = dirname(path);
+          await mkdir(directory, { recursive: true, mode: 0o700 });
+          const temporary = join(directory, `.${randomUUID()}.tmp`);
+          try {
+            const file = await open(temporary, "wx", 0o600);
+            try {
+              await restrictFile(temporary);
+              await file.writeFile(content);
+              await file.sync();
+            } finally {
+              await file.close();
+            }
+
+            try {
+              await link(temporary, path);
+            } catch (error) {
+              if (isAlreadyExists(error)) return false;
+              throw error;
+            }
+            await syncDirectory(directory);
+            return true;
+          } finally {
+            await rm(temporary, { force: true });
+          }
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "create private file",
+            `Unable to atomically create private file: ${path}`,
+            error,
+          ),
+      }),
+    remove: (path: string) =>
+      Effect.tryPromise({
+        try: async () => {
+          await rm(path, { force: true });
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "remove private file",
+            `Unable to remove private file: ${path}`,
+            error,
+          ),
+      }),
+  };
+};
+
+const ownerOnlyMode = async (path: string): Promise<void> => chmod(path, 0o600);
 
 export const makeNodePlatformPaths = (
   root: string,
