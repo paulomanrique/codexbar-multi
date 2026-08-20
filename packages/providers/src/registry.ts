@@ -77,6 +77,9 @@ export const CANONICAL_PROVIDER_IDS = [
 
 export type CanonicalProviderID = (typeof CANONICAL_PROVIDER_IDS)[number];
 
+/** Swift baseline: Codex and Claude form the historical `--provider both` pair. */
+export const PRIMARY_PROVIDER_IDS = new Set<ProviderId>(["codex", "claude"]);
+
 const displayName = (id: string): string =>
   id === "zai"
     ? "z.ai / GLM"
@@ -93,6 +96,7 @@ const unported = (id: CanonicalProviderID): ProviderDescriptor => ({
   id,
   name: displayName(id),
   status: "unported",
+  ...(PRIMARY_PROVIDER_IDS.has(id) ? { isPrimaryProvider: true } : {}),
   endpoints: [],
   settings: [],
 });
@@ -116,7 +120,12 @@ export let PROVIDER_REGISTRY: readonly ProviderDescriptor[] = createProviderRegi
 export const installProviderRegistry = (
   strategies: readonly FirstPartyProvider[],
 ): readonly ProviderDescriptor[] => {
-  PROVIDER_REGISTRY = createProviderRegistry(strategies.map((strategy) => strategy.descriptor));
+  PROVIDER_REGISTRY = createProviderRegistry(
+    strategies.map((strategy) => ({
+      ...strategy.descriptor,
+      ...(PRIMARY_PROVIDER_IDS.has(strategy.descriptor.id) ? { isPrimaryProvider: true } : {}),
+    })),
+  );
   return PROVIDER_REGISTRY;
 };
 

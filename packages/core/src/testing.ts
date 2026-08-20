@@ -18,7 +18,7 @@ import {
   ProcessRunner,
   PtyRunner,
 } from "./services.ts";
-import type { CodexBarConfig } from "@codexbar/contracts";
+import type { PersistedCodexBarConfig } from "./config.ts";
 
 export const makeMemoryHttpTransport = (
   handler: (request: HttpRequest) => Effect.Effect<HttpResponse>,
@@ -56,12 +56,12 @@ export const TestClock = (initialNow = 0) =>
     };
   });
 
-export const makeMemoryConfigRepository = (initial: CodexBarConfig) =>
+export const makeMemoryConfigRepository = (initial: PersistedCodexBarConfig) =>
   Layer.sync(ConfigRepository, () => {
     let config = structuredClone(initial);
     return {
       load: Effect.sync(() => structuredClone(config)),
-      save: (next: CodexBarConfig) =>
+      save: (next: PersistedCodexBarConfig) =>
         Effect.sync(() => {
           config = structuredClone(next);
         }),

@@ -7,6 +7,7 @@ export default defineConfig({
     lib: {
       entry: {
         index: "src/main/index.ts",
+        "plugin-sandbox-child": "src/main/plugin-sandbox-child.ts",
         "sqlite-worker": "../../packages/platform/src/node-persistence-worker.ts",
       },
       formats: ["es"],

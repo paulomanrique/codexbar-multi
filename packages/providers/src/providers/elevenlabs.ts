@@ -13,11 +13,15 @@ const definition: ProviderDefinition = {
   auth: { type: "x-api-key", secret: "ELEVENLABS_API_KEY" },
   settings: [
     { key: "ELEVENLABS_API_KEY", title: "API key", type: "secure" },
+    { key: "XI_API_KEY", title: "API key (legacy alias)", type: "secure" },
     { key: "ELEVENLABS_API_URL", title: "API URL", type: "plain" },
   ],
   fetchUsage: async (ctx: ProviderContext) => {
     const key =
-      ctx.settings.getSecret("ELEVENLABS_API_KEY") || ctx.settings.get("ELEVENLABS_API_KEY");
+      ctx.settings.getSecret("ELEVENLABS_API_KEY") ||
+      ctx.settings.get("ELEVENLABS_API_KEY") ||
+      ctx.settings.getSecret("XI_API_KEY") ||
+      ctx.settings.get("XI_API_KEY");
     if (!key) throw ctx.fail.missingCredential("Missing ElevenLabs API key.");
     const configured = ctx.settings.get("ELEVENLABS_API_URL");
     const root = (configured || "https://api.elevenlabs.io").replace(/\/+$/, "");
@@ -62,9 +66,14 @@ const definition: ProviderDefinition = {
         });
     }
     const tier = string(payload.tier);
-    const loginMethod = tier
+    const displayTier = tier
       ? tier.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
       : string(payload.status);
+    const statusValue = string(payload.status);
+    const loginMethod =
+      displayTier && statusValue && statusValue.toLowerCase() !== "active"
+        ? `${displayTier} · ${statusValue}`
+        : displayTier;
     return {
       primary,
       identity: { loginMethod },

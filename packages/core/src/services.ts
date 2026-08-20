@@ -1,10 +1,6 @@
 import { Context, Effect } from "effect";
-import type {
-  CodexBarConfig,
-  ProviderDescriptor,
-  ProviderId,
-  UsageSnapshot,
-} from "@codexbar/contracts";
+import type { ProviderDescriptor, ProviderId, UsageSnapshot } from "@codexbar/contracts";
+import type { PersistedCodexBarConfig } from "./config.ts";
 import type {
   ProviderFetchContext,
   ProviderFetchError,
@@ -131,8 +127,8 @@ export const RefreshCoordinator = Context.Service<RefreshCoordinatorService>(
 );
 
 export interface ConfigRepositoryService {
-  readonly load: Effect.Effect<CodexBarConfig | undefined, InfrastructureError>;
-  readonly save: (config: CodexBarConfig) => Effect.Effect<void, InfrastructureError>;
+  readonly load: Effect.Effect<PersistedCodexBarConfig | undefined, InfrastructureError>;
+  readonly save: (config: PersistedCodexBarConfig) => Effect.Effect<void, InfrastructureError>;
 }
 export const ConfigRepository = Context.Service<ConfigRepositoryService>(
   "@codexbar/core/ConfigRepository",

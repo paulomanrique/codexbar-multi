@@ -3,6 +3,10 @@ import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Schema } from "effect";
 import {
+  decodeCodexBarConfig,
+  DEFAULT_PROVIDER_CONFIG_NORMALIZERS,
+  encodeCodexBarConfig,
+  normalizeCodexBarConfig,
   type ConfigRepositoryService,
   type CostUsageRecord,
   type CostUsageRepositoryService,
@@ -10,12 +14,7 @@ import {
   type HistoryRepositoryService,
   InfrastructureError,
 } from "@codexbar/core";
-import {
-  CodexBarConfig,
-  ProviderId,
-  UsageSnapshot,
-  type CodexBarConfig as CodexBarConfigValue,
-} from "@codexbar/contracts";
+import { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import { makeNodePrivateFileStore } from "./node.ts";
 
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
@@ -124,7 +123,15 @@ export const makeNodeSqlitePersistence = (
  * file. PrivateFileStore performs same-directory staging, fsync, and atomic
  * rename so a crash leaves either the old config or a complete new document.
  */
-export const makeNodeConfigRepository = (path: string): ConfigRepositoryService => {
+export interface NodeConfigRepositoryOptions {
+  /** Plugin IDs known to the host at load time; unregistered plugin config is dropped safely. */
+  readonly pluginProviderIds?: ReadonlySet<string>;
+}
+
+export const makeNodeConfigRepository = (
+  path: string,
+  options: NodeConfigRepositoryOptions = {},
+): ConfigRepositoryService => {
   const files = makeNodePrivateFileStore();
   return {
     load: files.read(path).pipe(
@@ -132,7 +139,10 @@ export const makeNodeConfigRepository = (path: string): ConfigRepositoryService 
         if (content === undefined) return Effect.succeed(undefined);
         return Effect.try({
           try: () =>
-            Schema.decodeUnknownSync(CodexBarConfig)(JSON.parse(new TextDecoder().decode(content))),
+            normalizeCodexBarConfig(
+              decodeCodexBarConfig(JSON.parse(new TextDecoder().decode(content)), options),
+              DEFAULT_PROVIDER_CONFIG_NORMALIZERS,
+            ),
           catch: (error) =>
             new InfrastructureError(
               "read config",
@@ -142,11 +152,14 @@ export const makeNodeConfigRepository = (path: string): ConfigRepositoryService 
         });
       }),
     ),
-    save: (config: CodexBarConfigValue) =>
+    save: (config) =>
       Effect.try({
         try: () => {
-          const validated = Schema.decodeUnknownSync(CodexBarConfig)(config);
-          return new TextEncoder().encode(`${JSON.stringify(validated)}\n`);
+          const validated = normalizeCodexBarConfig(
+            decodeCodexBarConfig(encodeCodexBarConfig(config), options),
+            DEFAULT_PROVIDER_CONFIG_NORMALIZERS,
+          );
+          return new TextEncoder().encode(`${JSON.stringify(encodeCodexBarConfig(validated))}\n`);
         },
         catch: (error) =>
           new InfrastructureError("write config", `Unable to encode config file: ${path}`, error),

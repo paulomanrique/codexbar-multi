@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import { CodexBarConfig } from "../src/config.ts";
 import { ProviderFetchClassifiedError } from "../src/errors.ts";
 import {
   decodeUsageSnapshot,
@@ -9,6 +10,29 @@ import {
 } from "../src/usage.ts";
 
 describe("schema contracts", () => {
+  it("uses CodexBar's persisted field spelling and private config wire types", () => {
+    const config = Schema.decodeUnknownSync(CodexBarConfig)({
+      version: 1,
+      providers: [
+        {
+          id: "codex",
+          workspaceID: "project-123",
+          cookieSource: "manual",
+          tokenAccounts: {
+            version: 1,
+            activeIndex: 0,
+            accounts: [{ id: "account", label: "Main", token: "secret", addedAt: 0 }],
+          },
+        },
+      ],
+      hooks: { enabled: false, events: [] },
+    });
+    expect(config.providers[0]).toMatchObject({
+      workspaceID: "project-123",
+      cookieSource: "manual",
+    });
+  });
+
   it("accepts Swift-compatible sparse rate windows", () => {
     const window = Schema.decodeUnknownSync(RateWindow)({ usedPercent: 12.5, windowMinutes: 300 });
     expect(window.usedPercent).toBe(12.5);

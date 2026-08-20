@@ -126,6 +126,29 @@ describe("plugin broker security boundary", () => {
     host.terminate();
   });
 
+  it("keeps non-success responses host-failing unless http-status was declared", async () => {
+    const withoutStatus = new PluginBrokerHost(
+      hostOptions({ fetch: async () => new Response("denied", { status: 401 }) }),
+    );
+    await expect(
+      withoutStatus.request({ url: "https://api.example.com/v1" }),
+    ).rejects.toMatchObject(expectRuntimeError("http"));
+    withoutStatus.terminate();
+
+    const withStatusManifest = manifest(["http-status"]);
+    const withStatus = new PluginBrokerHost(
+      hostOptions({
+        manifest: withStatusManifest,
+        fetch: async () => new Response("denied", { status: 401, headers: { "x-safe": "trace" } }),
+      }),
+    );
+    await expect(withStatus.request({ url: "https://api.example.com/v1" })).resolves.toMatchObject({
+      status: 401,
+      headers: { "x-safe": "trace" },
+    });
+    withStatus.terminate();
+  });
+
   it("enforces request timeout and supports explicit cancellation", async () => {
     const pendingFetch: typeof globalThis.fetch = async (_url, init) =>
       new Promise<Response>((_resolve, reject) => {

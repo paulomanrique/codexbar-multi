@@ -1,12 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { ProviderId } from "@codexbar/contracts";
+import { decodeCodexBarConfig } from "@codexbar/core";
 import {
   NODE_PERSISTENCE_MIGRATIONS,
   makeNodeConfigRepository,
@@ -187,12 +188,89 @@ describe("Node JSON configuration persistence", () => {
     const config = { version: 1, providers: [], hooks: { enabled: false, events: [] } };
     try {
       await Effect.runPromise(repository.save(config));
-      expect(JSON.parse(await readFile(path, "utf8"))).toEqual(config);
+      const written = JSON.parse(await readFile(path, "utf8")) as {
+        providers: Array<{ id: string; enabled?: boolean }>;
+        hooks?: unknown;
+      };
+      expect(written.providers).toHaveLength(69);
+      expect(written.providers[0]).toMatchObject({ id: "codex", enabled: true });
+      expect(written.hooks).toEqual(config.hooks);
       expect((await stat(path)).mode & 0o777).toBe(0o600);
-      await expect(Effect.runPromise(repository.load)).resolves.toEqual(config);
+      await expect(Effect.runPromise(repository.load)).resolves.toMatchObject({
+        version: 1,
+        providers: expect.arrayContaining([expect.objectContaining({ id: "codex" })]),
+        hooks: config.hooks,
+      });
       await expect(
         Effect.runPromise(repository.save({ version: 1, providers: "not-an-array" } as never)),
       ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "write config" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not strip flattened provider extensions on an atomic round trip", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-config-extensions-"));
+    const path = join(directory, "config.json");
+    const repository = makeNodeConfigRepository(path);
+    const config = decodeCodexBarConfig({
+      version: 1,
+      providers: [
+        {
+          id: "moonshot",
+          apiKey: "fixture-key",
+          apiKeyRegion: "china",
+          providerOwnedValue: { nested: true },
+        },
+      ],
+    });
+    try {
+      await Effect.runPromise(repository.save(config));
+      const written = JSON.parse(await readFile(path, "utf8")) as {
+        providers: Array<Record<string, unknown>>;
+      };
+      expect(written.providers).toHaveLength(69);
+      expect(written.providers[0]).toEqual({
+        id: "moonshot",
+        apiKey: "fixture-key",
+        apiKeyRegion: "china",
+        providerOwnedValue: { nested: true },
+      });
+      await expect(Effect.runPromise(repository.load)).resolves.toMatchObject({
+        providers: expect.arrayContaining([
+          expect.objectContaining({
+            id: "moonshot",
+            extensions: expect.objectContaining({ providerOwnedValue: { nested: true } }),
+          }),
+        ]),
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("deduplicates and fills a sparse config when loading", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-config-normalize-"));
+    const path = join(directory, "config.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        providers: [
+          { id: "codex", enabled: false },
+          { id: "codex", enabled: true },
+          { id: "moonshot", apiKey: "fixture", region: "china" },
+        ],
+      }),
+    );
+    try {
+      const loaded = await Effect.runPromise(makeNodeConfigRepository(path).load);
+      expect(loaded?.providers).toHaveLength(69);
+      expect(loaded?.providers.filter((provider) => provider.id === "codex")).toHaveLength(1);
+      expect(loaded?.providers.find((provider) => provider.id === "codex")?.enabled).toBe(false);
+      expect(
+        loaded?.providers.find((provider) => provider.id === "moonshot")?.extensions.apiKeyRegion,
+      ).toBe("china");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

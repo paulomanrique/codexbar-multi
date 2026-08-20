@@ -64,8 +64,11 @@ function App() {
       ) : (
         <>
           <p className="muted">
-            {snapshot.providers.filter((provider) => provider.enabled).length} de{" "}
-            {snapshot.providers.length} providers no primeiro corte.
+            {
+              snapshot.providers.filter((provider) => provider.implementationStatus === "partial")
+                .length
+            }{" "}
+            de {snapshot.providers.length} providers no primeiro corte.
           </p>
           <section>
             {snapshot.providers.map((provider) => (
@@ -73,10 +76,14 @@ function App() {
                 <div className="monogram">{provider.name.slice(0, 2).toUpperCase()}</div>
                 <div>
                   <strong>{provider.name}</strong>
-                  <small>{provider.enabled ? "Portado" : "Aguardando paridade"}</small>
+                  <small>
+                    {provider.implementationStatus === "partial"
+                      ? "Portado"
+                      : "Aguardando paridade"}
+                  </small>
                 </div>
-                <span className={provider.enabled ? "ready" : "pending"}>
-                  {provider.enabled ? "ready" : "queued"}
+                <span className={provider.implementationStatus === "partial" ? "ready" : "pending"}>
+                  {provider.implementationStatus === "partial" ? "ready" : "queued"}
                 </span>
               </article>
             ))}

@@ -70,19 +70,23 @@ function hardenSession(session: Session): void {
   session.on("will-download", (event) => event.preventDefault());
 }
 
-async function exportedCookieHeader(
+async function exportedCookieHeaders(
   session: Session,
   descriptor: LoginDescriptor,
-): Promise<string | undefined> {
-  const all = (
-    await Promise.all(descriptor.cookieDomains.map((domain) => session.cookies.get({ domain })))
-  ).flat();
-  const allowed = all.filter((cookie) => descriptor.cookieNames.has(cookie.name));
-  if (allowed.length === 0) return undefined;
-  return [...new Map(allowed.map((cookie) => [cookie.name, cookie.value])).entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${name}=${value}`)
-    .join("; ");
+): Promise<Readonly<Record<string, string>>> {
+  const result: Record<string, string> = {};
+  for (const domain of descriptor.cookieDomains) {
+    // URL filtering preserves Electron's host-only/domain/path eligibility. A
+    // cookie observed on www.t3.chat is never folded into the t3.chat header.
+    const cookies = await session.cookies.get({ url: `https://${domain}/` });
+    const allowed = cookies.filter((cookie) => descriptor.cookieNames.has(cookie.name));
+    if (allowed.length === 0) continue;
+    result[domain] = [...new Map(allowed.map((cookie) => [cookie.name, cookie.value])).entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${name}=${value}`)
+      .join("; ");
+  }
+  return result;
 }
 
 export async function startBrowserLogin(request: LoginRequestDTO): Promise<LoginResultDTO> {
@@ -115,9 +119,9 @@ export async function startBrowserLogin(request: LoginRequestDTO): Promise<Login
   return new Promise<LoginResultDTO>((resolve, reject) => {
     let settled = false;
     const changed = () => {
-      void exportedCookieHeader(isolatedSession, descriptor)
-        .then(async (cookieHeader) => {
-          if (cookieHeader === undefined || settled) return;
+      void exportedCookieHeaders(isolatedSession, descriptor)
+        .then(async (cookieHeaders) => {
+          if (Object.keys(cookieHeaders).length === 0 || settled) return;
           await Effect.runPromise(
             credentials.write(
               credentialKeyFor(request),
@@ -125,7 +129,7 @@ export async function startBrowserLogin(request: LoginRequestDTO): Promise<Login
                 version: 1,
                 provider: request.provider,
                 accountId: request.accountId,
-                cookieHeader,
+                cookieHeaders,
                 exportedAt: new Date().toISOString(),
               }),
             ),

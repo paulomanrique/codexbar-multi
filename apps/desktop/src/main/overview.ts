@@ -8,7 +8,10 @@ import type { NodeSqliteWorkerPersistence } from "@codexbar/platform/node";
 import { PROVIDERS, type ProviderDescriptor } from "@codexbar/providers";
 
 type Persistence = Pick<NodeSqliteWorkerPersistence, "history">;
-type OverviewProvider = Pick<ProviderDescriptor, "id" | "name" | "status">;
+type OverviewProvider = Pick<ProviderDescriptor, "id" | "name" | "status"> & {
+  readonly enabled?: boolean;
+  readonly source?: DashboardProviderDTO["source"];
+};
 
 const dashboardWindows = (snapshot: UsageSnapshot): DashboardProviderDTO["windows"] => {
   const standard = [
@@ -52,8 +55,9 @@ const toDashboardProvider = (
 ): DashboardProviderDTO => ({
   id: provider.id,
   name: provider.name,
-  enabled: provider.status === "partial",
-  source: "auto",
+  enabled: provider.enabled ?? provider.id === "codex",
+  implementationStatus: provider.status,
+  source: provider.source ?? "auto",
   windows: dashboardWindows(snapshot),
   ...(snapshot.identity === undefined ? {} : { identity: snapshot.identity }),
   ...(snapshot.providerCost === undefined ? {} : { cost: snapshot.providerCost }),

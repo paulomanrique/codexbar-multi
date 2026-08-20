@@ -7,7 +7,6 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const forbiddenRequestHeaders = new Set([
   "authorization",
-  "cookie",
   "host",
   "proxy-authorization",
   "set-cookie",
@@ -111,6 +110,7 @@ function asSafeHeaders(
 function validateRequestHeaders(
   headers: Readonly<Record<string, string>> | undefined,
   authHeader: string | undefined,
+  cookieAllowed: boolean,
 ): Headers {
   const output = new Headers();
   if (headers === undefined) return output;
@@ -123,6 +123,11 @@ function validateRequestHeaders(
     ) {
       throw error("network-policy", `plugin requests may not set the '${name}' header`);
     }
+    if (normalized === "cookie" && !cookieAllowed)
+      throw error(
+        "network-policy",
+        "plugin requests may only set cookies for declared cookie domains",
+      );
     if (typeof value !== "string")
       throw error("network-policy", `plugin request header '${name}' must be a string`);
     try {
@@ -249,11 +254,6 @@ export class PluginBrokerHost {
     if (request.body !== undefined && typeof request.body !== "string")
       throw error("network-policy", "plugin request body must be a string");
     if (
-      request.includeStatus === true &&
-      !this.options.manifest.capabilities.includes("http-status")
-    )
-      throw error("network-policy", "plugin did not declare the http-status capability");
-    if (
       request.includeBrowserCookies === true &&
       !this.options.manifest.capabilities.includes("browser-cookies")
     ) {
@@ -274,7 +274,14 @@ export class PluginBrokerHost {
     signal?.addEventListener("abort", cancel, { once: true });
 
     try {
-      const headers = validateRequestHeaders(request.headers, this.options.manifest.auth?.header);
+      const cookieAllowed =
+        this.options.manifest.capabilities.includes("browser-cookies") &&
+        matchingCookieDomains(url.hostname, this.options.manifest.cookieDomains).length > 0;
+      const headers = validateRequestHeaders(
+        request.headers,
+        this.options.manifest.auth?.header,
+        cookieAllowed,
+      );
       await this.injectHostCredentials(headers, url, request.includeBrowserCookies === true);
       this.throwIfInterrupted(active);
       const response = await this.fetchImplementation(url, {
@@ -287,6 +294,11 @@ export class PluginBrokerHost {
       this.throwIfInterrupted(active);
       if (response.redirected || (response.status >= 300 && response.status < 400))
         throw error("http", "redirect responses are not allowed");
+      if (
+        !(response.status >= 200 && response.status < 300) &&
+        !this.options.manifest.capabilities.includes("http-status")
+      )
+        throw error("http", `plugin request returned HTTP ${response.status}`);
       const body = await readResponseBody(
         response,
         this.limits.maximumResponseBytes,
@@ -296,7 +308,7 @@ export class PluginBrokerHost {
       return {
         body,
         headers: asSafeHeaders(response.headers, this.options.manifest.auth?.header),
-        ...(request.includeStatus === true ? { status: response.status } : {}),
+        status: response.status,
       };
     } catch (cause) {
       if (cause instanceof PluginRuntimeError) throw cause;

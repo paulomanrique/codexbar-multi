@@ -5,6 +5,7 @@ import {
   CostUsageRecordDTO,
   HistoryQueryDTO,
   LoginRequestDTO,
+  RefreshProviderRequestDTO,
 } from "@codexbar/contracts";
 
 import { DesktopChannels } from "../src/ipc/api.ts";
@@ -47,6 +48,16 @@ describe("desktop IPC boundary", () => {
         costUsd: -0.01,
       }),
     ).toThrow();
+  });
+
+  it("accepts only provider-scoped high-level refresh input", () => {
+    const decode = Schema.decodeUnknownSync(RefreshProviderRequestDTO);
+    expect(() => decode({ provider: "not-first-party" })).toThrow();
+    expect(() => decode({ provider: "openai", source: "endpoint-override" })).toThrow();
+    expect(decode({ provider: "openai", source: "api" })).toEqual({
+      provider: "openai",
+      source: "api",
+    });
   });
 
   it("uses unique, high-level channels", () => {

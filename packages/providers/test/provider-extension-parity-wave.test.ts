@@ -172,7 +172,7 @@ describe("Swift-derived provider extension parity", () => {
 
   it("accepts the Qoder camelCase quota fixture and fails when the summary is absent", async () => {
     const raw = await qoder.fetchUsage(
-      context((request) =>
+      context(() =>
         json({
           totalQuota: {
             quotaSummary: { usedValue: 125, limitValue: 500, usagePercentage: 25 },
@@ -190,7 +190,7 @@ describe("Swift-derived provider extension parity", () => {
     });
     await expect(
       qoder.fetchUsage(
-        context((request) =>
+        context(() =>
           json({
             status: "active",
           }),

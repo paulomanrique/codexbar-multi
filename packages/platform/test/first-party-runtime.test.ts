@@ -1,0 +1,435 @@
+import { describe, expect, it } from "vite-plus/test";
+import { Effect, Fiber } from "effect";
+import {
+  Clock,
+  HistoryRepository,
+  InfrastructureError,
+  type HttpRequest,
+  refreshProviderAndPersist,
+  type HistoryRecord,
+} from "@codexbar/core";
+import { openai } from "@codexbar/providers";
+import { ibmbob } from "@codexbar/providers";
+import type { FirstPartyProvider } from "@codexbar/providers";
+import { makeFirstPartyProviderRuntime, nextDailyReset } from "../src/first-party-runtime.ts";
+
+const response = (value: unknown) => ({
+  status: 200,
+  headers: {},
+  body: new TextEncoder().encode(JSON.stringify(value)),
+  url: "https://api.openai.com/fixture",
+});
+
+describe("first-party refresh runtime", () => {
+  it("injects host credentials, maps the provider result, and persists only the successful snapshot", async () => {
+    const records: HistoryRecord[] = [];
+    const headers: Array<Readonly<Record<string, string>> | undefined> = [];
+    const clock = { now: Effect.succeed(1_700_179_200_000), sleep: () => Effect.void };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [openai],
+      settings: {
+        read: (_provider, key) => Effect.succeed(key === "OPENAI_HISTORY_DAYS" ? "1" : undefined),
+      },
+      credentials: {
+        read: () => Effect.succeed("fixture-key"),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock,
+      http: {
+        execute: (request) => {
+          headers.push(request.headers);
+          return Effect.succeed(
+            request.url.includes("/organization/costs")
+              ? response({ object: "page", data: [], has_more: false, next_page: null })
+              : response({ object: "page", data: [], has_more: false, next_page: null }),
+          );
+        },
+      },
+    });
+
+    const outcome = await Effect.runPromise(
+      refreshProviderAndPersist(runtime, "openai", {
+        sourceMode: "auto",
+        includeCredits: true,
+      }).pipe(
+        Effect.provideService(Clock, clock),
+        Effect.provideService(HistoryRepository, {
+          append: (record) => Effect.sync(() => void records.push(record)),
+          latest: () => Effect.succeed(undefined),
+          list: () => Effect.succeed([]),
+        }),
+      ),
+    );
+
+    expect(outcome.source).toBe("api-token");
+    expect(outcome.snapshot.providerCost).toMatchObject({ used: 0, currencyCode: "USD" });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ providerId: "openai", recordedAt: 1_700_179_200_000 });
+    expect(headers).toHaveLength(2);
+    expect(headers.every((value) => value?.Authorization === "Bearer fixture-key")).toBe(true);
+  });
+
+  it("does not persist a failed refresh", async () => {
+    const records: HistoryRecord[] = [];
+    const clock = { now: Effect.succeed(1), sleep: () => Effect.void };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [openai],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock,
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "must not request")) },
+    });
+    await expect(
+      Effect.runPromise(
+        refreshProviderAndPersist(runtime, "openai", {
+          sourceMode: "auto",
+          includeCredits: true,
+        }).pipe(
+          Effect.provideService(Clock, clock),
+          Effect.provideService(HistoryRepository, {
+            append: (record) => Effect.sync(() => void records.push(record)),
+            latest: () => Effect.succeed(undefined),
+            list: () => Effect.succeed([]),
+          }),
+        ),
+      ),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+    expect(records).toHaveLength(0);
+  });
+
+  it("prefers native keyring secrets, falls back to injected secrets, and never exposes either as a plain setting", async () => {
+    const clock = { now: Effect.succeed(1), sleep: () => Effect.void };
+    const seen: Array<string | undefined> = [];
+    const probe: FirstPartyProvider = {
+      id: "openai.probe",
+      kind: "api",
+      descriptor: {
+        id: "openai",
+        name: "Probe",
+        status: "partial",
+        endpoints: [],
+        auth: { type: "bearer", secret: "PROBE_SECRET" },
+        settings: [
+          { key: "PROBE_SECRET", title: "Secret", type: "secure" },
+          { key: "PROBE_PLAIN", title: "Plain", type: "plain" },
+        ],
+      },
+      fetchUsage: async (context) => {
+        seen.push(context.settings.get("PROBE_SECRET"));
+        seen.push(context.settings.getSecret("PROBE_SECRET"));
+        seen.push(context.settings.get("PROBE_PLAIN"));
+        return { identity: { loginMethod: "fixture" } };
+      },
+    };
+    const run = async (native: string | undefined) =>
+      Effect.runPromise(
+        makeFirstPartyProviderRuntime({
+          providers: [probe],
+          settings: {
+            read: (_provider, key) =>
+              Effect.succeed(key === "PROBE_SECRET" ? "environment-secret" : "plain-value"),
+          },
+          credentials: {
+            read: () => Effect.succeed(native),
+            write: () => Effect.void,
+            remove: () => Effect.void,
+          },
+          browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+          http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+          clock,
+        }).fetch("openai", { sourceMode: "auto", includeCredits: true }),
+      );
+    await run("keyring-secret");
+    expect(seen).toEqual([undefined, "keyring-secret", "plain-value"]);
+    seen.length = 0;
+    await run(undefined);
+    expect(seen).toEqual([undefined, "environment-secret", "plain-value"]);
+  });
+
+  it("redacts host secrets and cookie values from provider failures", async () => {
+    const secret = "fixture-private-token";
+    const cookieValue = "fixture-private-cookie";
+    const probe: FirstPartyProvider = {
+      id: "t3chat.redaction-probe",
+      kind: "web",
+      descriptor: {
+        id: "t3chat",
+        name: "Redaction probe",
+        status: "partial",
+        endpoints: ["https://t3.chat"],
+        auth: { type: "bearer", secret: "PROBE_SECRET" },
+        settings: [{ key: "PROBE_SECRET", title: "Secret", type: "secure" }],
+        capabilities: ["browser-cookies"],
+        cookieDomains: ["t3.chat"],
+      },
+      fetchUsage: async (context) => {
+        const cookie = await context.browser.cookieHeader("t3.chat");
+        throw new Error(`${context.settings.getSecret("PROBE_SECRET")} ${cookie} ${cookieValue}`);
+      },
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(secret),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: {
+        cookieHeader: () => Effect.succeed(`session=${cookieValue}`),
+      },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("t3chat", { sourceMode: "auto", includeCredits: true })),
+    ).rejects.toMatchObject({
+      message: "[REDACTED] [REDACTED] [REDACTED]",
+    });
+  });
+
+  it("calculates the next daily boundary in the requested timezone across DST", () => {
+    expect(nextDailyReset(Date.parse("2026-08-20T03:00:00Z"), "America/Chicago", 0)).toBe(
+      "2026-08-20T05:00:00.000Z",
+    );
+    expect(nextDailyReset(Date.parse("2026-03-08T07:00:00Z"), "America/Chicago", 3)).toBe(
+      "2026-03-08T08:00:00.000Z",
+    );
+  });
+
+  it("allows regional IBM Bob hosts and preserves provider-managed JWT/API-key authorization", async () => {
+    const requests: HttpRequest[] = [];
+    const bobProfile = {
+      instances: [
+        {
+          instance_id: "instance",
+          user_id: "user",
+          region_domain: "eu-de.bob.ibm.com",
+          teams: [{ id: "team", budget_limit: 40 }],
+        },
+      ],
+    };
+    const run = async (credential: string) => {
+      requests.length = 0;
+      const runtime = makeFirstPartyProviderRuntime({
+        providers: [ibmbob],
+        settings: { read: () => Effect.succeed(undefined) },
+        credentials: {
+          read: () => Effect.succeed(credential),
+          write: () => Effect.void,
+          remove: () => Effect.void,
+        },
+        browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+        clock: { now: Effect.succeed(1_700_000_000_000), sleep: () => Effect.void },
+        http: {
+          execute: (request) => {
+            requests.push(request);
+            return Effect.succeed(
+              response(request.url.endsWith("/profile") ? bobProfile : { usage: 10 }),
+            );
+          },
+        },
+      });
+      await Effect.runPromise(
+        runtime.fetch("ibmbob", { sourceMode: "auto", includeCredits: true }),
+      );
+    };
+
+    await run("header.eyJzdWIiOiJ1c2VyIn0.signature");
+    expect(requests).toHaveLength(2);
+    expect(
+      requests.every(
+        (request) =>
+          request.headers?.Authorization === "Bearer header.eyJzdWIiOiJ1c2VyIn0.signature",
+      ),
+    ).toBe(true);
+    await run("fixture-api-key");
+    expect(
+      requests.every((request) => request.headers?.Authorization === "Apikey fixture-api-key"),
+    ).toBe(true);
+  });
+
+  it("enforces domain suffix endpoint boundaries and HTTPS", async () => {
+    const target = { value: "https://api.us-east.bob.ibm.com/usage" };
+    const probe: FirstPartyProvider = {
+      id: "ibmbob",
+      kind: "api",
+      descriptor: {
+        id: "ibmbob",
+        name: "Bob endpoint probe",
+        status: "partial",
+        endpoints: [{ domainSuffix: "bob.ibm.com", policy: "https" }],
+        settings: [],
+      },
+      fetchUsage: async (context) => {
+        await context.http.get(target.value);
+        return { identity: { loginMethod: "probe" } };
+      },
+    };
+    const execute = (_request: HttpRequest) =>
+      Effect.succeed(response({ identity: { loginMethod: "probe" } }));
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+      http: { execute },
+    });
+    await Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "auto", includeCredits: false }));
+    target.value = "https://evilbob.ibm.com/usage";
+    await expect(
+      Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+    target.value = "http://api.us-east.bob.ibm.com/usage";
+    await expect(
+      Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+  });
+
+  it("falls back to an injected secret when the keyring is unavailable, but not without one", async () => {
+    const seen: string[] = [];
+    const probe: FirstPartyProvider = {
+      id: "ibmbob",
+      kind: "api",
+      descriptor: {
+        id: "ibmbob",
+        name: "Credential fallback probe",
+        status: "partial",
+        endpoints: [],
+        auth: { type: "bearer", secret: "BOB_SECRET" },
+        settings: [{ key: "BOB_SECRET", title: "Secret", type: "secure" }],
+      },
+      fetchUsage: async (context) => {
+        seen.push(context.settings.getSecret("BOB_SECRET") ?? "missing");
+        return { identity: { loginMethod: "probe" } };
+      },
+    };
+    const keyringDown = () => Effect.fail(new InfrastructureError("keyring", "unavailable"));
+    const make = (injected: string | undefined) =>
+      makeFirstPartyProviderRuntime({
+        providers: [probe],
+        settings: { read: () => Effect.succeed(injected) },
+        credentials: { read: keyringDown, write: () => Effect.void, remove: () => Effect.void },
+        browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+        clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+        http: { execute: () => Effect.fail(new InfrastructureError("http", "not used")) },
+      });
+    await Effect.runPromise(
+      make("injected-secret").fetch("ibmbob", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(seen).toContain("injected-secret");
+    await expect(
+      Effect.runPromise(
+        make(undefined).fetch("ibmbob", { sourceMode: "auto", includeCredits: false }),
+      ),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+  });
+
+  it("aborts an in-flight host HTTP effect when the provider fiber is interrupted", async () => {
+    let aborted = false;
+    const probe: FirstPartyProvider = {
+      id: "ibmbob",
+      kind: "api",
+      descriptor: {
+        id: "ibmbob",
+        name: "Cancellation probe",
+        status: "partial",
+        endpoints: ["https://cancel.test"],
+        settings: [],
+      },
+      fetchUsage: async (context) => {
+        await context.http.get("https://cancel.test/usage");
+        return { identity: { loginMethod: "probe" } };
+      },
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+      http: {
+        execute: () =>
+          Effect.tryPromise({
+            try: async (signal) => {
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener(
+                  "abort",
+                  () => {
+                    aborted = true;
+                    reject(new Error("aborted"));
+                  },
+                  { once: true },
+                );
+              });
+              return response({ identity: { loginMethod: "never" } });
+            },
+            catch: (error) => new InfrastructureError("HTTP request", "aborted", error),
+          }),
+      },
+    });
+    const fiber = await Effect.runPromise(
+      runtime
+        .fetch("ibmbob", { sourceMode: "auto", includeCredits: false })
+        .pipe(Effect.forkDetach),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    expect(aborted).toBe(true);
+  });
+
+  it("injects a validated IANA timezone into the shared provider context", async () => {
+    const observed: string[] = [];
+    const probe: FirstPartyProvider = {
+      id: "openai.timezone-probe",
+      kind: "api",
+      descriptor: {
+        id: "openai",
+        name: "Timezone probe",
+        status: "partial",
+        endpoints: [],
+        settings: [],
+      },
+      fetchUsage: async (context) => {
+        observed.push(context.env.timeZone ?? "missing");
+        return { identity: { loginMethod: "fixture" } };
+      },
+    };
+    const run = (timeZone: string) =>
+      Effect.runPromise(
+        makeFirstPartyProviderRuntime({
+          providers: [probe],
+          settings: { read: () => Effect.succeed(undefined) },
+          credentials: {
+            read: () => Effect.succeed(undefined),
+            write: () => Effect.void,
+            remove: () => Effect.void,
+          },
+          browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+          http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+          clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+          timeZone,
+        }).fetch("openai", { sourceMode: "auto", includeCredits: true }),
+      );
+    await run("America/Sao_Paulo");
+    await run("Not/AZone");
+    expect(observed).toEqual(["America/Sao_Paulo", "UTC"]);
+  });
+});

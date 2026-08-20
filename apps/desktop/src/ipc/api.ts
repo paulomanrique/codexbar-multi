@@ -8,6 +8,8 @@ import type {
   HistoryQueryResultDTO,
   LoginRequestDTO,
   LoginResultDTO,
+  RefreshProviderRequestDTO,
+  RefreshProviderResultDTO,
 } from "@codexbar/contracts";
 
 export const DesktopChannels = Object.freeze({
@@ -19,6 +21,7 @@ export const DesktopChannels = Object.freeze({
   startLogin: "codexbar-multi:start-login",
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
+  refreshProvider: "codexbar-multi:refresh-provider",
 });
 
 export interface CodexBarDesktopApi {
@@ -30,4 +33,7 @@ export interface CodexBarDesktopApi {
   readonly startLogin: (request: LoginRequestDTO) => Promise<LoginResultDTO>;
   readonly cancelLogin: (request: LoginRequestDTO) => Promise<void>;
   readonly logout: (request: LoginRequestDTO) => Promise<void>;
+  readonly refreshProvider: (
+    request: RefreshProviderRequestDTO,
+  ) => Promise<RefreshProviderResultDTO>;
 }

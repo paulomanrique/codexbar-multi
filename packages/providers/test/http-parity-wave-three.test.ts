@@ -1,0 +1,377 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { aiand } from "../src/providers/aiand.ts";
+import { codebuff } from "../src/providers/codebuff.ts";
+import { elevenlabs } from "../src/providers/elevenlabs.ts";
+import { llmproxy } from "../src/providers/llmproxy.ts";
+import { neuralwatt } from "../src/providers/neuralwatt.ts";
+import type { ProviderContext, ProviderResponse } from "../src/types.ts";
+
+const now = new Date("2026-08-20T12:00:00.000Z");
+type Request = {
+  readonly method: string;
+  readonly url: URL;
+  readonly options?: Record<string, unknown>;
+};
+type Fixture = (request: Request) => ProviderResponse;
+
+const errorFactory = (kind: string) => (message: string) => new Error(`${kind}: ${message}`);
+
+function context(
+  fixture: Fixture,
+  settings: Readonly<Record<string, string>> = {},
+  requests: Request[] = [],
+): ProviderContext {
+  const request = async (method: string, url: string, options?: Record<string, unknown>) => {
+    const recorded = { method, url: new URL(url), ...(options === undefined ? {} : { options }) };
+    requests.push(recorded);
+    return fixture(recorded);
+  };
+  return {
+    settings: { get: (key) => settings[key], getSecret: (key) => settings[key] },
+    http: {
+      get: (url, options) => request("GET", url, options),
+      getJSON: async (url, options) => {
+        const response = await request("GET", url, options);
+        return { ...response, json: JSON.parse(response.bodyText) as unknown };
+      },
+      postJSON: async (url, options) => {
+        const response = await request("POST", url, options);
+        return { ...response, json: JSON.parse(response.bodyText) as unknown };
+      },
+    },
+    browser: { cookieHeader: async () => "" },
+    env: {},
+    date: {
+      now: () => now,
+      nowMillis: () => now.getTime(),
+      iso: (value) => new Date(value).toISOString(),
+      unixSeconds: (value) => new Date(value * 1_000).toISOString(),
+      unixMillis: (value) => new Date(value).toISOString(),
+      nextDailyReset: () => "2026-08-21T00:00:00.000Z",
+    },
+    format: {
+      number: (value) => new Intl.NumberFormat("en-US").format(value),
+      usd: (value) => `$${value.toFixed(2)}`,
+      monthDay: (value) => value.toISOString().slice(5, 10),
+    },
+    pct: (used, limit) => (limit > 0 ? (used / limit) * 100 : 100),
+    amountFromPercent: (usedPercent, limit) => (usedPercent / 100) * limit,
+    fail: {
+      authenticationExpired: errorFactory("authentication-expired"),
+      missingCredential: errorFactory("missing-credential"),
+      permissionDenied: errorFactory("permission-denied"),
+      rateLimited: errorFactory("rate-limited"),
+      providerUnavailable: errorFactory("provider-unavailable"),
+      parseFailure: errorFactory("parse-failure"),
+      networkFailure: errorFactory("network-failure"),
+      apiFailure: errorFactory("api-failure"),
+    },
+  };
+}
+
+const json = (body: unknown, status = 200): ProviderResponse => ({
+  status,
+  bodyText: JSON.stringify(body),
+});
+
+describe("Swift-derived HTTP provider parity wave three", () => {
+  it("keeps descriptor and strategy IDs stable", () => {
+    expect([codebuff, elevenlabs, aiand, llmproxy, neuralwatt].map((p) => p.descriptor.id)).toEqual(
+      ["codebuff", "elevenlabs", "aiand", "llmproxy", "neuralwatt"],
+    );
+    expect([codebuff, elevenlabs, aiand, llmproxy, neuralwatt].map((p) => p.id)).toEqual([
+      "codebuff.api",
+      "elevenlabs.api",
+      "aiand.api",
+      "llmproxy.api",
+      "neuralwatt.api",
+    ]);
+  });
+
+  it("maps Codebuff credits, subscription weekly quota, email and auto top-up", async () => {
+    const requests: Request[] = [];
+    const snapshot = await codebuff.fetchUsage(
+      context(
+        (request) =>
+          request.url.pathname === "/api/v1/usage"
+            ? json({ usage: 25, quota: 100, remainingBalance: 75, autoTopupEnabled: true })
+            : json({
+                email: "fixture@example.com",
+                subscription: { displayName: "Pro", status: "active" },
+                rateLimit: { weeklyUsed: 2100, weeklyLimit: 7000 },
+              }),
+        { CODEBUFF_API_KEY: "fixture-key" },
+        requests,
+      ),
+    );
+    expect(requests.map((request) => request.url.pathname)).toEqual([
+      "/api/v1/usage",
+      "/api/user/subscription",
+    ]);
+    expect(requests.map((request) => request.method)).toEqual(["POST", "GET"]);
+    expect(requests[0]?.options).toMatchObject({ body: { fingerprintId: "codexbar-usage" } });
+    expect(snapshot).toEqual({
+      identity: {
+        loginMethod: "Pro · 75 remaining · auto top-up",
+        email: "fixture@example.com",
+      },
+      primary: { usedPercent: 25 },
+      secondary: { usedPercent: 30, windowMinutes: 10080 },
+    });
+  });
+
+  it("infers Codebuff total from used plus remaining and shows exhausted degenerate quota", async () => {
+    const inferred = await codebuff.fetchUsage(
+      context(() => json({ usage: 40, remainingBalance: 60 }), { CODEBUFF_API_KEY: "key" }),
+    );
+    expect(inferred.primary).toEqual({ usedPercent: 40 });
+    const remainingOnly = await codebuff.fetchUsage(
+      context(() => json({ remainingBalance: 17 }), { CODEBUFF_API_KEY: "key" }),
+    );
+    expect(remainingOnly.primary).toEqual({ usedPercent: 100 });
+  });
+
+  it("keeps Codebuff primary usage when optional subscription enrichment fails", async () => {
+    const snapshot = await codebuff.fetchUsage(
+      context(
+        (request) => {
+          if (request.url.pathname === "/api/v1/usage")
+            return json({ usage: 25, quota: 100, remainingBalance: 75, autoTopupEnabled: true });
+          throw new Error("subscription timed out");
+        },
+        { CODEBUFF_API_KEY: "key" },
+      ),
+    );
+    expect(snapshot).toEqual({
+      primary: { usedPercent: 25 },
+      identity: { loginMethod: "75 remaining · auto top-up" },
+    });
+  });
+
+  it("matches ElevenLabs reset, extra voice windows, status suffix and XI_API_KEY alias", async () => {
+    const requests: Request[] = [];
+    const snapshot = await elevenlabs.fetchUsage(
+      context(
+        () =>
+          json({
+            tier: "creator",
+            character_count: 25_000,
+            character_limit: 100_000,
+            voice_slots_used: 2,
+            voice_limit: 10,
+            professional_voice_slots_used: 1,
+            professional_voice_limit: 2,
+            status: "paused",
+            next_character_count_reset_unix: 1_738_356_858,
+          }),
+        { XI_API_KEY: "xi-test" },
+        requests,
+      ),
+    );
+    expect(requests[0]?.options).toMatchObject({ headers: { "xi-api-key": "xi-test" } });
+    expect(snapshot).toEqual({
+      primary: {
+        usedPercent: 25,
+        resetDescription: "25,000 / 100,000 credits",
+        resetsAt: "2025-01-31T20:54:18.000Z",
+      },
+      identity: { loginMethod: "Creator · paused" },
+      extraRateWindows: [
+        {
+          id: "voice-slots",
+          title: "Voice slots",
+          window: { usedPercent: 20, resetDescription: "2 / 10" },
+        },
+        {
+          id: "professional-voices",
+          title: "Professional voices",
+          window: { usedPercent: 50, resetDescription: "1 / 2" },
+        },
+      ],
+    });
+  });
+
+  it("sums ai& decimal spend exactly, chooses newest currency and rejects malformed logs", async () => {
+    const snapshot = await aiand.fetchUsage(
+      context(
+        () =>
+          json({
+            data: [
+              { cost: "0.1", currency: "usd" },
+              { cost: "0.2", currency: "USD" },
+            ],
+            has_more: false,
+          }),
+        { AIAND_API_KEY: "fixture-key" },
+      ),
+    );
+    expect(snapshot).toEqual({
+      cost: { used: 0.3, limit: 0, currency: "USD", period: "Last 30 days" },
+      dataConfidence: "exact",
+    });
+    await expect(
+      aiand.fetchUsage(context(() => json({ object: "list" }), { AIAND_API_KEY: "fixture-key" })),
+    ).rejects.toThrow("parse-failure:");
+  });
+
+  it("aggregates LLM Proxy providers when summary is absent and keeps top three sorted", async () => {
+    const snapshot = await llmproxy.fetchUsage(
+      context(
+        () =>
+          json({
+            providers: {
+              small: {
+                credential_count: 1,
+                active_count: 1,
+                exhausted_count: 0,
+                total_requests: 2,
+                tokens: { output: 3 },
+                approx_cost: 1.5,
+                quota_groups: [{ remaining_percent: 80 }],
+              },
+              large: {
+                credential_count: 3,
+                active_count: 2,
+                exhausted_count: 1,
+                total_requests: 10,
+                tokens: { input_cached: 1, input_uncached: 2, output: 3 },
+                approx_cost: 2,
+                quota_groups: [{ remaining_percent: 42, reset_time: "2026-09-01T00:00:00Z" }],
+              },
+            },
+          }),
+        { LLM_PROXY_API_KEY: "fixture-key", LLM_PROXY_BASE_URL: "https://proxy.example.com" },
+      ),
+    );
+    expect(snapshot).toEqual({
+      primary: { usedPercent: 58, resetsAt: "2026-09-01T00:00:00.000Z" },
+      secondary: { usedPercent: 0, resetDescription: "12 requests" },
+      tertiary: { usedPercent: 0, resetDescription: "9 tokens" },
+      extraRateWindows: [
+        {
+          id: "large",
+          title: "large",
+          window: { usedPercent: 0, resetDescription: "10 req · 6 tok · $2.00" },
+        },
+        {
+          id: "small",
+          title: "small",
+          window: { usedPercent: 0, resetDescription: "2 req · 3 tok · $1.50" },
+        },
+      ],
+      identity: { organization: "3/4 active keys", loginMethod: "quota-stats" },
+      cost: {
+        used: 3.5,
+        limit: 0,
+        currency: "USD",
+        period: "Approx. spend",
+        resetsAt: "2026-09-01T00:00:00.000Z",
+      },
+    });
+  });
+
+  it("falls back field-by-field when an LLM Proxy summary is partial", async () => {
+    const snapshot = await llmproxy.fetchUsage(
+      context(
+        () =>
+          json({
+            summary: { total_requests: 7 },
+            providers: {
+              openai: {
+                credential_count: 1,
+                active_count: 1,
+                total_requests: 2,
+                tokens: { output: 4 },
+                approx_cost: 1.25,
+              },
+            },
+          }),
+        { LLM_PROXY_API_KEY: "fixture-key", LLM_PROXY_BASE_URL: "https://proxy.example.com" },
+      ),
+    );
+    expect(snapshot.secondary).toEqual({ usedPercent: 0, resetDescription: "7 requests" });
+    expect(snapshot.tertiary).toEqual({ usedPercent: 0, resetDescription: "4 tokens" });
+    expect(snapshot.cost).toEqual({
+      used: 1.25,
+      limit: 0,
+      currency: "USD",
+      period: "Approx. spend",
+    });
+  });
+
+  it("clamps malformed LLM Proxy remaining percentages and omits a zero aggregate cost", async () => {
+    const snapshot = await llmproxy.fetchUsage(
+      context(
+        () =>
+          json({
+            providers: {
+              low: {
+                total_requests: 1,
+                approx_cost: 0,
+                quota_groups: [{ remaining_percent: -50 }],
+              },
+            },
+          }),
+        { LLM_PROXY_API_KEY: "fixture-key", LLM_PROXY_BASE_URL: "https://proxy.example.com" },
+      ),
+    );
+    expect(snapshot.primary).toEqual({ usedPercent: 100 });
+    expect(snapshot.cost).toBeUndefined();
+  });
+
+  it("maps Neuralwatt prepaid balance separately from subscription kWh and key allowance", async () => {
+    const snapshot = await neuralwatt.fetchUsage(
+      context(
+        () =>
+          json({
+            balance: {
+              credits_remaining_usd: 32.6774,
+              total_credits_usd: 52.34,
+              credits_used_usd: 19.6626,
+              accounting_method: "energy",
+            },
+            subscription: {
+              plan: "standard",
+              current_period_start: "2026-04-11T05:05:25Z",
+              current_period_end: "2026-05-11T05:05:25Z",
+              kwh_included: 20,
+              kwh_used: 13.9023,
+            },
+            key: {
+              allowance: { limit_usd: 50, period: "monthly", spent_usd: 12.5, blocked: false },
+            },
+          }),
+        { NEURALWATT_API_KEY: "fixture-key" },
+      ),
+    );
+    expect(snapshot).toEqual({
+      identity: { loginMethod: "Standard plan" },
+      cost: { used: 32.6774, limit: 0, currency: "USD", period: "Neuralwatt prepaid balance" },
+      primary: {
+        usedPercent: 69.5115,
+        windowMinutes: 43200,
+        resetDescription: "13.90 / 20 kWh",
+        resetsAt: "2026-05-11T05:05:25.000Z",
+      },
+      extraRateWindows: [
+        { id: "key-allowance", title: "Key Monthly", window: { usedPercent: 25 } },
+      ],
+      subscriptionRenewsAt: "2026-05-11T05:05:25.000Z",
+      dataConfidence: "exact",
+    });
+    const blocked = await neuralwatt.fetchUsage(
+      context(
+        () =>
+          json({
+            balance: { credits_remaining_usd: 3 },
+            key: { allowance: { blocked: true, period: "monthly" } },
+          }),
+        { NEURALWATT_API_KEY: "fixture-key" },
+      ),
+    );
+    expect(blocked.extraRateWindows).toEqual([
+      { id: "key-allowance", title: "Key Monthly", window: { usedPercent: 100 } },
+    ]);
+  });
+});

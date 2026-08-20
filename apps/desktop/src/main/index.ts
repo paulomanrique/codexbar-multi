@@ -8,15 +8,33 @@ import {
   CostUsageQueryResultDTO,
   LoginRequestDTO,
   DashboardSnapshotDTO,
+  RefreshProviderRequestDTO,
+  RefreshProviderResultDTO,
   HistoryExportDTO,
   HistoryQueryDTO,
   HistoryQueryResultDTO,
   LoginResultDTO,
 } from "@codexbar/contracts";
 import {
+  makeCredentialBrowserSessions,
+  makeEnvironmentProviderSettings,
+  makeFetchHttpTransport,
+  makeFirstPartyProviderRuntime,
+  makeNativeCredentialStore,
+  makeNodeConfigRepository,
+  makeSystemClock,
   makeNodeSqliteWorkerPersistence,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
+import {
+  Clock,
+  HistoryRepository,
+  makeDefaultCodexBarConfig,
+  refreshProviderAndPersist,
+  type PersistedCodexBarConfig,
+  type ProviderRuntimeService,
+} from "@codexbar/core";
+import { FIRST_PARTY_PROVIDERS, PROVIDERS } from "@codexbar/providers";
 import { Effect } from "effect";
 import * as Schema from "effect/Schema";
 
@@ -29,6 +47,9 @@ const currentDirectory = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let persistence: NodeSqliteWorkerPersistence | undefined;
+let providerRuntime: ProviderRuntimeService | undefined;
+let desktopConfig: PersistedCodexBarConfig | undefined;
+const providerClock = makeSystemClock();
 let storageClosing = false;
 
 const desktopRequestFailed = () => new Error("Could not complete the desktop request.");
@@ -36,6 +57,22 @@ const desktopRequestFailed = () => new Error("Could not complete the desktop req
 const activePersistence = (): NodeSqliteWorkerPersistence => {
   if (persistence === undefined) throw new Error("Desktop persistence is not ready");
   return persistence;
+};
+const activeProviderRuntime = (): ProviderRuntimeService => {
+  if (providerRuntime === undefined) throw new Error("Provider runtime is not ready");
+  return providerRuntime;
+};
+
+const overviewProviders = () => {
+  const byId = new Map(desktopConfig?.providers.map((provider) => [provider.id, provider]));
+  return PROVIDERS.map((provider) => {
+    const configured = byId.get(provider.id);
+    return {
+      ...provider,
+      enabled: configured?.enabled ?? provider.id === "codex",
+      source: configured?.source ?? "auto",
+    } as const;
+  });
 };
 
 const handleDesktopRequest = async <Value>(request: () => Promise<Value>): Promise<Value> => {
@@ -91,6 +128,21 @@ void app
         workerUrl: new URL(/* @vite-ignore */ "./sqlite-worker.js", import.meta.url),
       }),
     );
+    const configRepository = makeNodeConfigRepository(join(app.getPath("userData"), "config.json"));
+    desktopConfig = await Effect.runPromise(configRepository.load);
+    if (desktopConfig === undefined) {
+      desktopConfig = makeDefaultCodexBarConfig();
+      await Effect.runPromise(configRepository.save(desktopConfig));
+    }
+    const credentials = makeNativeCredentialStore();
+    providerRuntime = makeFirstPartyProviderRuntime({
+      providers: FIRST_PARTY_PROVIDERS,
+      settings: makeEnvironmentProviderSettings(),
+      credentials,
+      browserSessions: makeCredentialBrowserSessions(credentials),
+      http: makeFetchHttpTransport(),
+      clock: providerClock,
+    });
     const decodeVoid = Schema.decodeUnknownPromise(Schema.Void);
     const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
     const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -101,10 +153,14 @@ void app
     const decodeCostExport = Schema.decodeUnknownPromise(CostUsageExportDTO);
     const decodeLogin = Schema.decodeUnknownPromise(LoginRequestDTO);
     const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
+    const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
+    const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
     ipcMain.handle(DesktopChannels.overview, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         await decodeVoid(input);
-        return decodeOverview(await loadPersistedOverview(activePersistence()));
+        return decodeOverview(
+          await loadPersistedOverview(activePersistence(), () => new Date(), overviewProviders()),
+        );
       }),
     );
     ipcMain.handle(DesktopChannels.history, (_event, input: unknown) =>
@@ -146,6 +202,26 @@ void app
       handleDesktopRequest(async () => {
         await logoutBrowserSession(await decodeLogin(input));
         return decodeVoid(undefined);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.refreshProvider, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeRefresh(input);
+        const outcome = await Effect.runPromise(
+          refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
+            sourceMode: request.source ?? "auto",
+            includeCredits: true,
+          }).pipe(
+            Effect.provideService(Clock, providerClock),
+            Effect.provideService(HistoryRepository, activePersistence().history),
+          ),
+        );
+        return decodeRefreshResult({
+          provider: request.provider,
+          strategyId: outcome.strategyId,
+          source: outcome.source,
+          snapshot: outcome.snapshot,
+        });
       }),
     );
     window = createWindow();

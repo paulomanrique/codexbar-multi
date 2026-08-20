@@ -28,7 +28,9 @@ export type DashboardWindowDTO = Schema.Schema.Type<typeof DashboardWindowDTO>;
 export const DashboardProviderDTO = Schema.Struct({
   id: ProviderInstanceId,
   name: Schema.String,
+  /** User/config enablement; independent from migration implementation state. */
   enabled: Schema.Boolean,
+  implementationStatus: Schema.Literals(["partial", "unported"]),
   source: ProviderSourceMode,
   status: Schema.optional(ProviderStatus),
   identity: Schema.optional(ProviderIdentity),
@@ -124,8 +126,24 @@ export const LoginResultDTO = Schema.Struct({
 });
 export type LoginResultDTO = Schema.Schema.Type<typeof LoginResultDTO>;
 
+/** Explicit, provider-scoped refresh request. The renderer cannot supply endpoints, headers, or secrets. */
+export const RefreshProviderRequestDTO = Schema.Struct({
+  provider: ProviderId,
+  source: Schema.optional(ProviderSourceMode),
+});
+export type RefreshProviderRequestDTO = Schema.Schema.Type<typeof RefreshProviderRequestDTO>;
+
+export const RefreshProviderResultDTO = Schema.Struct({
+  provider: ProviderId,
+  strategyId: Schema.String,
+  source: Schema.Literals(["cli", "web", "oauth", "api-token", "local-probe", "web-dashboard"]),
+  snapshot: UsageSnapshot,
+});
+export type RefreshProviderResultDTO = Schema.Schema.Type<typeof RefreshProviderResultDTO>;
+
 export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-usage"), provider: Schema.optional(ProviderId) }),
+  Schema.Struct({ type: Schema.Literal("refresh-provider"), request: RefreshProviderRequestDTO }),
   Schema.Struct({ type: Schema.Literal("get-history"), query: HistoryQueryDTO }),
   Schema.Struct({ type: Schema.Literal("export-history"), query: HistoryQueryDTO }),
   Schema.Struct({ type: Schema.Literal("get-costs"), query: CostUsageQueryDTO }),
@@ -144,6 +162,7 @@ export type IPCRequest = Schema.Schema.Type<typeof IPCRequest>;
 
 export const IPCResponse = Schema.Union([
   Schema.Struct({ type: Schema.Literal("usage"), payload: ProviderPayload }),
+  Schema.Struct({ type: Schema.Literal("refresh-provider"), payload: RefreshProviderResultDTO }),
   Schema.Struct({ type: Schema.Literal("dashboard"), payload: DashboardSnapshotDTO }),
   Schema.Struct({ type: Schema.Literal("history"), payload: HistoryQueryResultDTO }),
   Schema.Struct({ type: Schema.Literal("history-export"), payload: HistoryExportDTO }),

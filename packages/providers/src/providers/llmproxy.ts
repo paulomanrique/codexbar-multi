@@ -30,12 +30,25 @@ const definition: ProviderDefinition = {
     const root = object(json(ctx, "LLM Proxy", response));
     const providers = object(root?.providers);
     if (!root || !providers) throw ctx.fail.parseFailure("LLM Proxy providers are missing.");
-    let requests = number(object(root.summary)?.total_requests) ?? 0;
-    let tokens = number(object(root.summary)?.total_tokens) ?? 0;
-    let cost = number(object(root.summary)?.approx_cost);
+    const summary = object(root.summary);
+    let requests = number(summary?.total_requests);
+    let tokens = number(summary?.total_tokens);
+    let cost = number(summary?.approx_cost);
+    let providerRequestTotal = 0;
+    let providerTokenTotal = 0;
+    let providerCostTotal = 0;
+    let hasProviderCost = false;
+    let credentialCount = 0;
+    let activeCount = 0;
+    let exhaustedCount = 0;
     let minimum: number | undefined;
     let reset: string | undefined;
-    const rows: Array<Record<string, unknown>> = [];
+    const rows: Array<{
+      readonly id: string;
+      readonly requests: number;
+      readonly tokens: number;
+      readonly cost?: number;
+    }> = [];
     for (const [name, raw] of Object.entries(providers)) {
       const p = object(raw);
       if (!p) continue;
@@ -46,13 +59,15 @@ const definition: ProviderDefinition = {
         (number(t?.input_uncached) ?? 0) +
         (number(t?.output) ?? 0);
       const pcost = number(p.approx_cost);
-      requests = requests || 0;
-      tokens = tokens || 0;
-      if (root.summary === undefined) {
-        requests += req;
-        tokens += tok;
+      providerRequestTotal += req;
+      providerTokenTotal += tok;
+      credentialCount += number(p.credential_count) ?? 0;
+      activeCount += number(p.active_count) ?? 0;
+      exhaustedCount += number(p.exhausted_count) ?? 0;
+      if (pcost !== undefined) {
+        providerCostTotal += pcost;
+        hasProviderCost = true;
       }
-      if (cost === undefined && pcost !== undefined) cost = (cost ?? 0) + pcost;
       const groups = Array.isArray(p.quota_groups)
         ? p.quota_groups
         : Object.values(object(p.quota_groups) ?? {});
@@ -66,23 +81,41 @@ const definition: ProviderDefinition = {
       }
       rows.push({
         id: name,
-        title: name,
-        window: {
-          usedPercent: 0,
-          resetDescription: `${req.toLocaleString("en-US")} req · ${tok.toLocaleString("en-US")} tok${pcost !== undefined ? ` · $${pcost.toFixed(2)}` : ""}`,
-        },
+        requests: req,
+        tokens: tok,
+        ...(pcost === undefined ? {} : { cost: pcost }),
       });
     }
+    rows.sort((left, right) => right.requests - left.requests || left.id.localeCompare(right.id));
+    requests ??= providerRequestTotal;
+    tokens ??= providerTokenTotal;
+    if (cost === undefined && hasProviderCost && providerCostTotal > 0) cost = providerCostTotal;
     const result: Record<string, unknown> = {
-      primary: minimum === undefined ? undefined : { usedPercent: 100 - minimum, resetsAt: reset },
+      primary:
+        minimum === undefined
+          ? undefined
+          : {
+              usedPercent: Math.max(0, Math.min(100, 100 - minimum)),
+              resetsAt: reset,
+            },
       secondary: {
         usedPercent: 0,
-        resetDescription: `${requests.toLocaleString("en-US")} requests`,
+        resetDescription: `${(requests ?? 0).toLocaleString("en-US")} requests`,
       },
-      tertiary: { usedPercent: 0, resetDescription: `${tokens.toLocaleString("en-US")} tokens` },
-      extraRateWindows: rows.slice(0, 3),
+      tertiary: {
+        usedPercent: 0,
+        resetDescription: `${(tokens ?? 0).toLocaleString("en-US")} tokens`,
+      },
+      extraRateWindows: rows.slice(0, 3).map((row) => ({
+        id: row.id,
+        title: row.id,
+        window: {
+          usedPercent: 0,
+          resetDescription: `${row.requests.toLocaleString("en-US")} req · ${row.tokens.toLocaleString("en-US")} tok${row.cost === undefined ? "" : ` · $${row.cost.toFixed(2)}`}`,
+        },
+      })),
       identity: {
-        organization: `${number(object(root.summary)?.active_credentials) ?? 0}/${number(object(root.summary)?.credential_count) ?? 0} active keys`,
+        organization: `${activeCount}/${credentialCount} active keys`,
         loginMethod: "quota-stats",
       },
     };

@@ -20,6 +20,32 @@ describe("Node private file store", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("creates at most one file under concurrent no-clobber claims", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-private-store-create-"));
+    const path = join(directory, "imported-config.json");
+    try {
+      const store = makeNodePrivateFileStore();
+      const candidates = Array.from({ length: 32 }, (_, index) =>
+        new TextEncoder().encode(`candidate-${index}\n`),
+      );
+      const claims = await Promise.all(
+        candidates.map((content) => Effect.runPromise(store.writeAtomicIfAbsent(path, content))),
+      );
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      const winner = claims.findIndex(Boolean);
+      expect(winner).toBeGreaterThanOrEqual(0);
+      await expect(readFile(path)).resolves.toEqual(Buffer.from(candidates[winner]!));
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+
+      await expect(
+        Effect.runPromise(store.writeAtomicIfAbsent(path, new TextEncoder().encode("overwrite\n"))),
+      ).resolves.toBe(false);
+      await expect(readFile(path, "utf8")).resolves.toBe(`candidate-${winner}\n`);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("native credential store adapter", () => {

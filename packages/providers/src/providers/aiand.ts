@@ -4,7 +4,7 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { get, json, number, object, status, string } from "./_http.ts";
+import { get, json, object, status, string } from "./_http.ts";
 const definition: ProviderDefinition = {
   id: "aiand",
   name: "ai&",
@@ -17,7 +17,8 @@ const definition: ProviderDefinition = {
     let after: string | undefined;
     let afterID: string | undefined;
     let complete = false;
-    let total = 0;
+    let totalScaled = 0n;
+    let scale = 0;
     let currency: string | undefined;
     for (let page = 0; page < 10; page += 1) {
       const query = new URLSearchParams({ range: "30days", limit: "100" });
@@ -28,14 +29,24 @@ const definition: ProviderDefinition = {
       });
       status(ctx, "ai&", response);
       const root = object(json(ctx, "ai&", response));
-      const rows = root && Array.isArray(root.data) ? root.data : [];
+      if (!root || !Array.isArray(root.data))
+        throw ctx.fail.parseFailure("ai& logs response data must be an array.");
+      const rows = root.data;
       for (const raw of rows) {
         const row = object(raw);
-        const cost = row && number(row.cost);
+        const rawCost = row && string(row.cost);
         const code = row && string(row.currency);
-        if (cost !== undefined && code) {
+        if (rawCost !== undefined && code && /^-?(?:\d+)(?:\.\d+)?$/.test(rawCost)) {
           currency ??= code.toUpperCase();
-          if (currency === code.toUpperCase()) total += cost;
+          if (currency === code.toUpperCase()) {
+            const [whole, fractional = ""] = rawCost.split(".");
+            const nextScale = fractional.length;
+            if (nextScale > scale) {
+              totalScaled *= 10n ** BigInt(nextScale - scale);
+              scale = nextScale;
+            }
+            totalScaled += BigInt(`${whole}${fractional}`) * 10n ** BigInt(scale - nextScale);
+          }
         }
       }
       if (root?.has_more !== true) {
@@ -49,7 +60,7 @@ const definition: ProviderDefinition = {
     return currency
       ? {
           cost: {
-            used: total,
+            used: Number(totalScaled) / 10 ** scale,
             limit: 0,
             currency,
             period: complete ? "Last 30 days" : "Last 30 days (partial)",

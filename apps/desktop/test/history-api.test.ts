@@ -125,14 +125,17 @@ describe("desktop history and cost APIs", () => {
       persistence,
       () => new Date("2026-01-03T00:00:00.000Z"),
       [
-        { id: "codex", name: "Codex", status: "partial" },
-        { id: "claude", name: "Claude", status: "unported" },
+        { id: "codex", name: "Codex", status: "partial", enabled: false, source: "oauth" },
+        { id: "claude", name: "Claude", status: "unported", enabled: true, source: "cli" },
       ],
     );
 
     expect(overview.providers).toEqual([
       expect.objectContaining({
         id: "codex",
+        enabled: false,
+        implementationStatus: "partial",
+        source: "oauth",
         updatedAt: "2026-01-01T01:00:00.000Z",
         windows: [
           expect.objectContaining({ kind: "primary", usedPercent: 25, remainingPercent: 75 }),
@@ -140,6 +143,9 @@ describe("desktop history and cost APIs", () => {
       }),
       expect.objectContaining({
         id: "claude",
+        enabled: true,
+        implementationStatus: "unported",
+        source: "cli",
         updatedAt: "2026-01-03T00:00:00.000Z",
         windows: [],
       }),

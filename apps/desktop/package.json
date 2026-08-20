@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@codexbar/contracts": "workspace:*",
+    "@codexbar/core": "workspace:*",
     "@codexbar/platform": "workspace:*",
+    "@codexbar/plugin-runtime": "workspace:*",
     "@codexbar/providers": "workspace:*",
     "@napi-rs/keyring": "catalog:",
     "effect": "catalog:",

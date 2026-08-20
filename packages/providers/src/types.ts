@@ -64,10 +64,15 @@ export type ProviderEndpoint =
   | {
       readonly setting: string;
       readonly policy: "https" | "https-or-loopback-http" | "https-or-private-network-http";
+    }
+  | {
+      /** Allow only this exact DNS suffix (or a direct host), never a wildcard. */
+      readonly domainSuffix: string;
+      readonly policy: "https";
     };
 
 export interface ProviderAuth {
-  readonly type: "bearer" | "x-api-key" | "header" | "authorization-scheme";
+  readonly type: "bearer" | "x-api-key" | "header" | "authorization-scheme" | "provider-managed";
   readonly secret: string;
   readonly scheme?: string;
   readonly header?: string;
@@ -77,6 +82,8 @@ export interface ProviderDescriptor {
   readonly id: ProviderId;
   readonly name: string;
   readonly status: "partial" | "unported";
+  /** Mirrors ProviderMetadata.isPrimaryProvider for CLI `--provider both` selection. */
+  readonly isPrimaryProvider?: boolean;
   readonly endpoints: readonly ProviderEndpoint[];
   readonly auth?: ProviderAuth;
   readonly settings: readonly ProviderSetting[];
