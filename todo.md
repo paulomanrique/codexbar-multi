@@ -42,6 +42,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 ## Milestone 3 — core, persistence, CLI, and legacy import
 
 - [x] Add the SQLite worker, migrations, concurrency, backup, lock, and failure tests.
+- [x] Keep WAL readers outside the serialized writer queue and retry contended writers cooperatively.
 - [ ] Complete retention/pruning policies and full crash/disk-full parity tests.
 - [x] Complete atomic config persistence and migrations.
 - [ ] Complete history JSON compatibility where SQLite parity does not apply.
@@ -57,14 +58,16 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add a transport-neutral host HTTP broker with redirect, size, and timeout limits.
 - [x] Connect the broker to QuickJS through a disposable Electron utility-process adapter.
 - [x] Cover process recreation, CPU/memory/output limits, approval drift, capability isolation, cache, sync settings, and IANA/DST behavior.
-- [ ] Connect install/approve/test/remove lifecycle IPC and validate snapshots before persistence/UI.
+- [x] Connect schema-validated list/install/approval-preview/approve/test/remove IPC without exposing paths or source to the renderer.
+- [x] Validate plugin test snapshots with the bounded upstream-compatible mapper before IPC.
+- [ ] Persist plugin snapshots, edit secrets through explicit keyring-only IPC, compose browser sessions, and remove associated config/secrets/history.
 - [ ] Port the complete upstream plugin suite.
 
 ## Milestones 5–7 — remaining providers
 
 - [x] Port the complete 14-provider simple HTTP wave with dedicated TypeScript tests.
 - [ ] Finish Swift-oracle/native parity gates for the simple HTTP wave.
-- [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, and Vertex AI are partial).
+- [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial).
 - [ ] Port cookie/web providers using isolated Electron sessions plus manual fallback.
 - [ ] Port local/CLI/OAuth-complex providers and their platform adapters.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.

@@ -312,14 +312,16 @@ providers:
         - Tests/CodexBarTests/*Copilot*Tests.swift
         - TestsLinux/*Copilot*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/complex-cloud-wave-b.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Copilot/**/*
     tsPaths:
       expected: [packages/providers/src/providers/copilot.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/copilot.ts
+    tsTestGlobs:
+      - packages/providers/test/complex-cloud-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: devin
@@ -368,14 +370,16 @@ providers:
         - Tests/CodexBarTests/*MiniMax*Tests.swift
         - TestsLinux/*MiniMax*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/complex-cloud-wave-b.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/MiniMax/**/*
     tsPaths:
       expected: [packages/providers/src/providers/minimax.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/minimax.ts
+    tsTestGlobs:
+      - packages/providers/test/complex-cloud-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: manus
@@ -986,14 +990,16 @@ providers:
         - Tests/CodexBarTests/*Bedrock*Tests.swift
         - TestsLinux/*Bedrock*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/complex-cloud-wave-b.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Bedrock/**/*
     tsPaths:
       expected: [packages/providers/src/providers/bedrock.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/bedrock.ts
+    tsTestGlobs:
+      - packages/providers/test/complex-cloud-wave-b.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: grok
@@ -1062,14 +1068,16 @@ providers:
         - Tests/CodexBarTests/*LiteLLM*Tests.swift
         - TestsLinux/*LiteLLM*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/gateway-parity-wave.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/LiteLLM/**/*
     tsPaths:
       expected: [packages/providers/src/providers/litellm.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/litellm.ts
+    tsTestGlobs:
+      - packages/providers/test/gateway-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: deepgram
@@ -1219,14 +1227,16 @@ providers:
         - Tests/CodexBarTests/*Wayfinder*Tests.swift
         - TestsLinux/*Wayfinder*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/gateway-parity-wave.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Wayfinder/**/*
     tsPaths:
       expected: [packages/providers/src/providers/wayfinder.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/wayfinder.ts
+    tsTestGlobs:
+      - packages/providers/test/gateway-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: zenmux
@@ -1237,14 +1247,16 @@ providers:
         - Tests/CodexBarTests/*ZenMux*Tests.swift
         - TestsLinux/*ZenMux*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/gateway-parity-wave.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/ZenMux/**/*
     tsPaths:
       expected: [packages/providers/src/providers/zenmux.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/zenmux.ts
+    tsTestGlobs:
+      - packages/providers/test/gateway-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: aiand

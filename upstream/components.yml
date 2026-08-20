@@ -165,13 +165,16 @@ components:
       - Sources/CodexBarCore/Resources/Plugins/*.{js,ts}
     tsPaths:
       - packages/plugin-runtime/src/**/*.ts
+      - packages/contracts/src/plugin.ts
       - packages/contracts/src/usage.ts
       - packages/testkit/src/**/*.ts
       - apps/desktop/src/main/plugin-sandbox-*.ts
+      - apps/desktop/src/main/plugin-manager.ts
     tests:
       - TestsPlugin/**/*.swift
       - Tests/CodexBarTests/Sub2APIPluginGoldenTests.swift
       - packages/plugin-runtime/test/**/*.test.ts
+      - apps/desktop/test/plugin-manager.test.ts
     fixtures:
       - Sources/CodexBarCore/Resources/Plugins/*.js
       - Sources/CodexBarCore/Resources/Plugins/*.ts
