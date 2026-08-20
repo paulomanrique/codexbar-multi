@@ -1,5 +1,5 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { chmod, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Schema } from "effect";
 import {
@@ -20,6 +20,10 @@ import {
 } from "@codexbar/core";
 import { ProviderId, ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { makeNodePrivateFileStore } from "./node.ts";
+import {
+  makeNodePrivateDirectoryRestriction,
+  makeNodePrivateFileRestriction,
+} from "./node-private-path-security.ts";
 
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
@@ -88,6 +92,7 @@ export const makeNodeSqlitePersistence = (
     try: async () => {
       if (!options.readOnly) {
         await mkdir(dirname(options.databasePath), { recursive: true, mode: 0o700 });
+        await restrictPrivateDirectory(dirname(options.databasePath));
       }
 
       const database = new DatabaseSync(options.databasePath, {
@@ -217,7 +222,7 @@ const openReadConnection = (databasePath: string): DatabaseSync => {
 const restrictPrivateDatabaseArtifacts = async (databasePath: string): Promise<void> => {
   for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
     try {
-      await chmod(path, 0o600);
+      await restrictPrivateFile(path);
     } catch (error) {
       if (!isMissingFile(error)) throw error;
     }
@@ -261,7 +266,7 @@ const applyMigrations = async (
     if (migration.destructive) {
       const backupPath = `${databasePath}.backup-v${migration.version}-${Date.now()}.sqlite`;
       await backup(database, backupPath);
-      await chmod(backupPath, 0o600);
+      await restrictPrivateFile(backupPath);
     }
     database.exec("BEGIN IMMEDIATE");
     try {
@@ -274,6 +279,9 @@ const applyMigrations = async (
     }
   }
 };
+
+const restrictPrivateFile = makeNodePrivateFileRestriction();
+const restrictPrivateDirectory = makeNodePrivateDirectoryRestriction();
 
 const assertMigrationsAreOrdered = (migrations: readonly NodeSqliteMigration[]): void => {
   let previousVersion = 0;

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -191,23 +192,45 @@ describe("Node SQLite worker persistence", () => {
     const databasePath = join(directory, "usage.sqlite");
     const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
     const controller = new AbortController();
-    controller.abort();
+    const lock = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
+    lock.exec("BEGIN IMMEDIATE");
     try {
+      const append = Effect.runPromise(
+        persistence.history.append({
+          providerId: "codex" as ProviderId,
+          recordedAt: 1,
+          snapshot: snapshot("2026-01-01T00:00:00Z"),
+        }),
+        { signal: controller.signal },
+      );
+      // The worker is already ready, and the external IMMEDIATE transaction
+      // makes this append enter SQLite rather than cancelling before dispatch.
       await expect(
-        Effect.runPromise(
-          persistence.history.append({
-            providerId: "codex" as ProviderId,
-            recordedAt: 1,
-            snapshot: snapshot("2026-01-01T00:00:00Z"),
-          }),
-          { signal: controller.signal },
-        ),
-      ).rejects.toBeDefined();
+        Promise.race([
+          append.then(
+            () => "completed",
+            () => "cancelled",
+          ),
+          new Promise<"started">((resolve) => setTimeout(() => resolve("started"), 40)),
+        ]),
+      ).resolves.toBe("started");
+      controller.abort(new Error("test cancellation"));
+      // Effect reports its own interruption to the caller; the terminated
+      // worker is asserted through the follow-up repository operation below.
+      await expect(append).rejects.toBeDefined();
       await expect(Effect.runPromise(persistence.history.list("codex", 0))).rejects.toMatchObject({
         _tag: "InfrastructureError",
         operation: "SQLite worker",
       });
     } finally {
+      // `append` only rejects after cancelAndTerminate awaits Worker.terminate,
+      // then the external SQLite handle is released before recursive cleanup.
+      try {
+        lock.exec("ROLLBACK");
+      } finally {
+        lock.close();
+      }
+      await Effect.runPromise(persistence.close).catch(() => undefined);
       await rm(directory, { recursive: true, force: true });
     }
   });

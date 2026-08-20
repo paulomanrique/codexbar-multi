@@ -7,7 +7,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "vp build",
     "dev": "node --experimental-strip-types src/index.ts",
     "typecheck": "tsgo --build --pretty false",
     "test": "vp test run --passWithNoTests"

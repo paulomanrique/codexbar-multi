@@ -16,6 +16,10 @@ import {
 
 const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
 
+const expectOwnerOnlyFileMode = async (path: string): Promise<void> => {
+  if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
+};
+
 describe("Node SQLite persistence", () => {
   it("prunes only records strictly before the inclusive retention edge and honors namespaces", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-retention-"));
@@ -204,8 +208,8 @@ describe("Node SQLite persistence", () => {
         40,
       );
       await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(40);
-      expect((await stat(`${databasePath}-wal`)).mode & 0o777).toBe(0o600);
-      expect((await stat(`${databasePath}-shm`)).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFileMode(`${databasePath}-wal`);
+      await expectOwnerOnlyFileMode(`${databasePath}-shm`);
     } finally {
       await Effect.runPromise(persistence.close);
     }
@@ -249,7 +253,7 @@ describe("Node SQLite persistence", () => {
         name.startsWith("usage.sqlite.backup-v2-"),
       );
       expect(backupName).toBeDefined();
-      expect((await stat(join(directory, backupName!))).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFileMode(join(directory, backupName!));
     } finally {
       await Effect.runPromise(migrated.close);
       await rm(directory, { recursive: true, force: true });
@@ -408,7 +412,7 @@ describe("Node JSON configuration persistence", () => {
       expect(written.providers).toHaveLength(69);
       expect(written.providers[0]).toMatchObject({ id: "codex", enabled: true });
       expect(written.hooks).toEqual(config.hooks);
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFileMode(path);
       await expect(Effect.runPromise(repository.load)).resolves.toMatchObject({
         version: 1,
         providers: expect.arrayContaining([expect.objectContaining({ id: "codex" })]),

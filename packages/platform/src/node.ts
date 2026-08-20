@@ -69,7 +69,8 @@ export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = 
   const restrictFile =
     options.restrictFile ?? makeNodePrivateFileRestriction(options.pathRestrictionOptions);
   const restrictDirectory =
-    options.restrictDirectory ?? makeNodePrivateDirectoryRestriction(options.pathRestrictionOptions);
+    options.restrictDirectory ??
+    makeNodePrivateDirectoryRestriction(options.pathRestrictionOptions);
   return {
     read: (path: string) =>
       Effect.tryPromise({

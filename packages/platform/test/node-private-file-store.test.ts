@@ -3,7 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { makeNativeCredentialStore, makeNodePrivateFileStore } from "../src/node.ts";
+import {
+  makeNativeCredentialStore,
+  makeNodePrivateDirectoryRestriction,
+  makeNodePrivateFileRestriction,
+  makeNodePrivateFileStore,
+} from "../src/node.ts";
+
+const expectOwnerOnlyFileMode = async (path: string): Promise<void> => {
+  // NTFS permissions are represented by DACLs; Node reports a synthetic 0666
+  // mode even when the Windows ACL has been locked to the current SID.
+  if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
+};
 
 describe("Node private file store", () => {
   it("replaces a target atomically and leaves no partial caller buffer", async () => {
@@ -15,7 +26,7 @@ describe("Node private file store", () => {
       await Effect.runPromise(store.writeAtomic(path, input));
       input[0] = 9;
       await expect(readFile(path)).resolves.toEqual(Buffer.from([1, 2, 3]));
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFileMode(path);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -36,7 +47,7 @@ describe("Node private file store", () => {
       const winner = claims.findIndex(Boolean);
       expect(winner).toBeGreaterThanOrEqual(0);
       await expect(readFile(path)).resolves.toEqual(Buffer.from(candidates[winner]!));
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      await expectOwnerOnlyFileMode(path);
 
       await expect(
         Effect.runPromise(store.writeAtomicIfAbsent(path, new TextEncoder().encode("overwrite\n"))),
@@ -83,6 +94,45 @@ describe("Node private file store", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("uses a current-user Windows SID DACL for files and directories without a shell", async () => {
+    const grants: Array<{ path: string; sid: string }> = [];
+    let sidReads = 0;
+    const windowsAcl = {
+      currentUserSid: async () => {
+        sidReads += 1;
+        return "S-1-5-21-101-202-303-1001";
+      },
+      grantCurrentUserFullControl: async (path: string, sid: string) => {
+        grants.push({ path, sid });
+      },
+    };
+    const options = { platform: "win32" as const, windowsAcl };
+    const restrictFile = makeNodePrivateFileRestriction(options);
+    const restrictDirectory = makeNodePrivateDirectoryRestriction(options);
+
+    await restrictFile("C:\\data\\credentials.json");
+    await restrictFile("C:\\data\\settings.json");
+    await restrictDirectory("C:\\data");
+
+    expect(sidReads).toBe(2);
+    expect(grants).toEqual([
+      { path: "C:\\data\\credentials.json", sid: "S-1-5-21-101-202-303-1001" },
+      { path: "C:\\data\\settings.json", sid: "S-1-5-21-101-202-303-1001" },
+      { path: "C:\\data", sid: "S-1-5-21-101-202-303-1001" },
+    ]);
+  });
+
+  it("fails closed when the Windows SID adapter returns invalid data", async () => {
+    const grantCurrentUserFullControl = async (): Promise<void> => {
+      throw new Error("must not grant an invalid SID");
+    };
+    const restrict = makeNodePrivateFileRestriction({
+      platform: "win32",
+      windowsAcl: { currentUserSid: async () => "not-a-sid", grantCurrentUserFullControl },
+    });
+    await expect(restrict("C:\\data\\credentials.json")).rejects.toThrow("SID is invalid");
   });
 });
 
