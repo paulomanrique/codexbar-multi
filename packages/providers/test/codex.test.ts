@@ -140,9 +140,8 @@ describe("Codex OAuth usage vertical slice", () => {
         originator: "codex_cli_rs",
       },
     });
-    expect(
-      (requests[0]?.options?.headers as Record<string, string>)["ChatGPT-Account-Id"],
-    ).toBeUndefined();
+    const patHeaders = requests[0]?.options?.headers as Record<string, string> | undefined;
+    expect(patHeaders?.["ChatGPT-Account-Id"]).toBeUndefined();
     expect(requests[1]?.options).toMatchObject({
       headers: { "ChatGPT-Account-Id": "acct-pat", Authorization: "Bearer at-test-token" },
     });
@@ -184,9 +183,8 @@ describe("Codex OAuth usage vertical slice", () => {
       "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami",
       "https://chatgpt.com/backend-api/wham/usage",
     ]);
-    expect((requests[1]?.options?.headers as Record<string, string>).Authorization).toBe(
-      "Bearer oauth-token",
-    );
+    const oauthHeaders = requests[1]?.options?.headers as Record<string, string> | undefined;
+    expect(oauthHeaders?.Authorization).toBe("Bearer oauth-token");
     expect(snapshot.identity).toMatchObject({ accountId: "oauth-account" });
   });
 
