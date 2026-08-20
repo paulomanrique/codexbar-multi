@@ -93,7 +93,7 @@ test("declares a non-publishing desktop package with the fixed product identity"
   assert.deepEqual(build.linux, {
     category: "Utility",
     executableName: "codexbar-multi",
-    icon: "../../Icon.icon/Assets/codexbar.png",
+    icon: "build/icon.png",
     syncDesktopName: true,
     target: ["AppImage"],
   });
@@ -105,7 +105,7 @@ test("declares a non-publishing desktop package with the fixed product identity"
   });
   assert.deepEqual(build.mac, {
     category: "public.app-category.utilities",
-    icon: "../../Sources/CodexBar/Resources/Icon-classic.icns",
+    icon: "build/icon.icns",
     identity: null,
     target: ["dmg"],
   });
