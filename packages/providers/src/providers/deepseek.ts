@@ -15,15 +15,21 @@ const definition: ProviderDefinition = {
     { key: "DEEPSEEK_PLATFORM_TOKEN", title: "Platform token", type: "secure" },
   ],
   fetchUsage: async (ctx) => {
-    const key = ctx.settings.getSecret("DEEPSEEK_API_KEY") || ctx.settings.get("DEEPSEEK_API_KEY");
+    const key = (
+      ctx.settings.getSecret("DEEPSEEK_API_KEY") ||
+      ctx.settings.get("DEEPSEEK_API_KEY") ||
+      ""
+    ).trim();
     if (!key) throw ctx.fail.missingCredential("Missing DeepSeek API key.");
     const response = await get(ctx, "https://api.deepseek.com/user/balance", {
       headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
     });
     status(ctx, "DeepSeek", response);
     const root = object(json(ctx, "DeepSeek", response));
-    const infos = root && Array.isArray(root.balance_infos) ? root.balance_infos : [];
     if (!root) throw ctx.fail.parseFailure("DeepSeek balance response must be an object.");
+    if (typeof root.is_available !== "boolean" || !Array.isArray(root.balance_infos))
+      throw ctx.fail.parseFailure("DeepSeek balance response is missing required fields.");
+    const infos = root.balance_infos;
     const balances: Array<{ currency: string; total: number; granted: number; paid: number }> = [];
     for (const raw of infos) {
       const row = object(raw);
@@ -53,9 +59,11 @@ const definition: ProviderDefinition = {
       primary: {
         usedPercent: selected.total > 0 && root.is_available === true ? 0 : 100,
         resetDescription:
-          selected.total > 0 && root.is_available === true
-            ? `${symbol}${selected.total.toFixed(2)} (Paid: ${symbol}${selected.paid.toFixed(2)} / Granted: ${symbol}${selected.granted.toFixed(2)})`
-            : "Balance unavailable for API calls",
+          selected.total <= 0
+            ? `${symbol}0.00 — add credits at platform.deepseek.com`
+            : root.is_available === true
+              ? `${symbol}${selected.total.toFixed(2)} (Paid: ${symbol}${selected.paid.toFixed(2)} / Granted: ${symbol}${selected.granted.toFixed(2)})`
+              : "Balance unavailable for API calls",
       },
       identity: {},
     };

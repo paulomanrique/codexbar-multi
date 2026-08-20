@@ -26,7 +26,7 @@ const definition: ProviderDefinition = {
     const scalar = async (query: string): Promise<number> => {
       const response = await get(
         ctx,
-        `${rootURL}/metrics/prometheus?query=${encodeURIComponent(query)}`,
+        `${rootURL}/metrics/prometheus/api/v1/query?query=${encodeURIComponent(query)}`,
         { headers },
       );
       status(ctx, "Groq", response);

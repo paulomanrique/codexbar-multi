@@ -13,8 +13,11 @@ const definition: ProviderDefinition = {
   auth: { type: "bearer", secret: "DEEPINFRA_API_KEY" },
   settings: [{ key: "DEEPINFRA_API_KEY", title: "API key", type: "secure" }],
   fetchUsage: async (ctx: ProviderContext) => {
-    const key =
-      ctx.settings.getSecret("DEEPINFRA_API_KEY") || ctx.settings.get("DEEPINFRA_API_KEY");
+    const key = (
+      ctx.settings.getSecret("DEEPINFRA_API_KEY") ||
+      ctx.settings.get("DEEPINFRA_API_KEY") ||
+      ""
+    ).trim();
     if (!key) throw ctx.fail.missingCredential("Missing DeepInfra API key.");
     const headers = { Authorization: `Bearer ${key}`, Accept: "application/json" };
     const check = await get(ctx, "https://api.deepinfra.com/payment/checklist?compute_owed=true", {
@@ -30,8 +33,10 @@ const definition: ProviderDefinition = {
     const months = u && Array.isArray(u.months) ? u.months : [];
     if (!c || !u) throw ctx.fail.parseFailure("DeepInfra billing response must be an object.");
     const stripe = number(c.stripe_balance);
-    const recent = Math.max(0, number(c.recent) ?? 0);
-    if (stripe === undefined) throw ctx.fail.parseFailure("DeepInfra stripe_balance is invalid.");
+    const recentValue = number(c.recent);
+    if (stripe === undefined || recentValue === undefined || !Array.isArray(u.months))
+      throw ctx.fail.parseFailure("DeepInfra billing response is missing required fields.");
+    const recent = Math.max(0, recentValue);
     const last = months.length ? object(months[months.length - 1]) : undefined;
     const monthCost = Math.max(0, (number(last?.total_cost) ?? recent * 100) / 100);
     const net = stripe + recent;

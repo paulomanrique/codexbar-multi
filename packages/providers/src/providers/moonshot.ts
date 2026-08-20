@@ -16,7 +16,11 @@ const definition: ProviderDefinition = {
     { key: "MOONSHOT_REGION", title: "Region", type: "plain" },
   ],
   fetchUsage: async (ctx: ProviderContext) => {
-    const key = ctx.settings.getSecret("MOONSHOT_API_KEY") || ctx.settings.get("MOONSHOT_API_KEY");
+    const key = (
+      ctx.settings.getSecret("MOONSHOT_API_KEY") ||
+      ctx.settings.get("MOONSHOT_API_KEY") ||
+      ""
+    ).trim();
     if (!key) throw ctx.fail.missingCredential("Missing Moonshot API key.");
     const host =
       (ctx.settings.get("MOONSHOT_REGION") || "international").toLowerCase() === "china"
@@ -31,9 +35,10 @@ const definition: ProviderDefinition = {
     if (!root || !data || root.status !== true || root.code !== 0)
       throw ctx.fail.apiFailure("Moonshot balance API returned an unsuccessful response.");
     const balance = number(data.available_balance);
-    if (balance === undefined)
+    const voucher = number(data.voucher_balance);
+    const cash = number(data.cash_balance);
+    if (balance === undefined || voucher === undefined || cash === undefined)
       throw ctx.fail.parseFailure("Moonshot available_balance is invalid.");
-    const cash = number(data.cash_balance) ?? 0;
     return {
       identity: {
         loginMethod: `Balance: $${balance.toFixed(2)}${cash < 0 ? ` · $${Math.abs(cash).toFixed(2)} in deficit` : ""}`,

@@ -249,6 +249,7 @@ providers:
         - TestsLinux/*Fireworks*Tests.swift
       tsGlobs:
         - packages/providers/test/http-wave.test.ts
+        - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Fireworks/**/*
     tsPaths:
@@ -257,6 +258,7 @@ providers:
         - packages/providers/src/providers/fireworks.ts
     tsTestGlobs:
       - packages/providers/test/http-wave.test.ts
+      - packages/providers/test/http-parity-wave-two.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
@@ -386,8 +388,9 @@ providers:
       expected: [packages/providers/src/providers/manus.ts]
       real:
         - packages/providers/src/providers/manus.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/provider-extension-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: kimi
@@ -507,6 +510,7 @@ providers:
         - TestsLinux/*Moonshot*Tests.swift
       tsGlobs:
         - packages/providers/test/http-wave.test.ts
+        - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Moonshot/**/*
     tsPaths:
@@ -515,6 +519,7 @@ providers:
         - packages/providers/src/providers/moonshot.ts
     tsTestGlobs:
       - packages/providers/test/http-wave.test.ts
+      - packages/providers/test/http-parity-wave-two.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
@@ -706,8 +711,9 @@ providers:
       expected: [packages/providers/src/providers/perplexity.ts]
       real:
         - packages/providers/src/providers/perplexity.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/provider-extension-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: mimo
@@ -809,15 +815,16 @@ providers:
         - Tests/CodexBarTests/*DeepSeek*Tests.swift
         - TestsLinux/*DeepSeek*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/DeepSeek/**/*
     tsPaths:
       expected: [packages/providers/src/providers/deepseek.ts]
       real:
         - packages/providers/src/providers/deepseek.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-two.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: deepinfra
@@ -828,15 +835,16 @@ providers:
         - Tests/CodexBarTests/*DeepInfra*Tests.swift
         - TestsLinux/*DeepInfra*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/DeepInfra/**/*
     tsPaths:
       expected: [packages/providers/src/providers/deepinfra.ts]
       real:
         - packages/providers/src/providers/deepinfra.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-two.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: codebuff
@@ -933,8 +941,9 @@ providers:
       expected: [packages/providers/src/providers/qoder.ts]
       real:
         - packages/providers/src/providers/qoder.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/provider-extension-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: stepfun
@@ -1000,15 +1009,16 @@ providers:
         - Tests/CodexBarTests/*Groq*Tests.swift
         - TestsLinux/*Groq*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Groq/**/*
     tsPaths:
       expected: [packages/providers/src/providers/groq.ts]
       real:
         - packages/providers/src/providers/groq.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/http-parity-wave-two.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: llmproxy
@@ -1064,8 +1074,9 @@ providers:
       expected: [packages/providers/src/providers/deepgram.ts]
       real:
         - packages/providers/src/providers/deepgram.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/provider-extension-parity-wave.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: poe

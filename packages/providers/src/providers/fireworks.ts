@@ -16,9 +16,12 @@ const definition: ProviderDefinition = {
     { key: "FIREWORKS_ACCOUNT_SLUG", title: "Account slug", type: "plain" },
   ],
   fetchUsage: async (ctx: ProviderContext) => {
-    const key =
-      ctx.settings.getSecret("FIREWORKS_API_KEY") || ctx.settings.get("FIREWORKS_API_KEY");
-    const slug = ctx.settings.get("FIREWORKS_ACCOUNT_SLUG");
+    const key = (
+      ctx.settings.getSecret("FIREWORKS_API_KEY") ||
+      ctx.settings.get("FIREWORKS_API_KEY") ||
+      ""
+    ).trim();
+    const slug = (ctx.settings.get("FIREWORKS_ACCOUNT_SLUG") || "").trim();
     if (!key) throw ctx.fail.missingCredential("Missing Fireworks API key.");
     if (!slug || !/^[A-Za-z0-9._-]+$/.test(slug))
       throw ctx.fail.missingCredential("Missing or invalid Fireworks account slug.");
