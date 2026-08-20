@@ -51,9 +51,15 @@ describe("Swift-derived Kilo Kiro Augment boundary parity", () => {
       ),
     ).toMatchObject({ primary: { usedPercent: 20 }, identity: { loginMethod: "pro" } }));
   it("parses Kiro collected CLI output", async () =>
-    expect(await kiro.fetchUsage(context({}, { KIRO_CLI_USAGE_TEXT: "20% used" }))).toEqual({
-      primary: { usedPercent: 20 },
-    }));
+    expect(
+      await kiro.fetchUsage({
+        ...context({}, {}),
+        local: {
+          run: async () => ({ exitCode: 0, signal: undefined, stdout: "20% used", stderr: "" }),
+          readData: async () => undefined,
+        },
+      }),
+    ).toEqual({ primary: { usedPercent: 20 } }));
   it("maps Augment web session usage", async () =>
     expect(
       await augment.fetchUsage(

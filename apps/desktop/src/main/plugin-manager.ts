@@ -13,6 +13,7 @@ import type {
   PluginSecretRequestDTO,
   PluginSecretResultDTO,
   TestPluginResultDTO,
+  UsageSnapshot,
 } from "@codexbar/contracts";
 import {
   approvalMatches,
@@ -212,6 +213,19 @@ export class DesktopPluginManager {
   private readonly writeSecret: (pluginId: string, key: string, value: string) => Promise<void>;
   private readonly removeSecret: (pluginId: string, key: string) => Promise<void>;
   private readonly readCookie: (pluginId: string, domain: string) => Promise<string | undefined>;
+  private readonly persistSnapshot: (pluginId: string, snapshot: UsageSnapshot) => Promise<void>;
+  private readonly removeSnapshot: (pluginId: string) => Promise<void>;
+  private readonly removeConfig: (pluginId: string) => Promise<void>;
+  private readonly removeHistory: (pluginId: string) => Promise<void>;
+  private readonly removeBrowserSessions: (
+    pluginId: string,
+    domains: readonly string[],
+  ) => Promise<void>;
+  private readonly finalizeRemove: (pluginId: string) => Promise<void>;
+  private readonly cleanupCredentials: (
+    pluginId: string,
+    secureSettingKeys: readonly string[],
+  ) => Promise<void>;
   private readonly log: (pluginId: string, message: string) => void | Promise<void>;
   private readonly fetchImplementation: typeof globalThis.fetch;
   private readonly timeZone: () => string;
@@ -226,6 +240,26 @@ export class DesktopPluginManager {
     readonly writeSecret?: (pluginId: string, key: string, value: string) => Promise<void>;
     readonly removeSecret?: (pluginId: string, key: string) => Promise<void>;
     readonly readCookie?: (pluginId: string, domain: string) => Promise<string | undefined>;
+    /** Receives only a schema-validated provider snapshot. */
+    readonly persistSnapshot?: (pluginId: string, snapshot: UsageSnapshot) => Promise<void>;
+    /** Clears ephemeral snapshot/error state belonging exclusively to this plugin. */
+    readonly removeSnapshot?: (pluginId: string) => Promise<void>;
+    /** Removes this plugin's config entry using the host's atomic config writer. */
+    readonly removeConfig?: (pluginId: string) => Promise<void>;
+    /** Removes only this plugin's durable history rows. */
+    readonly removeHistory?: (pluginId: string) => Promise<void>;
+    /** Removes only browser-session credentials declared by this plugin. */
+    readonly removeBrowserSessions?: (
+      pluginId: string,
+      domains: readonly string[],
+    ) => Promise<void>;
+    /** Clears the plugin's declared secure settings without requiring keyring enumeration. */
+    readonly cleanupCredentials?: (
+      pluginId: string,
+      secureSettingKeys: readonly string[],
+    ) => Promise<void>;
+    /** Runs only after the source and approval have both been removed successfully. */
+    readonly finalizeRemove?: (pluginId: string) => Promise<void>;
     readonly log?: (pluginId: string, message: string) => void | Promise<void>;
     readonly fetch?: typeof globalThis.fetch;
     readonly timeZone?: () => string;
@@ -243,6 +277,22 @@ export class DesktopPluginManager {
       });
     this.removeSecret = options.removeSecret ?? (async () => undefined);
     this.readCookie = options.readCookie ?? (async () => undefined);
+    this.persistSnapshot = options.persistSnapshot ?? (async () => undefined);
+    this.removeSnapshot = options.removeSnapshot ?? (async () => undefined);
+    this.removeConfig = options.removeConfig ?? (async () => undefined);
+    this.removeHistory = options.removeHistory ?? (async () => undefined);
+    this.removeBrowserSessions = options.removeBrowserSessions ?? (async () => undefined);
+    this.cleanupCredentials =
+      options.cleanupCredentials ??
+      (async (pluginId, secureSettingKeys) => {
+        const removals = await Promise.allSettled(
+          secureSettingKeys.map((key) => this.removeSecret(pluginId, key)),
+        );
+        if (removals.some((result) => result.status === "rejected")) {
+          throw new PluginRuntimeError("secret-access", "plugin secret cleanup failed");
+        }
+      });
+    this.finalizeRemove = options.finalizeRemove ?? (async () => undefined);
     this.log = options.log ?? (() => undefined);
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
     this.timeZone = options.timeZone ?? (() => Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -345,17 +395,38 @@ export class DesktopPluginManager {
       const metadata = await lstat(path);
       if (!metadata.isFile() || metadata.isSymbolicLink())
         throw new Error("installed plugin is not a regular file");
-      const removals = await Promise.allSettled(
-        discovered.loaded.manifest.settings
-          .filter((setting) => setting.type === "secure")
-          .map((setting) => this.removeSecret(pluginId, setting.key)),
-      );
-      if (removals.some((result) => result.status === "rejected"))
-        throw new PluginRuntimeError("secret-access", "plugin secret cleanup failed");
-      await unlink(path);
+      // Retain the approved surface too: a manually replaced source can no
+      // longer declare an old secure setting or cookie domain, but removal
+      // must still clear credentials that the earlier approved source owned.
       const approvals = await this.loadApprovals();
+      const previous = approvals[pluginId];
+      const secureSettingKeys = [
+        ...new Set([
+          ...discovered.loaded.manifest.settings
+            .filter((setting) => setting.type === "secure")
+            .map((setting) => setting.key),
+          ...(previous?.binding.secretNames ?? []),
+        ]),
+      ];
+      const cookieDomains = [
+        ...new Set([
+          ...discovered.loaded.manifest.cookieDomains,
+          ...(previous?.binding.cookieDomains ?? []),
+        ]),
+      ];
+      const removals = await Promise.allSettled([
+        this.cleanupCredentials(pluginId, secureSettingKeys),
+        this.removeBrowserSessions(pluginId, cookieDomains),
+        this.removeSnapshot(pluginId),
+        this.removeHistory(pluginId),
+        this.removeConfig(pluginId),
+      ]);
+      if (removals.some((result) => result.status === "rejected"))
+        throw new PluginRuntimeError("secret-access", "plugin cleanup failed");
+      await unlink(path);
       delete approvals[pluginId];
       await this.saveApprovals(approvals);
+      await this.finalizeRemove(pluginId);
     });
   }
 
@@ -419,7 +490,9 @@ export class DesktopPluginManager {
         { timeZone: this.timeZone() },
         capabilities,
       );
-      return { pluginId, snapshot: mapProviderSnapshot(raw, pluginId, this.now()) };
+      const snapshot = mapProviderSnapshot(raw, pluginId, this.now());
+      await this.persistSnapshot(pluginId, snapshot);
+      return { pluginId, snapshot };
     } finally {
       host.terminate();
     }

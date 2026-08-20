@@ -20,11 +20,25 @@ import type {
   ProviderContext,
   ProviderDescriptor,
   ProviderJSONResponse,
+  ProviderLocalCapabilities,
+  ProviderLocalCommand,
+  ProviderLocalData,
+  ProviderLocalDataResult,
+  ProviderLocalProcessResult,
   ProviderResponse,
 } from "@codexbar/providers";
 
 const maximumResponseBytes = 1024 * 1024;
 const defaultTimeoutMs = 15_000;
+
+const localCommands: Readonly<Partial<Record<ProviderId, readonly ProviderLocalCommand[]>>> = {
+  amp: ["amp"],
+  kiro: ["kiro-cli"],
+};
+
+const localData: Readonly<Partial<Record<ProviderId, readonly ProviderLocalData[]>>> = {
+  jetbrains: ["jetbrains-ai-quota"],
+};
 
 /** Safe settings are injected by a host; renderer input never reaches this interface directly. */
 export interface FirstPartySettings {
@@ -39,10 +53,30 @@ export interface FirstPartyBrowserSessions {
   readonly cookieHeader: (providerId: ProviderId, domain: string) => Effect.Effect<string, unknown>;
 }
 
+/**
+ * Host-owned local capabilities for first-party providers. These are named
+ * operations rather than general process or filesystem access so providers
+ * cannot escape their declared local integration.
+ */
+export interface FirstPartyLocalCapabilities {
+  readonly run: (
+    providerId: ProviderId,
+    command: ProviderLocalCommand,
+    request: { readonly args: readonly string[]; readonly timeoutMs?: number },
+  ) => Effect.Effect<ProviderLocalProcessResult, unknown>;
+  readonly readData: (
+    providerId: ProviderId,
+    source: ProviderLocalData,
+    request?: { readonly basePath?: string },
+  ) => Effect.Effect<ProviderLocalDataResult | undefined, unknown>;
+}
+
 export interface FirstPartyProviderRuntimeOptions {
   readonly providers: readonly FirstPartyProvider[];
   readonly settings: FirstPartySettings;
   readonly browserSessions: FirstPartyBrowserSessions;
+  /** Omitted hosts fail closed when a provider asks for local integration. */
+  readonly local?: FirstPartyLocalCapabilities;
   readonly http: HttpTransportService;
   readonly credentials: CredentialStoreService;
   readonly clock: ClockService;
@@ -53,7 +87,13 @@ export interface FirstPartyProviderRuntimeOptions {
 }
 
 const sourceFor = (provider: FirstPartyProvider): ProviderFetchStrategy["source"] =>
-  provider.kind === "web" ? "web" : "api-token";
+  provider.kind === "web"
+    ? "web"
+    : provider.kind === "cli"
+      ? "cli"
+      : provider.kind === "local"
+        ? "local-probe"
+        : "api-token";
 
 const acceptsSource = (
   provider: FirstPartyProvider,
@@ -61,6 +101,7 @@ const acceptsSource = (
 ): boolean =>
   mode === "auto" ||
   (mode === "web" && provider.kind === "web") ||
+  (mode === "cli" && (provider.kind === "cli" || provider.kind === "local")) ||
   (mode === "api" && provider.kind === "api");
 
 const credentialKeyFor = (providerId: ProviderId, setting: string): string =>
@@ -270,6 +311,78 @@ const asProviderResponse = (response: HttpResponse): ProviderResponse => ({
   bodyText: text(response.body),
 });
 
+const localFor = (
+  providerId: ProviderId,
+  local: FirstPartyLocalCapabilities | undefined,
+  signal: AbortSignal,
+): ProviderLocalCapabilities => ({
+  run: async (command, request) => {
+    if (local === undefined)
+      throw failure(
+        "provider-unavailable",
+        "Local provider capabilities are not configured by this host.",
+      );
+    if (localCommands[providerId]?.includes(command) !== true)
+      throw failure(
+        "permission-denied",
+        `Local command '${command}' is not declared for ${providerId}.`,
+      );
+    if (
+      request.args.length > 16 ||
+      request.args.some(
+        (argument) =>
+          typeof argument !== "string" || argument.length > 1_024 || argument.includes("\u0000"),
+      )
+    ) {
+      throw failure("api-failure", "Local command arguments are invalid.");
+    }
+    const timeoutMs = request.timeoutMs ?? defaultTimeoutMs;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 30_000)
+      throw failure("api-failure", "Local command timeout is invalid.");
+    const result = await Effect.runPromise(
+      local.run(providerId, command, { ...request, timeoutMs }),
+      {
+        signal,
+      },
+    );
+    if (
+      result.stdout.length > maximumResponseBytes ||
+      result.stderr.length > maximumResponseBytes ||
+      result.stdout.includes("\u0000") ||
+      result.stderr.includes("\u0000")
+    ) {
+      throw failure("api-failure", "Local command response is invalid or exceeds 1 MiB.");
+    }
+    return result;
+  },
+  readData: async (source, request) => {
+    if (local === undefined)
+      throw failure(
+        "provider-unavailable",
+        "Local provider capabilities are not configured by this host.",
+      );
+    if (localData[providerId]?.includes(source) !== true)
+      throw failure(
+        "permission-denied",
+        `Local data '${source}' is not declared for ${providerId}.`,
+      );
+    const basePath = request?.basePath;
+    if (
+      basePath !== undefined &&
+      (basePath.length === 0 || basePath.length > 4_096 || basePath.includes("\u0000"))
+    ) {
+      throw failure("api-failure", "Local data path is invalid.");
+    }
+    const result = await Effect.runPromise(local.readData(providerId, source, request), { signal });
+    if (
+      result !== undefined &&
+      (result.text.length > maximumResponseBytes || result.text.includes("\u0000"))
+    )
+      throw failure("api-failure", "Local data response is invalid or exceeds 1 MiB.");
+    return result;
+  },
+});
+
 /**
  * Adapts the typed host capabilities to the deliberately small provider JS
  * surface. It is the only first-party path that can resolve credentials or
@@ -440,6 +553,7 @@ const executeProvider = (
             return cookie;
           },
         },
+        local: localFor(descriptor.id, options.local, operationSignal),
         env: { timeZone },
         date: {
           now,

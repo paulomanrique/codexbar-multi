@@ -27,7 +27,13 @@ export const queryHistory = async (
     persistence.history.list(query.provider, query.since ?? 0, fetchLimitFor(query)),
   );
   const limit = limitFor(query);
-  return { records: records.slice(0, limit), truncated: records.length > limit };
+  // The durable repository accepts user-plugin instance IDs too, while this
+  // first-party IPC DTO is deliberately closed. Narrow at the boundary rather
+  // than letting an unexpected row cross into the renderer.
+  const matching = records
+    .filter((record) => record.providerId === query.provider)
+    .map((record) => ({ ...record, providerId: query.provider }));
+  return { records: matching.slice(0, limit), truncated: matching.length > limit };
 };
 
 export const exportHistory = async (

@@ -8,7 +8,7 @@ import {
   refreshProviderAndPersist,
   type HistoryRecord,
 } from "@codexbar/core";
-import { openai } from "@codexbar/providers";
+import { amp, openai } from "@codexbar/providers";
 import { ibmbob } from "@codexbar/providers";
 import type { FirstPartyProvider } from "@codexbar/providers";
 import { makeFirstPartyProviderRuntime, nextDailyReset } from "../src/first-party-runtime.ts";
@@ -21,6 +21,54 @@ const response = (value: unknown) => ({
 });
 
 describe("first-party refresh runtime", () => {
+  it("fails closed when a local provider is composed without a local capability broker", async () => {
+    const clock = { now: Effect.succeed(1), sleep: () => Effect.void };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [amp],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock,
+    });
+    await expect(
+      Effect.runPromise(runtime.fetch("amp", { sourceMode: "cli", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "provider-unavailable" });
+  });
+
+  it("routes an explicit CLI source through a local provider capability", async () => {
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [amp],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () =>
+          Effect.succeed({
+            exitCode: 0,
+            signal: undefined,
+            stdout: "Usage: 42%\nReset: 2026-08-21T00:00:00Z",
+            stderr: "",
+          }),
+        readData: () => Effect.succeed(undefined),
+      },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("amp", { sourceMode: "cli", includeCredits: false })),
+    ).resolves.toMatchObject({ source: "cli" });
+  });
+
   it("injects host credentials, maps the provider result, and persists only the successful snapshot", async () => {
     const records: HistoryRecord[] = [];
     const headers: Array<Readonly<Record<string, string>> | undefined> = [];
@@ -59,6 +107,7 @@ describe("first-party refresh runtime", () => {
           append: (record) => Effect.sync(() => void records.push(record)),
           latest: () => Effect.succeed(undefined),
           list: () => Effect.succeed([]),
+          removeProvider: () => Effect.void,
         }),
       ),
     );
@@ -97,6 +146,7 @@ describe("first-party refresh runtime", () => {
             append: (record) => Effect.sync(() => void records.push(record)),
             latest: () => Effect.succeed(undefined),
             list: () => Effect.succeed([]),
+            removeProvider: () => Effect.void,
           }),
         ),
       ),

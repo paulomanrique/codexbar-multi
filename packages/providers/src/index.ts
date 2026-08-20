@@ -7,6 +7,7 @@ import { aiand } from "./providers/aiand.ts";
 import { abacus } from "./providers/abacus.ts";
 import { alibaba } from "./providers/alibaba.ts";
 import { alibabatokenplan } from "./providers/alibabatokenplan.ts";
+import { amp } from "./providers/amp.ts";
 import { antigravity } from "./providers/antigravity.ts";
 import { augment } from "./providers/augment.ts";
 import { azureopenai } from "./providers/azureopenai.ts";
@@ -32,8 +33,10 @@ import { fireworks } from "./providers/fireworks.ts";
 import { gemini } from "./providers/gemini.ts";
 import { groq } from "./providers/groq.ts";
 import { ibmbob } from "./providers/ibmbob.ts";
+import { jetbrains } from "./providers/jetbrains.ts";
 import { kimi } from "./providers/kimi.ts";
 import { kilo } from "./providers/kilo.ts";
+import { kiro } from "./providers/kiro.ts";
 import { llmproxy } from "./providers/llmproxy.ts";
 import { litellm } from "./providers/litellm.ts";
 import { longcat } from "./providers/longcat.ts";
@@ -75,6 +78,7 @@ export const FIRST_PARTY_PROVIDERS = [
   aiand,
   alibaba,
   alibabatokenplan,
+  amp,
   antigravity,
   augment,
   azureopenai,
@@ -99,8 +103,10 @@ export const FIRST_PARTY_PROVIDERS = [
   gemini,
   groq,
   ibmbob,
+  jetbrains,
   kimi,
   kilo,
+  kiro,
   llmproxy,
   litellm,
   longcat,

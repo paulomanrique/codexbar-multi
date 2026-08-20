@@ -89,6 +89,12 @@ export const MemoryHistoryRepository = Layer.sync(HistoryRepository, () => {
         );
         return limit === undefined ? matching : matching.slice(0, limit);
       }),
+    removeProvider: (providerId: HistoryRecord["providerId"]) =>
+      Effect.sync(() => {
+        for (let index = records.length - 1; index >= 0; index -= 1) {
+          if (records[index]?.providerId === providerId) records.splice(index, 1);
+        }
+      }),
   };
 });
 
@@ -131,6 +137,7 @@ export const EmptyHostCapabilities = Layer.mergeAll(
     append: () => Effect.void,
     latest: () => Effect.succeed(undefined),
     list: () => Effect.succeed([]),
+    removeProvider: () => Effect.void,
   }),
   Layer.succeed(CostUsageRepository, { append: () => Effect.void, list: () => Effect.succeed([]) }),
 );

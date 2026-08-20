@@ -70,6 +70,12 @@ const makePersistence = (): Pick<NodeSqliteWorkerPersistence, "history" | "costs
           );
           return limit === undefined ? matching : matching.slice(0, limit);
         }),
+      removeProvider: (providerId) =>
+        Effect.sync(() => {
+          for (let index = history.length - 1; index >= 0; index -= 1) {
+            if (history[index]?.providerId === providerId) history.splice(index, 1);
+          }
+        }),
     },
     costs: {
       append: (record) =>

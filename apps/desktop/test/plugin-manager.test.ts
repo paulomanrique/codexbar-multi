@@ -1,8 +1,14 @@
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { inspectPlugin } from "@codexbar/plugin-runtime";
+import {
+  inspectPlugin,
+  type LoadedPlugin,
+  type PluginBrokerProtocolServer,
+  type PluginSandboxCapabilities,
+  type PluginSandboxExecutionContext,
+} from "@codexbar/plugin-runtime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { DesktopPluginManager } from "../src/main/plugin-manager.ts";
@@ -13,11 +19,30 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+type FixtureExecute = (
+  plugin: Pick<LoadedPlugin, "transpiledSource" | "manifest">,
+  broker: PluginBrokerProtocolServer,
+  context?: PluginSandboxExecutionContext,
+  capabilities?: PluginSandboxCapabilities,
+) => Promise<Record<string, unknown>>;
+
+type FixtureOptions = Pick<
+  ConstructorParameters<typeof DesktopPluginManager>[0],
+  | "readCookie"
+  | "persistSnapshot"
+  | "removeSnapshot"
+  | "removeConfig"
+  | "removeHistory"
+  | "removeBrowserSessions"
+  | "cleanupCredentials"
+>;
+
 async function fixture(
-  execute: () => Promise<Record<string, unknown>> = async () => ({
+  execute: FixtureExecute = async () => ({
     primary: { usedPercent: 42 },
     identity: { loginMethod: "plugin" },
   }),
+  options: FixtureOptions = {},
 ): Promise<{ root: string; manager: DesktopPluginManager; secrets: Map<string, string> }> {
   const root = await mkdtemp(join(tmpdir(), "codexbar-multi-plugin-manager-"));
   roots.push(root);
@@ -39,6 +64,7 @@ async function fixture(
       removeSecret: async (pluginId, key) => {
         secrets.delete(`${pluginId}/${key}`);
       },
+      ...options,
     }),
   };
 }
@@ -140,6 +166,70 @@ describe("desktop plugin lifecycle", () => {
     );
   });
 
+  it("persists only snapshots that passed the host schema mapper", async () => {
+    const stored: Array<{ pluginId: string; usedPercent: number | undefined }> = [];
+    const { manager } = await fixture(undefined, {
+      persistSnapshot: async (pluginId, snapshot) => {
+        stored.push({ pluginId, usedPercent: snapshot.primary?.usedPercent });
+      },
+    });
+    await manager.install(source(), "javascript");
+    await manager.approve({ pluginId: "fixture-meter", settings: {}, typedConfirmations: {} });
+    await manager.test("fixture-meter");
+    expect(stored).toEqual([{ pluginId: "fixture-meter", usedPercent: 42 }]);
+
+    const invalid = await fixture(async () => ({}), {
+      persistSnapshot: async (pluginId) => {
+        stored.push({ pluginId, usedPercent: 0 });
+      },
+    });
+    await invalid.manager.install(source("invalid-meter"), "javascript");
+    await invalid.manager.approve({
+      pluginId: "invalid-meter",
+      settings: {},
+      typedConfirmations: {},
+    });
+    await expect(invalid.manager.test("invalid-meter")).rejects.toThrow("snapshot must contain");
+    expect(stored).toEqual([{ pluginId: "fixture-meter", usedPercent: 42 }]);
+  });
+
+  it("composes declared browser sessions only after approval and only for their domain", async () => {
+    const reads: Array<{ pluginId: string; domain: string }> = [];
+    const { manager } = await fixture(
+      async (_plugin, _broker, _context, capabilities) => ({
+        primary: {
+          usedPercent:
+            (await capabilities?.getCookie("api.example.test")) === "session=fixture" ? 7 : 0,
+        },
+      }),
+      {
+        readCookie: async (pluginId, domain) => {
+          reads.push({ pluginId, domain });
+          return "session=fixture";
+        },
+      },
+    );
+    const browserSource = `
+      defineProvider({
+        id: "browser-meter",
+        name: "Browser Meter",
+        endpoints: ["https://api.example.test"],
+        capabilities: ["browser-cookies"],
+        cookieDomains: ["api.example.test"],
+        settings: [],
+        async fetchUsage() { return { primary: { usedPercent: 1 } }; },
+      });
+    `;
+    await manager.install(browserSource, "javascript");
+    await expect(manager.test("browser-meter")).rejects.toThrow("approval");
+    expect(reads).toEqual([]);
+    await manager.approve({ pluginId: "browser-meter", settings: {}, typedConfirmations: {} });
+    await expect(manager.test("browser-meter")).resolves.toMatchObject({
+      snapshot: { primary: { usedPercent: 7 } },
+    });
+    expect(reads).toEqual([{ pluginId: "browser-meter", domain: "api.example.test" }]);
+  });
+
   it("writes declared secrets without returning values and clears them on removal", async () => {
     const { manager, secrets } = await fixture();
     const secureSource = `
@@ -164,5 +254,95 @@ describe("desktop plugin lifecycle", () => {
     expect(secrets.get("secret-meter/TOKEN")).toBe("fixture-secret");
     await manager.remove("secret-meter");
     expect(secrets.has("secret-meter/TOKEN")).toBe(false);
+  });
+
+  it("removes only this plugin's state, credentials, browser sessions, config, and history", async () => {
+    const cleaned: string[] = [];
+    const { manager } = await fixture(undefined, {
+      cleanupCredentials: async (pluginId, keys) => {
+        cleaned.push(`credentials:${pluginId}:${keys.join(",")}`);
+      },
+      removeBrowserSessions: async (pluginId, domains) => {
+        cleaned.push(`sessions:${pluginId}:${domains.join(",")}`);
+      },
+      removeSnapshot: async (pluginId) => {
+        cleaned.push(`snapshot:${pluginId}`);
+      },
+      removeConfig: async (pluginId) => {
+        cleaned.push(`config:${pluginId}`);
+      },
+      removeHistory: async (pluginId) => {
+        cleaned.push(`history:${pluginId}`);
+      },
+    });
+    const removable = `
+      defineProvider({
+        id: "delete-meter",
+        name: "Delete Meter",
+        endpoints: ["https://api.example.test"],
+        capabilities: ["browser-cookies"],
+        cookieDomains: ["api.example.test"],
+        auth: { type: "bearer", secret: "TOKEN" },
+        settings: [{ key: "TOKEN", title: "Token", type: "secure" }],
+        async fetchUsage() { return { primary: { usedPercent: 1 } }; },
+      });
+    `;
+    await manager.install(removable, "javascript");
+    await manager.approve({ pluginId: "delete-meter", settings: {}, typedConfirmations: {} });
+    await manager.remove("delete-meter");
+    expect(cleaned.sort()).toEqual([
+      "config:delete-meter",
+      "credentials:delete-meter:TOKEN",
+      "history:delete-meter",
+      "sessions:delete-meter:api.example.test",
+      "snapshot:delete-meter",
+    ]);
+  });
+
+  it("keeps the installed source and approval when cleanup cannot complete", async () => {
+    const { manager } = await fixture(undefined, {
+      removeHistory: async () => {
+        throw new Error("disk unavailable");
+      },
+    });
+    await manager.install(source(), "javascript");
+    await manager.approve({ pluginId: "fixture-meter", settings: {}, typedConfirmations: {} });
+    await expect(manager.remove("fixture-meter")).rejects.toThrow("cleanup failed");
+    await expect(manager.list()).resolves.toMatchObject({
+      plugins: [{ id: "fixture-meter", approvalStatus: "approved" }],
+    });
+  });
+
+  it("cleans credential names and domains retained by an older approval after source drift", async () => {
+    const cleaned: string[] = [];
+    const { root, manager } = await fixture(undefined, {
+      cleanupCredentials: async (_pluginId, keys) => {
+        cleaned.push(...keys);
+      },
+      removeBrowserSessions: async (_pluginId, domains) => {
+        cleaned.push(...domains);
+      },
+    });
+    const approvedSource = `
+      defineProvider({
+        id: "drift-meter",
+        name: "Drift Meter",
+        endpoints: ["https://api.example.test"],
+        capabilities: ["browser-cookies"],
+        cookieDomains: ["api.example.test"],
+        auth: { type: "bearer", secret: "OLD_TOKEN" },
+        settings: [{ key: "OLD_TOKEN", title: "Token", type: "secure" }],
+        async fetchUsage() { return { primary: { usedPercent: 1 } }; },
+      });
+    `;
+    await manager.install(approvedSource, "javascript");
+    await manager.approve({ pluginId: "drift-meter", settings: {}, typedConfirmations: {} });
+    await writeFile(
+      join(root, "plugins", "drift-meter.js"),
+      source("drift-meter", '"https://replacement.example.test"'),
+    );
+    await manager.remove("drift-meter");
+    expect(cleaned).toContain("OLD_TOKEN");
+    expect(cleaned).toContain("api.example.test");
   });
 });

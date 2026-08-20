@@ -18,6 +18,7 @@ import {
   RemovePluginRequestDTO,
   TestPluginRequestDTO,
   TestPluginResultDTO,
+  UsageSnapshot,
   DashboardSnapshotDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
@@ -32,6 +33,7 @@ import {
   makeFetchHttpTransport,
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
+  makeNodeFirstPartyLocalCapabilities,
   makeNodeConfigRepository,
   makeSystemClock,
   makeNodeSqliteWorkerPersistence,
@@ -54,6 +56,7 @@ import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./b
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
 import { DesktopPluginManager } from "./plugin-manager.js";
+import { makePluginCredentialBrowserSessions } from "./plugin-browser-session.js";
 import { makeElectronPluginSandbox } from "./plugin-sandbox-process.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +67,8 @@ let providerRuntime: ProviderRuntimeService | undefined;
 let desktopConfig: PersistedCodexBarConfig | undefined;
 let pluginManager: DesktopPluginManager | undefined;
 let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
+/** Latest user-plugin snapshots are host-only and are cleared with the plugin. */
+const pluginSnapshots = new Map<string, UsageSnapshot>();
 const providerClock = makeSystemClock();
 let storageClosing = false;
 
@@ -147,22 +152,31 @@ void app
         workerUrl: new URL(/* @vite-ignore */ "./sqlite-worker.js", import.meta.url),
       }),
     );
-    const configRepository = makeNodeConfigRepository(join(app.getPath("userData"), "config.json"));
-    desktopConfig = await Effect.runPromise(configRepository.load);
-    if (desktopConfig === undefined) {
-      desktopConfig = makeDefaultCodexBarConfig();
-      await Effect.runPromise(configRepository.save(desktopConfig));
-    }
+    // The config adapter retains only registered plugin IDs. Populate this
+    // mutable set from the hardened discovery pass before decoding a config,
+    // so deleting one plugin cannot discard a sibling plugin's config entry.
+    const pluginProviderIds = new Set<string>();
+    const configRepository = makeNodeConfigRepository(
+      join(app.getPath("userData"), "config.json"),
+      {
+        pluginProviderIds,
+      },
+    );
     const credentials = makeNativeCredentialStore();
     providerRuntime = makeFirstPartyProviderRuntime({
       providers: FIRST_PARTY_PROVIDERS,
       settings: makeEnvironmentProviderSettings(),
       credentials,
       browserSessions: makeCredentialBrowserSessions(credentials),
+      local: makeNodeFirstPartyLocalCapabilities(),
       http: makeFetchHttpTransport(),
       clock: providerClock,
     });
     pluginSandbox = makeElectronPluginSandbox();
+    const pluginBrowserSessions = makePluginCredentialBrowserSessions({
+      read: (key) => Effect.runPromise(credentials.read(key)),
+      remove: (key) => Effect.runPromise(credentials.remove(key)),
+    });
     pluginManager = new DesktopPluginManager({
       storageRoot: app.getPath("userData"),
       sandbox: pluginSandbox,
@@ -173,8 +187,44 @@ void app
         Effect.runPromise(credentials.write(`plugin/${pluginId}/secret/${key}`, value)),
       removeSecret: (pluginId, key) =>
         Effect.runPromise(credentials.remove(`plugin/${pluginId}/secret/${key}`)),
+      readCookie: pluginBrowserSessions.readCookie,
+      removeBrowserSessions: pluginBrowserSessions.remove,
+      persistSnapshot: (pluginId, snapshot) =>
+        Effect.runPromise(
+          activePersistence().history.append({
+            providerId: pluginId,
+            recordedAt: Date.now(),
+            snapshot,
+          }),
+        ).then(() => {
+          pluginSnapshots.set(pluginId, snapshot);
+        }),
+      removeSnapshot: async (pluginId) => {
+        pluginSnapshots.delete(pluginId);
+      },
+      removeHistory: (pluginId) =>
+        Effect.runPromise(activePersistence().history.removeProvider(pluginId)),
+      removeConfig: async (pluginId) => {
+        const current = desktopConfig;
+        if (current === undefined) throw new Error("Desktop config is not ready");
+        const providers = current.providers.filter((provider) => provider.id !== pluginId);
+        if (providers.length === current.providers.length) return;
+        const next = { ...current, providers };
+        await Effect.runPromise(configRepository.save(next));
+        desktopConfig = next;
+      },
+      finalizeRemove: async (pluginId) => {
+        pluginProviderIds.delete(pluginId);
+      },
       log: (pluginId, message) => console.info(`[plugin:${pluginId}]`, message),
     });
+    const installedPlugins = await pluginManager.list();
+    for (const plugin of installedPlugins.plugins) pluginProviderIds.add(plugin.id);
+    desktopConfig = await Effect.runPromise(configRepository.load);
+    if (desktopConfig === undefined) {
+      desktopConfig = makeDefaultCodexBarConfig();
+      await Effect.runPromise(configRepository.save(desktopConfig));
+    }
     const decodeVoid = Schema.decodeUnknownPromise(Schema.Void);
     const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
     const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -278,9 +328,9 @@ void app
     ipcMain.handle(DesktopChannels.installPlugin, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         const request = await decodeInstallPlugin(input);
-        return decodeInstalledPlugin(
-          await activePluginManager().install(request.source, request.language),
-        );
+        const installed = await activePluginManager().install(request.source, request.language);
+        pluginProviderIds.add(installed.id);
+        return decodeInstalledPlugin(installed);
       }),
     );
     ipcMain.handle(DesktopChannels.previewPluginApproval, (_event, input: unknown) =>

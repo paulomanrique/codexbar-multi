@@ -17,6 +17,42 @@ import {
 const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
 
 describe("Node SQLite persistence", () => {
+  it("keeps user-plugin history isolated and removes only the requested instance", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-plugin-history-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    try {
+      await Effect.runPromise(
+        persistence.history.append({
+          providerId: "fixture-meter",
+          recordedAt: 1,
+          snapshot: snapshot("2026-01-01T00:00:00Z"),
+        }),
+      );
+      await Effect.runPromise(
+        persistence.history.append({
+          providerId: "other-meter",
+          recordedAt: 2,
+          snapshot: snapshot("2026-01-01T00:01:00Z"),
+        }),
+      );
+      await Effect.runPromise(persistence.history.removeProvider("fixture-meter"));
+      await expect(
+        Effect.runPromise(persistence.history.list("fixture-meter", 0)),
+      ).resolves.toEqual([]);
+      await expect(Effect.runPromise(persistence.history.list("other-meter", 0))).resolves.toEqual([
+        {
+          providerId: "other-meter",
+          recordedAt: 2,
+          snapshot: snapshot("2026-01-01T00:01:00Z"),
+        },
+      ]);
+    } finally {
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("serializes concurrent appends, commits complete records, and enables durable SQLite settings", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-"));
     const databasePath = join(directory, "usage.sqlite");

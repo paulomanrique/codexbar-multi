@@ -108,15 +108,16 @@ providers:
         - Tests/CodexBarTests/*ClinePass*Tests.swift
         - TestsLinux/*ClinePass*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/ClinePass/**/*
     tsPaths:
       expected: [packages/providers/src/providers/clinepass.ts]
       real:
         - packages/providers/src/providers/clinepass.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: cursor
@@ -381,15 +382,16 @@ providers:
         - Tests/CodexBarTests/*Zai*Tests.swift
         - TestsLinux/*Zai*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Zai/**/*
     tsPaths:
       expected: [packages/providers/src/providers/zai.ts]
       real:
         - packages/providers/src/providers/zai.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: minimax
@@ -654,15 +656,16 @@ providers:
         - Tests/CodexBarTests/*Synthetic*Tests.swift
         - TestsLinux/*Synthetic*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Synthetic/**/*
     tsPaths:
       expected: [packages/providers/src/providers/synthetic.ts]
       real:
         - packages/providers/src/providers/synthetic.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: openrouter
@@ -674,15 +677,16 @@ providers:
         - Tests/CodexBarTests/*OpenRouter*Tests.swift
         - TestsLinux/*OpenRouter*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenRouter/**/*
     tsPaths:
       expected: [packages/providers/src/providers/openrouter.ts]
       real:
         - packages/providers/src/providers/openrouter.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: elevenlabs
@@ -962,15 +966,16 @@ providers:
         - Tests/CodexBarTests/*Crof*Tests.swift
         - TestsLinux/*Crof*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Crof/**/*
     tsPaths:
       expected: [packages/providers/src/providers/crof.ts]
       real:
         - packages/providers/src/providers/crof.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: venice
@@ -982,15 +987,16 @@ providers:
         - Tests/CodexBarTests/*Venice*Tests.swift
         - TestsLinux/*Venice*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Venice/**/*
     tsPaths:
       expected: [packages/providers/src/providers/venice.ts]
       real:
         - packages/providers/src/providers/venice.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: commandcode
@@ -1188,15 +1194,16 @@ providers:
         - Tests/CodexBarTests/*Poe*Tests.swift
         - TestsLinux/*Poe*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Poe/**/*
     tsPaths:
       expected: [packages/providers/src/providers/poe.ts]
       real:
         - packages/providers/src/providers/poe.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: chutes
@@ -1248,15 +1255,16 @@ providers:
         - Tests/CodexBarTests/*ClawRouter*Tests.swift
         - TestsLinux/*ClawRouter*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/ClawRouter/**/*
     tsPaths:
       expected: [packages/providers/src/providers/clawrouter.ts]
       real:
         - packages/providers/src/providers/clawrouter.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: longcat
@@ -1289,15 +1297,16 @@ providers:
         - Tests/CodexBarTests/*Sub2API*Tests.swift
         - TestsLinux/*Sub2API*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Sub2API/**/*
     tsPaths:
       expected: [packages/providers/src/providers/sub2api.ts]
       real:
         - packages/providers/src/providers/sub2api.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: wayfinder
@@ -1390,15 +1399,16 @@ providers:
         - Tests/CodexBarTests/*XAI*Tests.swift
         - TestsLinux/*XAI*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/XAI/**/*
     tsPaths:
       expected: [packages/providers/src/providers/xai.ts]
       real:
         - packages/providers/src/providers/xai.ts
-    tsTestGlobs: []
-    status: unported
+    tsTestGlobs:
+      - packages/providers/test/plugin-derived-descriptors.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: notion

@@ -1,3 +1,38 @@
+/** Commands exposed to first-party providers by the local host broker. */
+export type ProviderLocalCommand = "amp" | "kiro-cli";
+
+/** Named, read-only local data sources. Providers never receive a filesystem API. */
+export type ProviderLocalData = "jetbrains-ai-quota";
+
+export interface ProviderLocalProcessResult {
+  readonly exitCode: number | undefined;
+  readonly signal: string | undefined;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export interface ProviderLocalDataResult {
+  readonly text: string;
+  /** Host-derived metadata only; a filesystem path is deliberately never returned. */
+  readonly label?: string;
+}
+
+/**
+ * Deliberately narrow local capability broker. It is not a process or
+ * filesystem API: every command and data source is an allowlisted symbolic
+ * identifier, validated again by the platform host.
+ */
+export interface ProviderLocalCapabilities {
+  readonly run: (
+    command: ProviderLocalCommand,
+    request: { readonly args: readonly string[]; readonly timeoutMs?: number },
+  ) => Promise<ProviderLocalProcessResult>;
+  readonly readData: (
+    source: ProviderLocalData,
+    request?: { readonly basePath?: string },
+  ) => Promise<ProviderLocalDataResult | undefined>;
+}
+
 /** Small, platform-neutral host surface used by first-party providers. */
 export interface ProviderContext {
   readonly settings: {
@@ -10,6 +45,8 @@ export interface ProviderContext {
     postJSON(url: string, options?: Record<string, unknown>): Promise<ProviderJSONResponse>;
   };
   readonly browser: { cookieHeader(domain: string): Promise<string> };
+  /** Omitted in direct parser tests; composed runtimes always provide a fail-closed broker. */
+  readonly local?: ProviderLocalCapabilities;
   readonly env: { timeZone?: string };
   readonly date: {
     now(): Date;
@@ -108,7 +145,7 @@ export interface ProviderDefinition {
 
 export interface ProviderStrategy {
   readonly id: string;
-  readonly kind: "api" | "web";
+  readonly kind: "api" | "web" | "cli" | "local";
   readonly fetchUsage: (context: ProviderContext) => Promise<ProviderSnapshot>;
 }
 

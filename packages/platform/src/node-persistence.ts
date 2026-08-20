@@ -14,7 +14,7 @@ import {
   type HistoryRepositoryService,
   InfrastructureError,
 } from "@codexbar/core";
-import { ProviderId, UsageSnapshot } from "@codexbar/contracts";
+import { ProviderId, ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { makeNodePrivateFileStore } from "./node.ts";
 
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
@@ -298,7 +298,7 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
       }),
     latest: (providerId) =>
       readSqlite("get latest history record", () => {
-        assertProviderId(providerId);
+        assertProviderInstanceId(providerId);
         const row = reader
           .prepare(
             "SELECT provider_id, recorded_at, snapshot_json FROM history_records WHERE provider_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1",
@@ -308,7 +308,7 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
       }),
     list: (providerId, since, limit) =>
       readSqlite("list history records", () => {
-        assertProviderId(providerId);
+        assertProviderInstanceId(providerId);
         assertListBounds(since, limit);
         return queryRows(
           reader,
@@ -317,6 +317,13 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
           since,
           limit,
         ).map(decodeHistoryRecord);
+      }),
+    removeProvider: (providerId) =>
+      queuedSqlite(queue, "remove provider history", () => {
+        assertProviderInstanceId(providerId);
+        return inImmediateTransactionWithRetry(database, () => {
+          database.prepare("DELETE FROM history_records WHERE provider_id = ?").run(providerId);
+        });
       }),
   };
   const costs: CostUsageRepositoryService = {
@@ -461,7 +468,7 @@ const ensureProvider = (database: DatabaseSync, providerId: string): void => {
 };
 
 const decodeHistoryRecord = (row: Record<string, unknown>): HistoryRecord => ({
-  providerId: Schema.decodeUnknownSync(ProviderId)(readString(row, "provider_id")),
+  providerId: Schema.decodeUnknownSync(ProviderInstanceId)(readString(row, "provider_id")),
   recordedAt: readFiniteNumber(row, "recorded_at"),
   snapshot: Schema.decodeUnknownSync(UsageSnapshot)(JSON.parse(readString(row, "snapshot_json"))),
 });
@@ -485,7 +492,7 @@ const assertCostUsageRecord = (record: CostUsageRecord): void => {
 };
 
 const assertHistoryRecord = (record: HistoryRecord): void => {
-  assertProviderId(record.providerId);
+  assertProviderInstanceId(record.providerId);
   assertNatural(record.recordedAt, "recordedAt");
   Schema.decodeUnknownSync(UsageSnapshot)(record.snapshot);
 };
@@ -516,6 +523,10 @@ const queryRows = (
 
 const assertProviderId = (providerId: string): void => {
   Schema.decodeUnknownSync(ProviderId)(providerId);
+};
+
+const assertProviderInstanceId = (providerId: string): void => {
+  Schema.decodeUnknownSync(ProviderInstanceId)(providerId);
 };
 
 const readString = (row: Record<string, unknown>, column: string): string => {

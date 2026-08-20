@@ -54,19 +54,43 @@ const definition: ProviderDefinition = {
   id: "jetbrains",
   name: "JetBrains AI",
   endpoints: [],
-  settings: [{ key: "JETBRAINS_QUOTA_XML", title: "Quota XML fixture", type: "secure" }],
+  settings: [
+    {
+      key: "JETBRAINS_IDE_BASE_PATH",
+      title: "IDE configuration path",
+      subtitle: "Optional JetBrains IDE configuration directory under a supported config root.",
+      type: "plain",
+    },
+  ],
   fetchUsage: async (ctx) => {
-    const xml = ctx.settings.getSecret("JETBRAINS_QUOTA_XML");
-    if (!xml)
-      throw ctx.fail.missingCredential(
-        "JetBrains IDE discovery and quota-file reads require PrivateFileStore and IDEDiscovery adapters.",
+    if (ctx.local === undefined)
+      throw ctx.fail.providerUnavailable("JetBrains IDE discovery is not configured by this host.");
+    const basePath = ctx.settings.get("JETBRAINS_IDE_BASE_PATH");
+    const data = await ctx.local.readData(
+      "jetbrains-ai-quota",
+      basePath === undefined ? undefined : { basePath },
+    );
+    if (data === undefined)
+      throw ctx.fail.providerUnavailable(
+        "No JetBrains IDE with an AI Assistant quota file was found in supported configuration roots.",
       );
-    return parseJetBrainsQuota(xml, ctx);
+    const snapshot = parseJetBrainsQuota(data.text, ctx);
+    return {
+      ...snapshot,
+      ...(data.label === undefined
+        ? {}
+        : {
+            identity: {
+              ...snapshot.identity,
+              organization: data.label,
+            },
+          }),
+    };
   },
 };
 const strategy: ProviderStrategy = {
   id: "jetbrains.local",
-  kind: "api",
+  kind: "local",
   fetchUsage: definition.fetchUsage,
 };
 export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };

@@ -17,6 +17,7 @@ import {
   makeFetchHttpTransport,
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
+  makeNodeFirstPartyLocalCapabilities,
   makeNodeConfigRepository,
   makeNodeSqlitePersistence,
   makeSystemClock,
@@ -573,6 +574,7 @@ export const makeNodeCLIProviderRuntime = (
     credentials,
     clock: makeSystemClock(),
     browserSessions: makeCredentialBrowserSessions(credentials),
+    local: makeNodeFirstPartyLocalCapabilities({ environment }),
     settings: {
       read: (providerId, setting) => {
         if (

@@ -35,6 +35,12 @@ type WorkerRequest =
   | {
       readonly version: 1;
       readonly id: string;
+      readonly type: "remove-provider-history";
+      readonly providerId: string;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
       readonly type: "append-cost";
       readonly record: CostUsageRecord;
     }
@@ -171,6 +177,12 @@ class NodeSqliteWorkerClient {
           { providerId, since, ...(limit === undefined ? {} : { limit }) },
           "list history records",
         ) as Effect.Effect<ReadonlyArray<HistoryRecord>, InfrastructureError>,
+      removeProvider: (providerId) =>
+        this.effect(
+          "remove-provider-history",
+          { providerId },
+          "remove provider history",
+        ) as Effect.Effect<void, InfrastructureError>,
     };
     const costs: CostUsageRepositoryService = {
       append: (record) => this.effect("append-cost", { record }, "append cost usage record"),
@@ -303,6 +315,7 @@ type RequestType =
   | "append-history"
   | "latest-history"
   | "list-history"
+  | "remove-provider-history"
   | "append-cost"
   | "list-cost"
   | "close";

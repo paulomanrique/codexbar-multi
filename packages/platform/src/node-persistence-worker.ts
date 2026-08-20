@@ -35,6 +35,12 @@ type WorkerRequest =
   | {
       readonly version: 1;
       readonly id: string;
+      readonly type: "remove-provider-history";
+      readonly providerId: string;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
       readonly type: "append-cost";
       readonly record: CostUsageRecord;
     }
@@ -110,6 +116,7 @@ const isRequest = (value: unknown): value is WorkerRequest => {
     message.type === "append-history" ||
     message.type === "latest-history" ||
     message.type === "list-history" ||
+    message.type === "remove-provider-history" ||
     message.type === "append-cost" ||
     message.type === "list-cost" ||
     message.type === "close" ||
@@ -149,6 +156,10 @@ const runRequest = async (request: WorkerRequest): Promise<unknown> => {
           request.since,
           request.limit,
         ),
+      );
+    case "remove-provider-history":
+      return Effect.runPromise(
+        persistence.history.removeProvider(request.providerId as HistoryRecord["providerId"]),
       );
     case "append-cost":
       return Effect.runPromise(persistence.costs.append(request.record));

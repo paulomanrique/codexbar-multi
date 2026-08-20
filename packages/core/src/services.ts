@@ -1,5 +1,10 @@
 import { Context, Effect } from "effect";
-import type { ProviderDescriptor, ProviderId, UsageSnapshot } from "@codexbar/contracts";
+import type {
+  ProviderDescriptor,
+  ProviderId,
+  ProviderInstanceId,
+  UsageSnapshot,
+} from "@codexbar/contracts";
 import type { PersistedCodexBarConfig } from "./config.ts";
 import type {
   ProviderFetchContext,
@@ -207,7 +212,8 @@ export const BrowserSessionBroker = Context.Service<BrowserSessionBrokerService>
 );
 
 export interface HistoryRecord {
-  readonly providerId: ProviderId;
+  /** First-party IDs and user plugin instance IDs share the durable history namespace. */
+  readonly providerId: ProviderInstanceId;
   readonly recordedAt: number;
   readonly snapshot: UsageSnapshot;
 }
@@ -216,13 +222,17 @@ export interface HistoryRepositoryService {
   readonly append: (record: HistoryRecord) => Effect.Effect<void, InfrastructureError>;
   /** Constant-size lookup for overview composition; history remains append-only. */
   readonly latest: (
-    providerId: ProviderId,
+    providerId: ProviderInstanceId,
   ) => Effect.Effect<HistoryRecord | undefined, InfrastructureError>;
   readonly list: (
-    providerId: ProviderId,
+    providerId: ProviderInstanceId,
     since: number,
     limit?: number,
   ) => Effect.Effect<ReadonlyArray<HistoryRecord>, InfrastructureError>;
+  /** Deletes only one provider instance's snapshots; it never rebuilds the shared store. */
+  readonly removeProvider: (
+    providerId: ProviderInstanceId,
+  ) => Effect.Effect<void, InfrastructureError>;
 }
 export const HistoryRepository = Context.Service<HistoryRepositoryService>(
   "@codexbar/core/HistoryRepository",

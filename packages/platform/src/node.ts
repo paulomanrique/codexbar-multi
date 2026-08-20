@@ -1,6 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { chmod, link, mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { spawn } from "node:child_process";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+} from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Entry } from "@napi-rs/keyring";
 import { Effect } from "effect";
 import type { AppPaths } from "@codexbar/core";
@@ -11,9 +24,18 @@ import {
   type HttpResponse,
   type HttpTransportService,
   InfrastructureError,
+  type ProcessResult,
+  type ProcessRunnerService,
+  type ProcessSpec,
+  type PrivateFileStoreService,
 } from "@codexbar/core";
 import type { ProviderId } from "@codexbar/contracts";
-import type { FirstPartyBrowserSessions, FirstPartySettings } from "./first-party-runtime.ts";
+import type {
+  FirstPartyBrowserSessions,
+  FirstPartyLocalCapabilities,
+  FirstPartySettings,
+} from "./first-party-runtime.ts";
+import type { ProviderLocalCommand } from "@codexbar/providers";
 
 export * from "./node-persistence.ts";
 export * from "./node-persistence-worker-client.ts";
@@ -229,6 +251,313 @@ export const makeNativeCredentialStore = (
         ),
     }),
 });
+
+const maximumLocalOutputBytes = 1024 * 1024;
+
+/**
+ * Node process adapter used only at the platform boundary. It never invokes a
+ * shell, bounds output, and terminates its child when the Effect is aborted.
+ */
+export const makeNodeProcessRunner = (
+  options: { readonly maximumOutputBytes?: number } = {},
+): ProcessRunnerService => {
+  const maximumOutputBytes = options.maximumOutputBytes ?? maximumLocalOutputBytes;
+  return {
+    run: (spec) =>
+      Effect.tryPromise({
+        try: (signal) => runNodeProcess(spec, signal, maximumOutputBytes),
+        catch: (error) =>
+          new InfrastructureError("run process", `Unable to run '${spec.command}'.`, error),
+      }),
+  };
+};
+
+const runNodeProcess = (
+  spec: ProcessSpec,
+  signal: AbortSignal,
+  maximumOutputBytes: number,
+): Promise<ProcessResult> =>
+  new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = () => {
+      child.kill("SIGKILL");
+      finish(() => rejectPromise(new Error("Process execution was cancelled.")));
+    };
+    if (signal.aborted) {
+      rejectPromise(new Error("Process execution was cancelled."));
+      return;
+    }
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(spec.command, [...(spec.args ?? [])], {
+        cwd: spec.cwd,
+        env: spec.env === undefined ? undefined : { ...process.env, ...spec.env },
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      rejectPromise(error);
+      return;
+    }
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let size = 0;
+    const append = (target: Buffer[], value: Buffer) => {
+      size += value.byteLength;
+      if (size > maximumOutputBytes) {
+        child.kill("SIGKILL");
+        finish(() => rejectPromise(new Error("Process output exceeded 1 MiB.")));
+        return;
+      }
+      target.push(value);
+    };
+    child.stdout?.on("data", (value: Buffer) => append(stdout, value));
+    child.stderr?.on("data", (value: Buffer) => append(stderr, value));
+    child.once("error", (error) => finish(() => rejectPromise(error)));
+    child.once("close", (exitCode, exitSignal) =>
+      finish(() =>
+        resolvePromise({
+          exitCode: exitCode ?? undefined,
+          signal: exitSignal ?? undefined,
+          stdout: new Uint8Array(Buffer.concat(stdout)),
+          stderr: new Uint8Array(Buffer.concat(stderr)),
+        }),
+      ),
+    );
+    signal.addEventListener("abort", abort, { once: true });
+    if (spec.stdin !== undefined) child.stdin?.end(spec.stdin);
+    else child.stdin?.end();
+    const timeoutMs = spec.timeoutMs;
+    if (timeoutMs !== undefined) {
+      timeout = setTimeout(() => {
+        child.kill("SIGKILL");
+        finish(() => rejectPromise(new Error(`Process timed out after ${timeoutMs}ms.`)));
+      }, timeoutMs);
+    }
+  });
+
+const executableByCommand: Readonly<Record<ProviderLocalCommand, { readonly env: string }>> = {
+  amp: { env: "AMP_CLI_PATH" },
+  "kiro-cli": { env: "KIRO_CLI_PATH" },
+};
+
+const jetBrainsIDEPrefixes = [
+  "IntelliJIdea",
+  "PyCharm",
+  "WebStorm",
+  "GoLand",
+  "CLion",
+  "DataGrip",
+  "RubyMine",
+  "Rider",
+  "PhpStorm",
+  "AppCode",
+  "Fleet",
+  "AndroidStudio",
+  "RustRover",
+  "Aqua",
+  "DataSpell",
+] as const;
+const jetBrainsQuotaFile = join("options", "AIAssistantQuotaManager2.xml");
+
+export interface NodeFirstPartyLocalCapabilitiesOptions {
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly homeDirectory?: string;
+  /** Explicit roots make IDE discovery deterministic in tests and alternate hosts. */
+  readonly jetBrainsRoots?: readonly string[];
+  readonly processRunner?: ProcessRunnerService;
+  /** Optional injected private reader; raw IDE configuration never reaches providers. */
+  readonly privateFiles?: Pick<PrivateFileStoreService, "read">;
+}
+
+/**
+ * Platform implementation of the named first-party local broker. It accepts
+ * only commands and data identifiers that the provider runtime also checks;
+ * neither providers nor renderers can supply a shell command or file path.
+ */
+export const makeNodeFirstPartyLocalCapabilities = (
+  options: NodeFirstPartyLocalCapabilitiesOptions = {},
+): FirstPartyLocalCapabilities => {
+  const environment = options.environment ?? process.env;
+  const processRunner = options.processRunner ?? makeNodeProcessRunner();
+  const privateFiles = options.privateFiles ?? makeNodePrivateFileStore();
+  const roots =
+    options.jetBrainsRoots ?? jetBrainsConfigRoots(environment, options.homeDirectory ?? homedir());
+  return {
+    run: (providerId, command, request) => {
+      if (
+        (providerId !== "amp" && providerId !== "kiro") ||
+        (providerId === "amp" && command !== "amp") ||
+        (providerId === "kiro" && command !== "kiro-cli")
+      ) {
+        return Effect.fail(
+          new InfrastructureError("local command", "Provider command is not allowlisted."),
+        );
+      }
+      const configured = environment[executableByCommand[command].env]?.trim();
+      if (configured !== undefined && configured !== "" && !isSafeExecutable(configured)) {
+        return Effect.fail(
+          new InfrastructureError("local command", "Configured executable path is invalid."),
+        );
+      }
+      return processRunner
+        .run({
+          command: configured || command,
+          args: request.args,
+          ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+        })
+        .pipe(
+          Effect.map((result) => ({
+            exitCode: result.exitCode,
+            signal: result.signal,
+            stdout: decodeLocalText(result.stdout),
+            stderr: decodeLocalText(result.stderr),
+          })),
+        );
+    },
+    readData: (providerId, source, request) => {
+      if (providerId !== "jetbrains" || source !== "jetbrains-ai-quota")
+        return Effect.fail(
+          new InfrastructureError("local data", "Provider data source is not allowlisted."),
+        );
+      return Effect.tryPromise({
+        try: () =>
+          readJetBrainsQuota(roots, request?.basePath, async (path) => {
+            const content = await Effect.runPromise(privateFiles.read(path));
+            if (content === undefined) return undefined;
+            if (content.byteLength > maximumLocalOutputBytes)
+              throw new Error("JetBrains quota file exceeded 1 MiB.");
+            return new TextDecoder("utf-8", { fatal: true }).decode(content);
+          }),
+        catch: (error) =>
+          new InfrastructureError(
+            "read JetBrains quota",
+            "Unable to read JetBrains quota data.",
+            error,
+          ),
+      });
+    },
+  };
+};
+
+const isSafeExecutable = (value: string): boolean =>
+  !value.includes("\u0000") && (isAbsolute(value) || /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u.test(value));
+
+const decodeLocalText = (value: Uint8Array): string => {
+  if (value.byteLength > maximumLocalOutputBytes) throw new Error("Process output exceeded 1 MiB.");
+  return new TextDecoder("utf-8", { fatal: true }).decode(value);
+};
+
+const jetBrainsConfigRoots = (
+  environment: Readonly<Record<string, string | undefined>>,
+  home: string,
+): readonly string[] =>
+  [
+    join(home, "Library", "Application Support", "JetBrains"),
+    join(home, "Library", "Application Support", "Google"),
+    join(home, ".config", "JetBrains"),
+    join(home, ".local", "share", "JetBrains"),
+    join(home, ".config", "Google"),
+    environment.APPDATA === undefined ? undefined : join(environment.APPDATA, "JetBrains"),
+    environment.APPDATA === undefined ? undefined : join(environment.APPDATA, "Google"),
+    environment.LOCALAPPDATA === undefined
+      ? undefined
+      : join(environment.LOCALAPPDATA, "JetBrains"),
+  ].filter((entry): entry is string => entry !== undefined);
+
+const withinRoot = (candidate: string, root: string): boolean => {
+  const delta = relative(resolve(root), resolve(candidate));
+  return delta === "" || (!delta.startsWith("..") && !isAbsolute(delta));
+};
+
+const recognizedIDE = (directory: string): string | undefined => {
+  const prefix = jetBrainsIDEPrefixes.find((candidate) =>
+    directory.toLowerCase().startsWith(candidate.toLowerCase()),
+  );
+  if (prefix === undefined) return undefined;
+  const display =
+    prefix === "IntelliJIdea"
+      ? "IntelliJ IDEA"
+      : prefix === "AndroidStudio"
+        ? "Android Studio"
+        : prefix;
+  return `${display} ${directory.slice(prefix.length).trim()}`.trim();
+};
+
+const readJetBrainsQuota = async (
+  roots: readonly string[],
+  requestedBasePath: string | undefined,
+  readQuota: (path: string) => Promise<string | undefined>,
+): Promise<{ readonly text: string; readonly label?: string } | undefined> => {
+  const candidates: Array<{
+    readonly quotaPath: string;
+    readonly label: string;
+    readonly modified: number;
+  }> = [];
+  const add = async (basePath: string) => {
+    const label = recognizedIDE(basePath.split(/[\\/]/u).at(-1) ?? "");
+    if (label === undefined) return;
+    const quotaPath = join(basePath, jetBrainsQuotaFile);
+    try {
+      const baseMetadata = await lstat(basePath);
+      const optionsMetadata = await lstat(join(basePath, "options"));
+      const metadata = await lstat(quotaPath);
+      if (
+        baseMetadata.isDirectory() &&
+        !baseMetadata.isSymbolicLink() &&
+        optionsMetadata.isDirectory() &&
+        !optionsMetadata.isSymbolicLink() &&
+        metadata.isFile() &&
+        !metadata.isSymbolicLink()
+      )
+        candidates.push({ quotaPath, label, modified: metadata.mtimeMs });
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+  };
+  if (requestedBasePath !== undefined) {
+    if (!roots.some((root) => withinRoot(requestedBasePath, root)))
+      throw new Error("JetBrains IDE base path is outside supported configuration roots.");
+    const canonicalBase = await realpath(requestedBasePath);
+    const canonicalRoots = await Promise.all(
+      roots.map(async (root) => {
+        try {
+          return await realpath(root);
+        } catch (error) {
+          if (isMissing(error)) return undefined;
+          throw error;
+        }
+      }),
+    );
+    if (!canonicalRoots.some((root) => root !== undefined && withinRoot(canonicalBase, root)))
+      throw new Error("JetBrains IDE base path resolves outside supported configuration roots.");
+    await add(requestedBasePath);
+  } else {
+    for (const root of roots) {
+      try {
+        const directories = await readdir(root, { encoding: "utf8", withFileTypes: true });
+        for (const directory of directories)
+          if (directory.isDirectory()) await add(join(root, directory.name));
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
+    }
+  }
+  const selected = candidates.sort((left, right) => right.modified - left.modified)[0];
+  if (selected === undefined) return undefined;
+  const text = await readQuota(selected.quotaPath);
+  return text === undefined ? undefined : { text, label: selected.label };
+};
 
 /** Node 24 fetch adapter. Redirects are rejected and response bodies are bounded before providers see them. */
 export const makeFetchHttpTransport = (

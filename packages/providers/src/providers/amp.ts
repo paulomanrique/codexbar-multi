@@ -30,24 +30,24 @@ const definition: ProviderDefinition = {
   id: "amp",
   name: "Amp",
   endpoints: ["https://ampcode.com"],
-  settings: [
-    { key: "AMP_API_KEY", title: "API key", type: "secure" },
-    { key: "AMP_CLI_USAGE_TEXT", title: "CLI usage fixture", type: "secure" },
-  ],
-  capabilities: ["browser-cookies"],
-  cookieDomains: ["ampcode.com", "www.ampcode.com"],
+  settings: [],
   fetchUsage: async (ctx) => {
-    const output = ctx.settings.getSecret("AMP_CLI_USAGE_TEXT");
-    if (!output)
-      throw ctx.fail.missingCredential(
-        "Amp CLI execution requires the ProcessRunner platform adapter; no parsed CLI output is available.",
-      );
+    if (ctx.local === undefined)
+      throw ctx.fail.providerUnavailable("Amp CLI support is not configured by this host.");
+    const result = await ctx.local.run("amp", { args: ["usage"], timeoutMs: 15_000 });
+    const output = result.stdout.trim() || result.stderr.trim();
+    if (!output) throw ctx.fail.providerUnavailable("The Amp CLI returned no usage data.");
+    if (result.exitCode !== 0) {
+      if (/not\s+logged\s+in|sign\s*in|auth(?:entication)?\s+required/iu.test(output))
+        throw ctx.fail.authenticationExpired("Amp CLI is not logged in.");
+      throw ctx.fail.providerUnavailable(`Amp CLI exited with status ${result.exitCode}.`);
+    }
     return parseAmpUsage(output, ctx);
   },
 };
 const strategy: ProviderStrategy = {
   id: "amp.cli",
-  kind: "api",
+  kind: "cli",
   fetchUsage: definition.fetchUsage,
 };
 export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };
