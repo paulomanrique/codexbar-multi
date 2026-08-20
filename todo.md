@@ -24,7 +24,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Port config decoding, normalization, validation, legacy-value migration, and atomic persistence.
 - [ ] Port full cost scanning and history retention behavior.
   - [x] Add atomic SQLite pruning for history and cost rows with worker coverage.
-  - [ ] Complete incremental JSONL scanners, provenance, deduplication, and scanner cache parity.
+  - [x] Add bounded incremental Codex/Claude JSONL scanners with resumable cursors, source-identity checks, provenance, and fail-closed counter regressions.
+  - [ ] Complete recursive log inventory, fork lineage/issue #2037, priority metadata, scanner checkpoints/cache, and atomic cursor-plus-row persistence parity.
 
 ## Milestone 2 — first vertical slice
 

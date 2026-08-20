@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
-  chmod,
   link,
   lstat,
   mkdir,
@@ -36,11 +35,18 @@ import type {
   FirstPartySettings,
 } from "./first-party-runtime.ts";
 import type { ProviderLocalCommand } from "@codexbar/providers";
+import {
+  makeNodePrivateDirectoryRestriction,
+  makeNodePrivateFileRestriction,
+  type NodePrivatePathRestrictionOptions,
+} from "./node-private-path-security.ts";
 
 export * from "./node-persistence.ts";
 export * from "./node-persistence-worker-client.ts";
 export * from "./first-party-runtime.ts";
 export * from "./legacy-import.ts";
+export * from "./node-cost-jsonl.ts";
+export * from "./node-private-path-security.ts";
 
 /**
  * Node exposes POSIX modes but no safe, dependency-free API for editing a
@@ -50,6 +56,9 @@ export * from "./legacy-import.ts";
  */
 export interface NodePrivateFileStoreOptions {
   readonly restrictFile?: (path: string) => Promise<void>;
+  readonly restrictDirectory?: (path: string) => Promise<void>;
+  /** Injectable native policy. Defaults to a real Windows DACL on win32. */
+  readonly pathRestrictionOptions?: NodePrivatePathRestrictionOptions;
 }
 
 /**
@@ -57,7 +66,10 @@ export interface NodePrivateFileStoreOptions {
  * renderer or another host can provide the same capabilities without Node.
  */
 export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = {}) => {
-  const restrictFile = options.restrictFile ?? ownerOnlyMode;
+  const restrictFile =
+    options.restrictFile ?? makeNodePrivateFileRestriction(options.pathRestrictionOptions);
+  const restrictDirectory =
+    options.restrictDirectory ?? makeNodePrivateDirectoryRestriction(options.pathRestrictionOptions);
   return {
     read: (path: string) =>
       Effect.tryPromise({
@@ -80,6 +92,7 @@ export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = 
       Effect.tryPromise({
         try: async () => {
           await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+          await restrictDirectory(dirname(path));
           const temporary = join(dirname(path), `.${randomUUID()}.tmp`);
           try {
             const file = await open(temporary, "w", 0o600);
@@ -118,6 +131,7 @@ export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = 
         try: async () => {
           const directory = dirname(path);
           await mkdir(directory, { recursive: true, mode: 0o700 });
+          await restrictDirectory(directory);
           const temporary = join(directory, `.${randomUUID()}.tmp`);
           try {
             const file = await open(temporary, "wx", 0o600);
@@ -162,8 +176,6 @@ export const makeNodePrivateFileStore = (options: NodePrivateFileStoreOptions = 
       }),
   };
 };
-
-const ownerOnlyMode = async (path: string): Promise<void> => chmod(path, 0o600);
 
 export const makeNodePlatformPaths = (
   root: string,

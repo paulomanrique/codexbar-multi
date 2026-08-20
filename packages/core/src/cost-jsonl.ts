@@ -1,0 +1,549 @@
+/**
+ * Streaming local cost-log parsing, ported from the bounded JSONL reader and
+ * Codex/Claude parsers in `Sources/CodexBarCore/Vendored/CostUsage`.
+ *
+ * This module deliberately knows nothing about paths, Node streams, or SQLite.
+ * Hosts supply bytes and persist the returned serializable cursor only after
+ * their source identity validation succeeds.
+ */
+import {
+  claudeCostUSD,
+  codexCostUSD,
+  codexUnattributedModel,
+  normalizeClaudeModel,
+  normalizeCodexModel,
+  type PricingCatalog,
+} from "./cost-pricing.ts";
+
+export type CostProvenance = "list-price-estimate" | "vendor-metered" | "mixed" | "unknown";
+
+export interface CostJsonlTokens {
+  readonly input: number;
+  readonly cachedInput: number;
+  readonly cacheCreationInput: number;
+  readonly output: number;
+  readonly reasoningOutput: number;
+}
+
+export interface CostJsonlUsageRow {
+  readonly provider: "codex" | "claude";
+  readonly timestamp: number;
+  readonly model: string;
+  readonly tokens: CostJsonlTokens;
+  /** Undefined means a local price table has no safe price for this model. */
+  readonly costUsd?: number;
+  readonly provenance: CostProvenance;
+  /** Stable within a source file when the source exposes message/request IDs. */
+  readonly dedupeKey?: string;
+}
+
+export interface CostJsonlCursor {
+  /** First byte not yet safely committed. Re-read this offset after a tail. */
+  readonly committedOffset: number;
+  /**
+   * A known oversized record is being discarded. Resume here rather than at
+   * `committedOffset`, then clear this field once its newline is consumed.
+   * This is essential for bounded scans of an unterminated multi-budget line.
+   */
+  readonly discardOffset?: number;
+}
+
+export interface CostJsonlScanMetrics {
+  readonly readBytes: number;
+  readonly parsedLines: number;
+  readonly skippedOversizeLines: number;
+  readonly hitByteLimit: boolean;
+}
+
+export interface CostJsonlScanResult {
+  readonly cursor: CostJsonlCursor;
+  readonly metrics: CostJsonlScanMetrics;
+}
+
+export interface CostJsonlChunkScanOptions {
+  /** Preferred serializable resume state. `startOffset` is retained for simple callers. */
+  readonly cursor?: CostJsonlCursor;
+  readonly startOffset?: number;
+  readonly maxBytes?: number;
+  readonly maxLineBytes?: number;
+  readonly checkCancelled?: () => void;
+  readonly onLine: (
+    line: Uint8Array,
+    startOffset: number,
+    endOffset: number,
+  ) => void | Promise<void>;
+}
+
+const defaultMaxLineBytes = 512 * 1024;
+
+/**
+ * Reads complete JSONL records from arbitrary chunks. A partial final record
+ * is deliberately not committed unless it is structurally complete, so a
+ * writer appending to a log cannot create a permanently lost tail.
+ */
+export async function scanCostJsonlChunks(
+  chunks: AsyncIterable<Uint8Array>,
+  options: CostJsonlChunkScanOptions,
+): Promise<CostJsonlScanResult> {
+  const suppliedCursor = options.cursor;
+  const committedOffset = nonNegativeInteger(
+    suppliedCursor?.committedOffset ?? options.startOffset ?? 0,
+    "committedOffset",
+  );
+  const discardOffset =
+    suppliedCursor?.discardOffset === undefined
+      ? undefined
+      : nonNegativeInteger(suppliedCursor.discardOffset, "discardOffset");
+  if (discardOffset !== undefined && discardOffset < committedOffset) {
+    throw new Error("discardOffset must not precede committedOffset");
+  }
+  const startOffset = discardOffset ?? committedOffset;
+  const maxBytes =
+    options.maxBytes === undefined
+      ? Number.POSITIVE_INFINITY
+      : nonNegativeInteger(options.maxBytes, "maxBytes");
+  const maxLineBytes = nonNegativeInteger(
+    options.maxLineBytes ?? defaultMaxLineBytes,
+    "maxLineBytes",
+  );
+  let readBytes = 0;
+  let parsedLines = 0;
+  let skippedOversizeLines = 0;
+  let lineStartOffset = startOffset;
+  let lineLength = 0;
+  let discardingOversize = discardOffset !== undefined;
+  let truncated = discardingOversize;
+  let retained: number[] = [];
+  let hitByteLimit = false;
+
+  const emit = async (endOffset: number): Promise<void> => {
+    if (truncated) {
+      skippedOversizeLines += 1;
+    } else if (lineLength > 0) {
+      await options.onLine(Uint8Array.from(retained), lineStartOffset, endOffset);
+      parsedLines += 1;
+    }
+    retained = [];
+    lineLength = 0;
+    discardingOversize = false;
+    truncated = false;
+    lineStartOffset = endOffset;
+  };
+
+  for await (const sourceChunk of chunks) {
+    options.checkCancelled?.();
+    if (readBytes >= maxBytes) {
+      hitByteLimit = true;
+      break;
+    }
+    const available = Math.min(sourceChunk.byteLength, maxBytes - readBytes);
+    if (available < sourceChunk.byteLength) hitByteLimit = true;
+    for (let index = 0; index < available; index += 1) {
+      if ((index & 0x3fff) === 0) options.checkCancelled?.();
+      const byte = sourceChunk[index]!;
+      readBytes += 1;
+      const endOffset = startOffset + readBytes;
+      if (byte === 0x0a) {
+        await emit(endOffset);
+        continue;
+      }
+      if (discardingOversize) continue;
+      lineLength += 1;
+      if (lineLength > maxLineBytes) {
+        discardingOversize = true;
+        truncated = true;
+        retained = [];
+      } else {
+        retained.push(byte);
+      }
+    }
+    if (available < sourceChunk.byteLength) break;
+  }
+
+  options.checkCancelled?.();
+  // A JSONL writer may omit the last newline. Commit only a complete JSON
+  // value; otherwise the next scan restarts at the record's first byte.
+  if (
+    !discardingOversize &&
+    lineLength > 0 &&
+    isStructurallyCompleteJson(Uint8Array.from(retained))
+  ) {
+    await emit(startOffset + readBytes);
+  }
+
+  return {
+    cursor: discardingOversize
+      ? { committedOffset, discardOffset: startOffset + readBytes }
+      : { committedOffset: lineStartOffset },
+    metrics: { readBytes, parsedLines, skippedOversizeLines, hitByteLimit },
+  };
+}
+
+export interface CodexJsonlState {
+  readonly currentModel?: string;
+  readonly totals?: CostJsonlTokens;
+  /**
+   * A cumulative counter regressed/interleaved. This compact port suppresses
+   * later cumulative rows rather than guessing; fork lineage #2037 remains a
+   * separate parity item.
+   */
+  readonly cumulativeCounterUnsafe?: boolean;
+  /** A bounded exact-event cache for `last_token_usage` fallback records. */
+  readonly lastEventKeys: readonly string[];
+}
+
+export interface CodexJsonlParseOptions {
+  readonly state?: Partial<CodexJsonlState>;
+  readonly catalog?: PricingCatalog;
+  readonly pricingDate?: (timestamp: number) => Date;
+  readonly scan: Omit<CostJsonlChunkScanOptions, "onLine">;
+}
+
+export interface CodexJsonlParseResult extends CostJsonlScanResult {
+  readonly rows: readonly CostJsonlUsageRow[];
+  readonly state: CodexJsonlState;
+}
+
+export async function parseCodexCostJsonl(
+  chunks: AsyncIterable<Uint8Array>,
+  options: CodexJsonlParseOptions,
+): Promise<CodexJsonlParseResult> {
+  let currentModel = optionalText(options.state?.currentModel);
+  let totals =
+    options.state?.totals === undefined ? undefined : normalizedTokens(options.state.totals);
+  let cumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
+  const lastEventKeys = boundedSet(options.state?.lastEventKeys, 1024);
+  const rows: CostJsonlUsageRow[] = [];
+  const scan = await scanCostJsonlChunks(chunks, {
+    ...options.scan,
+    onLine: (line) => {
+      const value = parseObject(line);
+      if (value === undefined) return;
+      if (value.type === "turn_context") {
+        const payload = asObject(value.payload);
+        const info = asObject(payload?.info);
+        currentModel =
+          optionalText(payload?.model) ??
+          optionalText(payload?.model_name) ??
+          optionalText(info?.model) ??
+          optionalText(info?.model_name) ??
+          currentModel;
+        return;
+      }
+      if (value.type !== "event_msg") return;
+      const payload = asObject(value.payload);
+      if (payload?.type !== "token_count") return;
+      const timestamp = parseTimestamp(value.timestamp);
+      if (timestamp === undefined) return;
+      const info = asObject(payload.info);
+      const model =
+        optionalText(info?.model) ??
+        optionalText(info?.model_name) ??
+        optionalText(payload.model) ??
+        optionalText(value.model) ??
+        currentModel ??
+        codexUnattributedModel;
+      const total = totalsFrom(info?.total_token_usage);
+      const last = totalsFrom(info?.last_token_usage);
+      let delta: CostJsonlTokens | undefined;
+      if (total !== undefined) {
+        if (totals !== undefined && hasCounterRegression(total, totals)) {
+          cumulativeCounterUnsafe = true;
+        }
+        delta = totals === undefined ? total : positiveDifference(total, totals);
+        totals = total;
+        // Do not substitute `last` after a detected total regression. It may
+        // be a copied fork prefix; omitting a row is safer than billing it.
+        if (cumulativeCounterUnsafe) return;
+      } else if (last !== undefined) {
+        const key = `${timestamp}:${model}:${last.input}:${last.cachedInput}:${last.cacheCreationInput}:${last.output}:${last.reasoningOutput}`;
+        if (lastEventKeys.has(key)) return;
+        lastEventKeys.add(key);
+        trimSet(lastEventKeys, 1024);
+        delta = last;
+        totals = addTokens(totals, last);
+      }
+      if (delta === undefined || tokenCount(delta) === 0) return;
+      const normalizedModel = normalizeCodexModel(model);
+      const costUsd = codexCostUSD({
+        model: normalizedModel,
+        inputTokens: delta.input,
+        cachedInputTokens: delta.cachedInput,
+        cacheWriteInputTokens: delta.cacheCreationInput,
+        outputTokens: delta.output,
+        options: {
+          ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+          pricingDate: (options.pricingDate ?? dateFromMilliseconds)(timestamp),
+        },
+      });
+      rows.push({
+        provider: "codex",
+        timestamp,
+        model: normalizedModel,
+        tokens: delta,
+        ...(costUsd === undefined ? {} : { costUsd }),
+        provenance: costUsd === undefined ? "unknown" : "list-price-estimate",
+      });
+    },
+  });
+  return {
+    ...scan,
+    rows,
+    state: {
+      ...(currentModel === undefined ? {} : { currentModel }),
+      ...(totals === undefined ? {} : { totals }),
+      ...(cumulativeCounterUnsafe ? { cumulativeCounterUnsafe: true } : {}),
+      lastEventKeys: [...lastEventKeys],
+    },
+  };
+}
+
+export interface ClaudeJsonlState {
+  /** Recent cumulative chunks keyed by `message.id + requestId`; bounded to 1,024. */
+  readonly messageTotals: Readonly<Record<string, CostJsonlTokens>>;
+  /** Message streams whose cumulative counters regressed; never infer later deltas for them. */
+  readonly unsafeMessageKeys?: readonly string[];
+}
+
+export interface ClaudeJsonlParseOptions {
+  readonly state?: Partial<ClaudeJsonlState>;
+  readonly catalog?: PricingCatalog;
+  readonly pricingDate?: (timestamp: number) => Date;
+  readonly scan: Omit<CostJsonlChunkScanOptions, "onLine">;
+}
+
+export interface ClaudeJsonlParseResult extends CostJsonlScanResult {
+  readonly rows: readonly CostJsonlUsageRow[];
+  readonly state: ClaudeJsonlState;
+}
+
+export async function parseClaudeCostJsonl(
+  chunks: AsyncIterable<Uint8Array>,
+  options: ClaudeJsonlParseOptions,
+): Promise<ClaudeJsonlParseResult> {
+  const messageTotals = new Map(
+    Object.entries(options.state?.messageTotals ?? {}).map(([key, value]) => [
+      key,
+      normalizedTokens(value),
+    ]),
+  );
+  const unsafeMessageKeys = boundedSet(options.state?.unsafeMessageKeys, 1024);
+  const rows: CostJsonlUsageRow[] = [];
+  const scan = await scanCostJsonlChunks(chunks, {
+    ...options.scan,
+    onLine: (line) => {
+      const value = parseObject(line);
+      if (value?.type !== "assistant") return;
+      const timestamp = parseTimestamp(value.timestamp);
+      const message = asObject(value.message);
+      const usage = asObject(message?.usage);
+      const model = optionalText(message?.model);
+      if (
+        timestamp === undefined ||
+        message === undefined ||
+        usage === undefined ||
+        model === undefined
+      )
+        return;
+      const total = normalizedTokens({
+        input: integer(usage.input_tokens),
+        cachedInput: integer(usage.cache_read_input_tokens),
+        cacheCreationInput: integer(usage.cache_creation_input_tokens),
+        output: integer(usage.output_tokens),
+        reasoningOutput: 0,
+      });
+      if (tokenCount(total) === 0) return;
+      const messageId = optionalText(message.id);
+      const requestId = optionalText(value.requestId);
+      const key =
+        messageId === undefined || requestId === undefined
+          ? undefined
+          : `${messageId}:${requestId}`;
+      const previous = key === undefined ? undefined : messageTotals.get(key);
+      if (key !== undefined && previous !== undefined && hasCounterRegression(total, previous)) {
+        unsafeMessageKeys.add(key);
+        trimSet(unsafeMessageKeys, 1024);
+      }
+      const delta = previous === undefined ? total : positiveDifference(total, previous);
+      if (key !== undefined) {
+        messageTotals.delete(key);
+        messageTotals.set(key, total);
+        trimMap(messageTotals, 1024);
+      }
+      if (key !== undefined && unsafeMessageKeys.has(key)) return;
+      if (tokenCount(delta) === 0) return;
+      const normalizedModel = normalizeClaudeModel(model);
+      const costUsd = claudeCostUSD({
+        model: normalizedModel,
+        inputTokens: delta.input,
+        cacheReadInputTokens: delta.cachedInput,
+        cacheCreationInputTokens: delta.cacheCreationInput,
+        outputTokens: delta.output,
+        options: {
+          ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+          pricingDate: (options.pricingDate ?? dateFromMilliseconds)(timestamp),
+        },
+      });
+      rows.push({
+        provider: "claude",
+        timestamp,
+        model: normalizedModel,
+        tokens: delta,
+        ...(costUsd === undefined ? {} : { costUsd }),
+        provenance: costUsd === undefined ? "unknown" : "list-price-estimate",
+        ...(key === undefined ? {} : { dedupeKey: key }),
+      });
+    },
+  });
+  return {
+    ...scan,
+    rows,
+    state: {
+      messageTotals: Object.fromEntries(messageTotals),
+      ...(unsafeMessageKeys.size === 0 ? {} : { unsafeMessageKeys: [...unsafeMessageKeys] }),
+    },
+  };
+}
+
+function parseObject(line: Uint8Array): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(line));
+    return asObject(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function integer(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  const truncated = Math.trunc(value);
+  return Number.isSafeInteger(truncated) ? Math.max(0, truncated) : 0;
+}
+
+function totalsFrom(value: unknown): CostJsonlTokens | undefined {
+  const usage = asObject(value);
+  if (usage === undefined) return undefined;
+  return normalizedTokens({
+    input: integer(usage.input_tokens),
+    cachedInput: integer(usage.cached_input_tokens ?? usage.cache_read_input_tokens),
+    cacheCreationInput: integer(usage.cache_creation_input_tokens),
+    output: integer(usage.output_tokens),
+    reasoningOutput: integer(usage.reasoning_output_tokens),
+  });
+}
+
+function normalizedTokens(tokens: CostJsonlTokens): CostJsonlTokens {
+  const output = integer(tokens.output);
+  return {
+    input: integer(tokens.input),
+    cachedInput: integer(tokens.cachedInput),
+    cacheCreationInput: integer(tokens.cacheCreationInput),
+    output,
+    reasoningOutput: Math.min(output, integer(tokens.reasoningOutput)),
+  };
+}
+
+function positiveDifference(current: CostJsonlTokens, previous: CostJsonlTokens): CostJsonlTokens {
+  return {
+    input: Math.max(0, current.input - previous.input),
+    cachedInput: Math.max(0, current.cachedInput - previous.cachedInput),
+    cacheCreationInput: Math.max(0, current.cacheCreationInput - previous.cacheCreationInput),
+    output: Math.max(0, current.output - previous.output),
+    reasoningOutput: Math.max(0, current.reasoningOutput - previous.reasoningOutput),
+  };
+}
+
+function hasCounterRegression(current: CostJsonlTokens, previous: CostJsonlTokens): boolean {
+  return (
+    current.input < previous.input ||
+    current.cachedInput < previous.cachedInput ||
+    current.cacheCreationInput < previous.cacheCreationInput ||
+    current.output < previous.output ||
+    current.reasoningOutput < previous.reasoningOutput
+  );
+}
+
+function addTokens(previous: CostJsonlTokens | undefined, delta: CostJsonlTokens): CostJsonlTokens {
+  return previous === undefined
+    ? delta
+    : {
+        input: previous.input + delta.input,
+        cachedInput: previous.cachedInput + delta.cachedInput,
+        cacheCreationInput: previous.cacheCreationInput + delta.cacheCreationInput,
+        output: previous.output + delta.output,
+        reasoningOutput: previous.reasoningOutput + delta.reasoningOutput,
+      };
+}
+
+function tokenCount(tokens: CostJsonlTokens): number {
+  return tokens.input + tokens.cachedInput + tokens.cacheCreationInput + tokens.output;
+}
+
+function parseTimestamp(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function nonNegativeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error(`${name} must be a non-negative safe integer`);
+  return value;
+}
+
+function boundedSet(values: readonly string[] | undefined, limit: number): Set<string> {
+  const result = new Set<string>();
+  for (const value of values ?? []) {
+    if (typeof value !== "string") continue;
+    result.add(value);
+    trimSet(result, limit);
+  }
+  return result;
+}
+
+function trimSet(values: Set<string>, limit: number): void {
+  while (values.size > limit) values.delete(values.values().next().value!);
+}
+
+function trimMap<Key, Value>(values: Map<Key, Value>, limit: number): void {
+  while (values.size > limit) values.delete(values.keys().next().value!);
+}
+
+function dateFromMilliseconds(milliseconds: number): Date {
+  return new Date(milliseconds);
+}
+
+function isStructurallyCompleteJson(bytes: Uint8Array): boolean {
+  let depth = 0;
+  let sawContent = false;
+  let string = false;
+  let escaping = false;
+  for (const byte of bytes) {
+    if (!sawContent && (byte === 0x20 || byte === 0x09 || byte === 0x0d)) continue;
+    sawContent = true;
+    if (string) {
+      if (escaping) {
+        escaping = false;
+      } else if (byte === 0x5c) {
+        escaping = true;
+      } else if (byte === 0x22) {
+        string = false;
+      }
+      continue;
+    }
+    if (byte === 0x22) string = true;
+    else if (byte === 0x7b || byte === 0x5b) depth += 1;
+    else if (byte === 0x7d || byte === 0x5d) depth -= 1;
+  }
+  return sawContent && !string && depth === 0;
+}

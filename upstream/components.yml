@@ -141,7 +141,9 @@ components:
       - Sources/CodexBar/PlanUtilizationHistoryStore.swift
     tsPaths:
       - packages/core/src/services.ts
+      - packages/core/src/cost-jsonl.ts
       - packages/contracts/src/usage.ts
+      - packages/platform/src/node-cost-jsonl.ts
       - packages/platform/src/**/*.ts
       - apps/desktop/src/main/history-api.ts
       - apps/desktop/src/main/overview.ts
@@ -150,6 +152,8 @@ components:
       - Tests/CodexBarTests/SpendDashboard*Tests.swift
       - Tests/CodexBarTests/Issue2037*Tests.swift
       - packages/platform/test/node-persistence*.test.ts
+      - packages/core/test/cost-jsonl.test.ts
+      - packages/platform/test/node-cost-jsonl.test.ts
       - apps/desktop/test/history-api.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/CostUsage/**/*.json

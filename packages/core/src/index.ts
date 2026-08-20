@@ -1,6 +1,7 @@
 export * from "./adaptive-refresh.ts";
 export * from "./config.ts";
 export * from "./cost-pricing.ts";
+export * from "./cost-jsonl.ts";
 export * from "./cost-retention.ts";
 export * from "./legacy-import.ts";
 export * from "./endpoint-security.ts";

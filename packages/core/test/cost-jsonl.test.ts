@@ -1,0 +1,206 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  parseClaudeCostJsonl,
+  parseCodexCostJsonl,
+  scanCostJsonlChunks,
+  type CostJsonlTokens,
+} from "../src/index.ts";
+
+const encoder = new TextEncoder();
+
+async function* chunks(...parts: string[]): AsyncIterable<Uint8Array> {
+  for (const part of parts) yield encoder.encode(part);
+}
+
+describe("cost JSONL scanner (Swift parity)", () => {
+  it("commits only complete lines and replays an appended tail without losing it", async () => {
+    const lines: string[] = [];
+    const first = await scanCostJsonlChunks(chunks('{"one":1}\n{"two":'), {
+      onLine: (line) => {
+        lines.push(new TextDecoder().decode(line));
+      },
+    });
+    expect(lines).toEqual(['{"one":1}']);
+    expect(first.cursor.committedOffset).toBe(10);
+
+    const second = await scanCostJsonlChunks(chunks('{"two":2}\n'), {
+      startOffset: first.cursor.committedOffset,
+      onLine: (line) => {
+        lines.push(new TextDecoder().decode(line));
+      },
+    });
+    expect(lines).toEqual(['{"one":1}', '{"two":2}']);
+    expect(second.cursor.committedOffset).toBe(20);
+  });
+
+  it("honors byte bounds and skips oversized records without retaining their body", async () => {
+    const lines: string[] = [];
+    const result = await scanCostJsonlChunks(chunks("1234567890\n", '{"safe":true}\n'), {
+      maxBytes: 11,
+      maxLineBytes: 4,
+      onLine: (line) => {
+        lines.push(new TextDecoder().decode(line));
+      },
+    });
+    expect(result.metrics).toMatchObject({
+      readBytes: 11,
+      skippedOversizeLines: 1,
+      hitByteLimit: true,
+    });
+    expect(lines).toEqual([]);
+    expect(result.cursor.committedOffset).toBe(11);
+  });
+
+  it("advances an unterminated oversized record across bounded refreshes", async () => {
+    const first = await scanCostJsonlChunks(chunks("abcdef"), {
+      maxBytes: 3,
+      maxLineBytes: 2,
+      onLine: () => undefined,
+    });
+    expect(first.cursor).toEqual({ committedOffset: 0, discardOffset: 3 });
+    const second = await scanCostJsonlChunks(chunks("def\n{}\n"), {
+      cursor: first.cursor,
+      maxBytes: 3,
+      maxLineBytes: 2,
+      onLine: () => undefined,
+    });
+    expect(second.cursor).toEqual({ committedOffset: 0, discardOffset: 6 });
+    const lines: string[] = [];
+    const third = await scanCostJsonlChunks(chunks("\n{}\n"), {
+      cursor: second.cursor,
+      onLine: (line) => {
+        lines.push(new TextDecoder().decode(line));
+      },
+    });
+    expect(lines).toEqual(["{}"]);
+    expect(third.cursor).toEqual({ committedOffset: 10 });
+  });
+
+  it("checks cancellation while processing a large chunk", async () => {
+    let checks = 0;
+    await expect(
+      scanCostJsonlChunks(chunks(`${"x".repeat(80_000)}\n`), {
+        checkCancelled: () => {
+          checks += 1;
+          if (checks >= 3) throw new Error("cancelled");
+        },
+        onLine: () => undefined,
+      }),
+    ).rejects.toThrow("cancelled");
+    expect(checks).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("Codex cost JSONL parser (Swift parity)", () => {
+  it("uses total snapshots incrementally, preserves context model, and attributes list-price estimates", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"turn_context","timestamp":"2026-08-20T10:00:00Z","payload":{"model":"openai/gpt-5.6-terra"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":5}}}}\n',
+      ),
+      { scan: {} },
+    );
+    expect(first.rows).toHaveLength(1);
+    expect(first.rows[0]).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.6-terra",
+      tokens: { input: 100, cachedInput: 10, output: 5 },
+      provenance: "list-price-estimate",
+    });
+
+    const second = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":130,"cached_input_tokens":12,"output_tokens":9}}}}\n',
+      ),
+      { state: first.state, scan: { startOffset: first.cursor.committedOffset } },
+    );
+    expect(second.rows).toHaveLength(1);
+    expect(second.rows[0]?.tokens).toMatchObject({ input: 30, cachedInput: 2, output: 4 });
+  });
+
+  it("deduplicates last usage fallbacks and fails closed for unknown prices", async () => {
+    const line =
+      '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"model":"unlisted","last_token_usage":{"input_tokens":7,"output_tokens":2}}}}\n';
+    const result = await parseCodexCostJsonl(chunks(line, line), { scan: {} });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ model: "unlisted", provenance: "unknown" });
+    expect(result.rows[0]?.costUsd).toBeUndefined();
+  });
+
+  it("fails closed after a cumulative counter drop instead of guessing fork/interleaving deltas", async () => {
+    const initial = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":100,"output_tokens":10}}}}\n',
+      ),
+      { scan: {} },
+    );
+    const unsafe = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":4,"output_tokens":1},"last_token_usage":{"input_tokens":4,"output_tokens":1}}}}\n',
+      ),
+      { state: initial.state, scan: { cursor: initial.cursor } },
+    );
+    expect(unsafe.rows).toEqual([]);
+    expect(unsafe.state.cumulativeCounterUnsafe).toBe(true);
+  });
+});
+
+describe("Claude cost JSONL parser (Swift parity)", () => {
+  it("deduplicates cumulative streaming message chunks across refreshes", async () => {
+    const first = await parseClaudeCostJsonl(
+      chunks(
+        '{"type":"assistant","timestamp":"2026-08-20T10:00:00Z","requestId":"request-1","message":{"id":"message-1","model":"claude-opus-4-8","usage":{"input_tokens":10,"cache_read_input_tokens":2,"output_tokens":3}}}\n',
+      ),
+      { scan: {} },
+    );
+    expect(first.rows[0]?.tokens).toMatchObject({ input: 10, cachedInput: 2, output: 3 });
+    const second = await parseClaudeCostJsonl(
+      chunks(
+        '{"type":"assistant","timestamp":"2026-08-20T10:00:01Z","requestId":"request-1","message":{"id":"message-1","model":"claude-opus-4-8","usage":{"input_tokens":14,"cache_read_input_tokens":2,"output_tokens":5}}}\n',
+      ),
+      { state: first.state, scan: { startOffset: first.cursor.committedOffset } },
+    );
+    expect(second.rows).toHaveLength(1);
+    expect(second.rows[0]?.tokens).toEqual(tokens(4, 0, 0, 2));
+    expect(second.rows[0]?.provenance).toBe("list-price-estimate");
+  });
+
+  it("fails closed after a cumulative message counter regresses", async () => {
+    const initial = await parseClaudeCostJsonl(
+      chunks(
+        '{"type":"assistant","timestamp":"2026-08-20T10:00:00Z","requestId":"request-1","message":{"id":"message-1","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":8}}}\n',
+      ),
+      { scan: {} },
+    );
+    const regressed = await parseClaudeCostJsonl(
+      chunks(
+        '{"type":"assistant","timestamp":"2026-08-20T10:00:01Z","requestId":"request-1","message":{"id":"message-1","model":"claude-opus-4-8","usage":{"input_tokens":2,"output_tokens":1}}}\n',
+        '{"type":"assistant","timestamp":"2026-08-20T10:00:02Z","requestId":"request-1","message":{"id":"message-1","model":"claude-opus-4-8","usage":{"input_tokens":4,"output_tokens":3}}}\n',
+      ),
+      { state: initial.state, scan: { cursor: initial.cursor } },
+    );
+    expect(regressed.rows).toEqual([]);
+    expect(regressed.state.unsafeMessageKeys).toEqual(["message-1:request-1"]);
+  });
+
+  it("rejects token counters outside the JavaScript safe-integer range", async () => {
+    const result = await parseClaudeCostJsonl(
+      chunks(
+        '{"type":"assistant","timestamp":"2026-08-20T10:00:00Z","requestId":"request-1","message":{"id":"message-1","model":"claude-opus-4-8","usage":{"input_tokens":9007199254740992,"output_tokens":1}}}\n',
+      ),
+      { scan: {} },
+    );
+    expect(result.rows[0]?.tokens.input).toBe(0);
+    expect(result.rows[0]?.tokens.output).toBe(1);
+  });
+});
+
+function tokens(
+  input: number,
+  cachedInput: number,
+  cacheCreationInput: number,
+  output: number,
+): CostJsonlTokens {
+  return { input, cachedInput, cacheCreationInput, output, reasoningOutput: 0 };
+}
