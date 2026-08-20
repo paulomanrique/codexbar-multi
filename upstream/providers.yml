@@ -80,19 +80,22 @@ providers:
   - id: claude
     swiftGlobs:
       - Sources/CodexBar/Providers/Claude/**/*.swift
+      - Sources/CodexBarCore/Providers/Claude/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Claude*Tests.swift
         - TestsLinux/*Claude*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/claude-antigravity-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Claude/**/*
     tsPaths:
       expected: [packages/providers/src/providers/claude.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/claude.ts
+    tsTestGlobs:
+      - packages/providers/test/claude-antigravity-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: clinepass
@@ -310,19 +313,22 @@ providers:
   - id: antigravity
     swiftGlobs:
       - Sources/CodexBar/Providers/Antigravity/**/*.swift
+      - Sources/CodexBarCore/Providers/Antigravity/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Antigravity*Tests.swift
         - TestsLinux/*Antigravity*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/claude-antigravity-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Antigravity/**/*
     tsPaths:
       expected: [packages/providers/src/providers/antigravity.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/antigravity.ts
+    tsTestGlobs:
+      - packages/providers/test/claude-antigravity-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: copilot
@@ -451,37 +457,43 @@ providers:
   - id: kilo
     swiftGlobs:
       - Sources/CodexBar/Providers/Kilo/**/*.swift
+      - Sources/CodexBarCore/Providers/Kilo/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Kilo*Tests.swift
         - TestsLinux/*Kilo*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/kilo-kiro-augment-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Kilo/**/*
     tsPaths:
       expected: [packages/providers/src/providers/kilo.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/kilo.ts
+    tsTestGlobs:
+      - packages/providers/test/kilo-kiro-augment-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: kiro
     swiftGlobs:
       - Sources/CodexBar/Providers/Kiro/**/*.swift
+      - Sources/CodexBarCore/Providers/Kiro/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Kiro*Tests.swift
         - TestsLinux/*Kiro*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/kilo-kiro-augment-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Kiro/**/*
     tsPaths:
       expected: [packages/providers/src/providers/kiro.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/kiro.ts
+    tsTestGlobs:
+      - packages/providers/test/kilo-kiro-augment-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: vertexai
@@ -508,37 +520,43 @@ providers:
   - id: augment
     swiftGlobs:
       - Sources/CodexBar/Providers/Augment/**/*.swift
+      - Sources/CodexBarCore/Providers/Augment/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Augment*Tests.swift
         - TestsLinux/*Augment*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/kilo-kiro-augment-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Augment/**/*
     tsPaths:
       expected: [packages/providers/src/providers/augment.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/augment.ts
+    tsTestGlobs:
+      - packages/providers/test/kilo-kiro-augment-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: jetbrains
     swiftGlobs:
       - Sources/CodexBar/Providers/JetBrains/**/*.swift
+      - Sources/CodexBarCore/Providers/JetBrains/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*JetBrains*Tests.swift
         - TestsLinux/*JetBrains*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/jetbrains-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/JetBrains/**/*
     tsPaths:
       expected: [packages/providers/src/providers/jetbrains.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/jetbrains.ts
+    tsTestGlobs:
+      - packages/providers/test/jetbrains-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: moonshot
@@ -566,19 +584,22 @@ providers:
   - id: amp
     swiftGlobs:
       - Sources/CodexBar/Providers/Amp/**/*.swift
+      - Sources/CodexBarCore/Providers/Amp/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Amp*Tests.swift
         - TestsLinux/*Amp*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/local-cli-oauth-providers.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Amp/**/*
     tsPaths:
       expected: [packages/providers/src/providers/amp.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/amp.ts
+    tsTestGlobs:
+      - packages/providers/test/local-cli-oauth-providers.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: t3chat
@@ -728,19 +749,22 @@ providers:
   - id: zed
     swiftGlobs:
       - Sources/CodexBar/Providers/Zed/**/*.swift
+      - Sources/CodexBarCore/Providers/Zed/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Zed*Tests.swift
         - TestsLinux/*Zed*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/local-cli-oauth-providers.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Zed/**/*
     tsPaths:
       expected: [packages/providers/src/providers/zed.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/zed.ts
+    tsTestGlobs:
+      - packages/providers/test/local-cli-oauth-providers.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: perplexity
@@ -1056,19 +1080,22 @@ providers:
   - id: grok
     swiftGlobs:
       - Sources/CodexBar/Providers/Grok/**/*.swift
+      - Sources/CodexBarCore/Providers/Grok/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Grok*Tests.swift
         - TestsLinux/*Grok*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/local-cli-oauth-providers.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Grok/**/*
     tsPaths:
       expected: [packages/providers/src/providers/grok.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/grok.ts
+    tsTestGlobs:
+      - packages/providers/test/local-cli-oauth-providers.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: groq

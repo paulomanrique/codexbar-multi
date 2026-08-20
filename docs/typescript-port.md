@@ -39,12 +39,12 @@ Upstream workflows are preserved as inert reference material in `upstream-refere
 
 - Workspace, strict TypeScript configuration, Effect contracts/services, architecture gate, and oracle normalization.
 - Closed 69-provider ID roster and a registry that makes unported entries explicit rather than silently omitting them.
-- Executable TypeScript modules for 60 providers: the 16 already shipped upstream as JavaScript/TypeScript plugins, Codex's first OAuth slice, the complete first 14-provider HTTP wave, the Azure OpenAI/Gemini/Vertex AI, Bedrock/Copilot/MiniMax, and LiteLLM/ZenMux/Wayfinder cloud slices, plus all twenty cookie/web provider modules. They remain `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
+- TypeScript domain modules now exist for all 69 provider IDs. Sixty-five have an executable first-party strategy; Amp, Kiro, Grok, and JetBrains remain parser/contract modules until their process, RPC, or IDE-discovery adapters are connected. Every entry remains `partial`; the upstream matrix only advances individual providers after dedicated fixtures/tests and Swift-oracle comparison.
 - A minimal Codex OAuth vertical slice with cross-platform `auth.json` discovery in the CLI composition root and shared `wham/usage` parsing.
 - Swift-compatible UsageSnapshot wire codecs preserve stable null lanes, omission defaults, legacy identity keys, bounded details, ISO dates, and persisted provider enrichments.
 - Shared quota warning, reset boundary/backfill, and linear/workday pace calculations are ported from the Swift decision tables.
 - Node/platform adapters, native keyring credentials, normalized atomic config, SQLite WAL/migrations in a dedicated worker, a dedicated WAL reader outside the writer FIFO, bounded history/cost queries, persisted provider refresh, constant-size latest-snapshot overview reads, first CLI framework, Electron tray/popup shell, typed preload IPC, and React overview.
-- The semantic provider matrix contains 50 `partial` entries with dedicated coverage growing provider-by-provider; no entry is called `parity` before its Swift fixtures, fallback rules, and native scenario pass.
+- The semantic provider matrix contains 59 `partial` entries with dedicated coverage growing provider-by-provider; no entry is called `parity` before its Swift fixtures, fallback rules, and native scenario pass.
 - Opt-in data-only legacy import rescans bounded JSON/JSONL, disables imported hooks, copies plugins without approvals, journals rollback, and never imports credentials implicitly.
 
 This is an implementation milestone, not feature parity. Entries remain `partial` until their Swift tests/fixtures and native smoke scenarios pass. Packaging scripts deliberately fail closed until the cross-platform parity gate is approved.

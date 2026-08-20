@@ -7,9 +7,12 @@ import { aiand } from "./providers/aiand.ts";
 import { abacus } from "./providers/abacus.ts";
 import { alibaba } from "./providers/alibaba.ts";
 import { alibabatokenplan } from "./providers/alibabatokenplan.ts";
+import { antigravity } from "./providers/antigravity.ts";
+import { augment } from "./providers/augment.ts";
 import { azureopenai } from "./providers/azureopenai.ts";
 import { bedrock } from "./providers/bedrock.ts";
 import { chutes } from "./providers/chutes.ts";
+import { claude } from "./providers/claude.ts";
 import { clawrouter } from "./providers/clawrouter.ts";
 import { clinepass } from "./providers/clinepass.ts";
 import { codex } from "./providers/codex.ts";
@@ -30,6 +33,7 @@ import { gemini } from "./providers/gemini.ts";
 import { groq } from "./providers/groq.ts";
 import { ibmbob } from "./providers/ibmbob.ts";
 import { kimi } from "./providers/kimi.ts";
+import { kilo } from "./providers/kilo.ts";
 import { llmproxy } from "./providers/llmproxy.ts";
 import { litellm } from "./providers/litellm.ts";
 import { longcat } from "./providers/longcat.ts";
@@ -59,6 +63,7 @@ import { vertexai } from "./providers/vertexai.ts";
 import { windsurf } from "./providers/windsurf.ts";
 import { xai } from "./providers/xai.ts";
 import { zai } from "./providers/zai.ts";
+import { zed } from "./providers/zed.ts";
 import { warp } from "./providers/warp.ts";
 import { wayfinder } from "./providers/wayfinder.ts";
 import { zenmux } from "./providers/zenmux.ts";
@@ -70,9 +75,12 @@ export const FIRST_PARTY_PROVIDERS = [
   aiand,
   alibaba,
   alibabatokenplan,
+  antigravity,
+  augment,
   azureopenai,
   bedrock,
   chutes,
+  claude,
   clawrouter,
   clinepass,
   codebuff,
@@ -92,6 +100,7 @@ export const FIRST_PARTY_PROVIDERS = [
   groq,
   ibmbob,
   kimi,
+  kilo,
   llmproxy,
   litellm,
   longcat,
@@ -123,6 +132,7 @@ export const FIRST_PARTY_PROVIDERS = [
   wayfinder,
   xai,
   zai,
+  zed,
   zenmux,
   zoommate,
 ] as const;
@@ -134,11 +144,15 @@ export const PROVIDER_DESCRIPTORS = PROVIDER_REGISTRY;
 export { clawrouter } from "./providers/clawrouter.ts";
 export { abacus } from "./providers/abacus.ts";
 export { aiand } from "./providers/aiand.ts";
+export { amp } from "./providers/amp.ts";
 export { alibaba } from "./providers/alibaba.ts";
 export { alibabatokenplan } from "./providers/alibabatokenplan.ts";
+export { antigravity } from "./providers/antigravity.ts";
+export { augment } from "./providers/augment.ts";
 export { azureopenai } from "./providers/azureopenai.ts";
 export { bedrock } from "./providers/bedrock.ts";
 export { chutes } from "./providers/chutes.ts";
+export { claude } from "./providers/claude.ts";
 export { codex } from "./providers/codex.ts";
 export { clinepass } from "./providers/clinepass.ts";
 export { codebuff } from "./providers/codebuff.ts";
@@ -156,8 +170,12 @@ export { factory } from "./providers/factory.ts";
 export { fireworks } from "./providers/fireworks.ts";
 export { gemini } from "./providers/gemini.ts";
 export { groq } from "./providers/groq.ts";
+export { grok } from "./providers/grok.ts";
 export { ibmbob } from "./providers/ibmbob.ts";
+export { jetbrains } from "./providers/jetbrains.ts";
 export { kimi } from "./providers/kimi.ts";
+export { kilo } from "./providers/kilo.ts";
+export { kiro } from "./providers/kiro.ts";
 export { llmproxy } from "./providers/llmproxy.ts";
 export { litellm } from "./providers/litellm.ts";
 export { longcat } from "./providers/longcat.ts";
@@ -189,5 +207,6 @@ export { warp } from "./providers/warp.ts";
 export { wayfinder } from "./providers/wayfinder.ts";
 export { xai } from "./providers/xai.ts";
 export { zai } from "./providers/zai.ts";
+export { zed } from "./providers/zed.ts";
 export { zenmux } from "./providers/zenmux.ts";
 export { zoommate } from "./providers/zoommate.ts";
