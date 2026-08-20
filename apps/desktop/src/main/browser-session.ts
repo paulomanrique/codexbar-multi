@@ -1,27 +1,13 @@
 import { BrowserWindow, session as electronSession, type Session } from "electron";
 import { Effect } from "effect";
-import type { LoginRequestDTO, LoginResultDTO, ProviderId } from "@codexbar/contracts";
+import type { LoginRequestDTO, LoginResultDTO } from "@codexbar/contracts";
 import { makeNativeCredentialStore } from "@codexbar/platform/node";
-
-interface LoginDescriptor {
-  readonly startUrl: string;
-  readonly allowedOrigins: ReadonlySet<string>;
-  readonly cookieDomains: readonly string[];
-  readonly cookieNames: ReadonlySet<string>;
-}
-
-const LOGIN_DESCRIPTORS: Partial<Record<ProviderId, LoginDescriptor>> = {
-  t3chat: {
-    startUrl: "https://t3.chat/settings/customization",
-    allowedOrigins: new Set([
-      "https://t3.chat",
-      "https://accounts.google.com",
-      "https://github.com",
-    ]),
-    cookieDomains: ["t3.chat", "www.t3.chat"],
-    cookieNames: new Set(["__session", "__client_uat", "__clerk_db_jwt"]),
-  },
-};
+import {
+  browserLoginDescriptor,
+  exportableCookieHeader,
+  isAllowedBrowserLoginNavigation,
+  type BrowserLoginDescriptor,
+} from "./browser-session-policy.js";
 
 const credentials = makeNativeCredentialStore();
 const activeLogins = new Map<string, BrowserWindow>();
@@ -32,17 +18,9 @@ const credentialKeyFor = ({ provider, accountId }: LoginRequestDTO) =>
 const partitionFor = ({ provider, accountId }: LoginRequestDTO) =>
   `persist:codexbar-multi-${provider}-${accountId}`;
 
-function isAllowedNavigation(descriptor: LoginDescriptor, rawUrl: string): boolean {
-  try {
-    return descriptor.allowedOrigins.has(new URL(rawUrl).origin);
-  } catch {
-    return false;
-  }
-}
-
-function protectNavigation(window: BrowserWindow, descriptor: LoginDescriptor): void {
+function protectNavigation(window: BrowserWindow, descriptor: BrowserLoginDescriptor): void {
   window.webContents.setWindowOpenHandler(({ url }) =>
-    isAllowedNavigation(descriptor, url)
+    isAllowedBrowserLoginNavigation(descriptor, url)
       ? {
           action: "allow",
           overrideBrowserWindowOptions: {
@@ -57,7 +35,7 @@ function protectNavigation(window: BrowserWindow, descriptor: LoginDescriptor): 
       : { action: "deny" },
   );
   const rejectUnknown = (event: Electron.Event, url: string) => {
-    if (!isAllowedNavigation(descriptor, url)) event.preventDefault();
+    if (!isAllowedBrowserLoginNavigation(descriptor, url)) event.preventDefault();
   };
   window.webContents.on("will-navigate", rejectUnknown);
   window.webContents.on("will-redirect", rejectUnknown);
@@ -72,25 +50,21 @@ function hardenSession(session: Session): void {
 
 async function exportedCookieHeaders(
   session: Session,
-  descriptor: LoginDescriptor,
+  descriptor: BrowserLoginDescriptor,
 ): Promise<Readonly<Record<string, string>>> {
   const result: Record<string, string> = {};
   for (const domain of descriptor.cookieDomains) {
     // URL filtering preserves Electron's host-only/domain/path eligibility. A
     // cookie observed on www.t3.chat is never folded into the t3.chat header.
     const cookies = await session.cookies.get({ url: `https://${domain}/` });
-    const allowed = cookies.filter((cookie) => descriptor.cookieNames.has(cookie.name));
-    if (allowed.length === 0) continue;
-    result[domain] = [...new Map(allowed.map((cookie) => [cookie.name, cookie.value])).entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, value]) => `${name}=${value}`)
-      .join("; ");
+    const header = exportableCookieHeader(descriptor, cookies);
+    if (header !== undefined) result[domain] = header;
   }
   return result;
 }
 
 export async function startBrowserLogin(request: LoginRequestDTO): Promise<LoginResultDTO> {
-  const descriptor = LOGIN_DESCRIPTORS[request.provider];
+  const descriptor = browserLoginDescriptor(request.provider);
   if (descriptor === undefined)
     throw new Error(`Interactive login is not declared for '${request.provider}'`);
   const loginKey = keyFor(request);
