@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { join } from "node:path";
 
 import { accountIdFromJwt, discoverCodexCredential } from "../src/codex-credential.ts";
 
@@ -10,7 +11,7 @@ describe("Codex credential discovery", () => {
     const credential = discoverCodexCredential({
       environment: { CODEX_HOME: "/isolated/codex" },
       read: (path) => {
-        expect(path).toBe("/isolated/codex/auth.json");
+        expect(path).toBe(join("/isolated/codex", "auth.json"));
         return JSON.stringify({
           tokens: {
             access_token: "access",
