@@ -35,6 +35,9 @@ import { runDiagnose } from "./diagnose.ts";
 import { runGuard } from "./guard.ts";
 import { runHooks, type HookProcessRequest } from "./hooks.ts";
 import { runSessions, runSessionsFocus } from "./sessions.ts";
+import { runCookie, type CLICookieStore } from "./cookie.ts";
+import { runPlugins, type CLIPluginStore } from "./plugins.ts";
+import { runServe } from "./serve.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
@@ -76,6 +79,8 @@ export interface CLIProviderRuntime {
   readonly costs?: CLICostStore;
   readonly cache?: CLICacheStore;
   readonly runHook?: (request: HookProcessRequest) => Promise<{ readonly stdout: string }>;
+  readonly cookies?: CLICookieStore;
+  readonly plugins?: CLIPluginStore;
   readonly now?: () => number;
 }
 
@@ -423,7 +428,7 @@ const isError = <T extends object>(
 ): value is { readonly error: string } => "error" in value;
 
 const usageHelp =
-  "Usage: codexbar-multi [usage] [provider] [--provider <id|all>] [--format text|json|toon] [--json] [--json-only] [--pretty]";
+  "Usage: codexbar-multi [usage] [provider] [--provider <id|all>] [--format text|json|toon] [--json] [--json-only] [--pretty]\nCommands: usage, providers, cost, cards, dashboard, diagnose, cache, guard, hooks, cookie, plugins, sessions, config, serve";
 
 const usageFailure = (io: CLIIO, output: OutputPreferences, error: string): CLICommandResult => {
   if (output.format === "text" && !output.jsonOnly) io.stderr(`Error: ${error}`);
@@ -539,6 +544,9 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
   if (command === "cache") return runCache(raw.slice(1), options.io, options.runtime);
   if (command === "guard") return runGuard(raw.slice(1), options.io, options.runtime);
   if (command === "hooks") return runHooks(raw.slice(1), options.io, options.runtime);
+  if (command === "cookie") return runCookie(raw.slice(1), options.io, options.runtime);
+  if (command === "plugins") return runPlugins(raw.slice(1), options.io, options.runtime);
+  if (command === "serve") return runServe(raw.slice(1), options.io, options.runtime);
   if (command === "sessions") {
     const sessionArgs = raw.slice(1);
     if (sessionArgs[0] === "focus")
