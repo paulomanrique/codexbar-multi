@@ -144,6 +144,53 @@ describe("Codex cost JSONL parser (Swift parity)", () => {
     expect(unsafe.rows).toEqual([]);
     expect(unsafe.state.cumulativeCounterUnsafe).toBe(true);
   });
+
+  it("uses a resolved parent baseline only for its declared Issue #2037 fork", async () => {
+    const parent = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"session_meta","timestamp":"2030-01-01T12:00:00Z","payload":{"id":"parent-session"}}\n',
+        '{"type":"event_msg","timestamp":"2030-01-01T12:00:01Z","payload":{"type":"token_count","info":{"model":"fixture-model","total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":5}}}}\n',
+      ),
+      { scan: {} },
+    );
+    const parentId = parent.state.session?.id;
+    const parentTotals = parent.state.totals;
+    expect(parentId).toBe("parent-session");
+    expect(parentTotals).toBeDefined();
+
+    const child = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"session_meta","timestamp":"2030-01-01T15:00:00Z","payload":{"id":"child-session","forked_from_id":"parent-session","timestamp":"2030-01-01T15:00:00Z"}}\n',
+        '{"type":"event_msg","timestamp":"2030-01-01T15:00:00Z","payload":{"type":"token_count","info":{"model":"fixture-model","total_token_usage":{"input_tokens":10,"cached_input_tokens":1,"output_tokens":1}}}}\n',
+        '{"type":"event_msg","timestamp":"2030-01-01T15:00:01Z","payload":{"type":"token_count","info":{"model":"fixture-model","total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":5}}}}\n',
+        '{"type":"event_msg","timestamp":"2030-01-01T15:00:02Z","payload":{"type":"token_count","info":{"model":"fixture-model","total_token_usage":{"input_tokens":120,"cached_input_tokens":12,"output_tokens":9}}}}\n',
+      ),
+      {
+        forkBaseline: { parentSessionId: parentId!, totals: parentTotals! },
+        scan: {},
+      },
+    );
+    expect(child.state.session).toMatchObject({
+      id: "child-session",
+      forkedFromId: "parent-session",
+      forkTimestamp: Date.parse("2030-01-01T15:00:00Z"),
+    });
+    expect(child.rows).toHaveLength(1);
+    expect(child.rows[0]?.tokens).toMatchObject({ input: 20, cachedInput: 2, output: 4 });
+
+    const mismatchedParent = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"session_meta","timestamp":"2030-01-01T15:00:00Z","payload":{"id":"child-session","forked_from_id":"another-parent"}}\n',
+        '{"type":"event_msg","timestamp":"2030-01-01T15:00:01Z","payload":{"type":"token_count","info":{"model":"fixture-model","total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":5}}}}\n',
+      ),
+      { forkBaseline: { parentSessionId: parentId!, totals: parentTotals! }, scan: {} },
+    );
+    expect(mismatchedParent.rows[0]?.tokens).toMatchObject({
+      input: 100,
+      cachedInput: 10,
+      output: 5,
+    });
+  });
 });
 
 describe("Claude cost JSONL parser (Swift parity)", () => {

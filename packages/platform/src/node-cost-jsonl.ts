@@ -1,6 +1,7 @@
 /** Node file adapter for the portable cost JSONL scanner. */
 import { createHash } from "node:crypto";
-import { lstat, open, type FileHandle } from "node:fs/promises";
+import { lstat, open, readdir, type FileHandle } from "node:fs/promises";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   parseClaudeCostJsonl,
   parseCodexCostJsonl,
@@ -13,6 +14,41 @@ import {
 } from "@codexbar/core";
 
 const streamChunkBytes = 64 * 1024;
+const defaultInventoryMaxDepth = 32;
+const defaultInventoryMaxEntries = 32 * 1024;
+const defaultInventoryMaxFiles = 4_096;
+
+/** Stable filesystem identity used to deduplicate hard-linked log sources. */
+export interface NodeCostJsonlSourceIdentity {
+  readonly device: string;
+  readonly inode: string;
+}
+
+export interface NodeCostJsonlInventoryFile {
+  readonly path: string;
+  readonly identity: NodeCostJsonlSourceIdentity;
+  readonly size: number;
+  readonly mtimeMs: number;
+}
+
+export interface NodeCostJsonlInventoryOptions {
+  /** One or more explicitly trusted session roots. Symlink roots are rejected. */
+  readonly roots: readonly string[];
+  /** Maximum nested directory depth below a root. Defaults to 32. */
+  readonly maxDepth?: number;
+  /** Maximum directory entries inspected across all roots. Defaults to 32,768. */
+  readonly maxEntries?: number;
+  /** Maximum regular JSONL sources returned. Defaults to 4,096. */
+  readonly maxFiles?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface NodeCostJsonlInventoryResult {
+  readonly files: readonly NodeCostJsonlInventoryFile[];
+  readonly visitedEntries: number;
+  /** True when a configured bound stopped the traversal before it was complete. */
+  readonly truncated: boolean;
+}
 
 export interface NodeCostJsonlFingerprint {
   readonly device: string;
@@ -79,6 +115,79 @@ export class CostJsonlInvalidSourceError extends Error {
     this.name = "CostJsonlInvalidSourceError";
   }
 }
+
+/**
+ * Lists JSONL sources below trusted roots without following symlinks. Results
+ * are path-sorted and hard-link deduplicated, so a scan plan is deterministic
+ * and cannot charge the same source twice through two inventory paths.
+ */
+export const inventoryNodeCostJsonlFiles = async (
+  options: NodeCostJsonlInventoryOptions,
+): Promise<NodeCostJsonlInventoryResult> => {
+  const maxDepth = nonNegativeSafeInteger(options.maxDepth ?? defaultInventoryMaxDepth, "maxDepth");
+  const maxEntries = nonNegativeSafeInteger(
+    options.maxEntries ?? defaultInventoryMaxEntries,
+    "maxEntries",
+  );
+  const maxFiles = nonNegativeSafeInteger(options.maxFiles ?? defaultInventoryMaxFiles, "maxFiles");
+  const files: NodeCostJsonlInventoryFile[] = [];
+  const identities = new Set<string>();
+  let visitedEntries = 0;
+  let truncated = false;
+
+  const roots = [...new Set(options.roots.map((root) => resolve(root)))].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  for (const root of roots) {
+    throwIfAborted(options.signal);
+    if (!(await directoryExists(root))) continue;
+    await assertRegularDirectory(root);
+    const pending: Array<{ readonly path: string; readonly depth: number }> = [
+      { path: root, depth: 0 },
+    ];
+    while (pending.length > 0) {
+      throwIfAborted(options.signal);
+      const directory = pending.shift()!;
+      const entries = (await readdir(directory.path, { withFileTypes: true })).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+      for (const entry of entries) {
+        throwIfAborted(options.signal);
+        if (visitedEntries >= maxEntries || files.length >= maxFiles) {
+          truncated = true;
+          return completeInventory(files, visitedEntries, truncated);
+        }
+        visitedEntries += 1;
+        if (entry.name.startsWith(".")) continue;
+        const path = safeDescendant(root, directory.path, entry.name);
+        // Dirent data can be stale by the time we inspect it. lstat ensures a
+        // symlink swap is skipped rather than traversed or published.
+        const info = await lstat(path, { bigint: true }).catch((error: unknown) => {
+          if (isMissingPath(error)) return undefined;
+          throw error;
+        });
+        if (info === undefined || info.isSymbolicLink()) continue;
+        if (info.isDirectory()) {
+          if (directory.depth >= maxDepth) truncated = true;
+          else pending.push({ path, depth: directory.depth + 1 });
+          continue;
+        }
+        if (!info.isFile() || extname(entry.name).toLowerCase() !== ".jsonl") continue;
+        const identity = { device: info.dev.toString(), inode: info.ino.toString() };
+        const key = `${identity.device}:${identity.inode}`;
+        if (identities.has(key)) continue;
+        identities.add(key);
+        files.push({
+          path,
+          identity,
+          size: safeNumber(info.size, path, "size"),
+          mtimeMs: safeNumber(info.mtimeMs, path, "mtime"),
+        });
+      }
+    }
+  }
+  return completeInventory(files, visitedEntries, truncated);
+};
 
 export const scanNodeCodexCostJsonl = async (
   options: NodeCodexCostJsonlOptions,
@@ -281,6 +390,51 @@ async function assertRegularPath(path: string): Promise<void> {
   if (info.isSymbolicLink()) throw new CostJsonlInvalidSourceError(path, "symbolic link");
   if (!info.isFile()) throw new CostJsonlInvalidSourceError(path, "not a regular file");
   safeNumber(info.size, path, "size");
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path, { bigint: true });
+    return true;
+  } catch (error) {
+    if (isMissingPath(error)) return false;
+    throw error;
+  }
+}
+
+async function assertRegularDirectory(path: string): Promise<void> {
+  const info = await lstat(path, { bigint: true });
+  if (info.isSymbolicLink()) throw new CostJsonlInvalidSourceError(path, "symbolic link root");
+  if (!info.isDirectory()) throw new CostJsonlInvalidSourceError(path, "not a directory root");
+}
+
+function safeDescendant(root: string, directory: string, name: string): string {
+  const path = resolve(join(directory, name));
+  const relativePath = relative(root, path);
+  if (
+    relativePath.length === 0 ||
+    /^\.\.(?:[\\/]|$)/u.test(relativePath) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new CostJsonlInvalidSourceError(directory, "inventory path escapes root");
+  }
+  return path;
+}
+
+function completeInventory(
+  files: readonly NodeCostJsonlInventoryFile[],
+  visitedEntries: number,
+  truncated: boolean,
+): NodeCostJsonlInventoryResult {
+  return {
+    files: [...files].sort((left, right) => left.path.localeCompare(right.path)),
+    visitedEntries,
+    truncated,
+  };
+}
+
+function isMissingPath(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 async function assertPathStillReferences(

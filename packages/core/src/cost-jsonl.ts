@@ -182,6 +182,10 @@ export async function scanCostJsonlChunks(
 export interface CodexJsonlState {
   readonly currentModel?: string;
   readonly totals?: CostJsonlTokens;
+  /** Session metadata read from the leaf `session_meta` record, when present. */
+  readonly session?: CodexJsonlSessionMetadata;
+  /** Parent totals whose copied child prefix has not reached the fork boundary yet. */
+  readonly awaitingForkBaseline?: CostJsonlTokens;
   /**
    * A cumulative counter regressed/interleaved. This compact port suppresses
    * later cumulative rows rather than guessing; fork lineage #2037 remains a
@@ -192,8 +196,30 @@ export interface CodexJsonlState {
   readonly lastEventKeys: readonly string[];
 }
 
+/**
+ * Identifies a Codex rollout and, for a fork, the parent rollout that owns
+ * the copied cumulative prefix. Hosts resolve parent files; core only checks
+ * the declared parent before using a supplied baseline.
+ */
+export interface CodexJsonlSessionMetadata {
+  readonly id?: string;
+  readonly forkedFromId?: string;
+  readonly forkTimestamp?: number;
+}
+
+/** A parent cumulative snapshot resolved by the host for a child rollout. */
+export interface CodexJsonlForkBaseline {
+  readonly parentSessionId: string;
+  readonly totals: CostJsonlTokens;
+}
+
 export interface CodexJsonlParseOptions {
   readonly state?: Partial<CodexJsonlState>;
+  /**
+   * Parent-owned cumulative totals at this rollout's fork boundary. The
+   * baseline applies only after this file declares the same parent session.
+   */
+  readonly forkBaseline?: CodexJsonlForkBaseline;
   readonly catalog?: PricingCatalog;
   readonly pricingDate?: (timestamp: number) => Date;
   readonly scan: Omit<CostJsonlChunkScanOptions, "onLine">;
@@ -211,6 +237,11 @@ export async function parseCodexCostJsonl(
   let currentModel = optionalText(options.state?.currentModel);
   let totals =
     options.state?.totals === undefined ? undefined : normalizedTokens(options.state.totals);
+  let session = normalizedCodexSession(options.state?.session);
+  let awaitingForkBaseline =
+    options.state?.awaitingForkBaseline === undefined
+      ? undefined
+      : normalizedTokens(options.state.awaitingForkBaseline);
   let cumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
   const lastEventKeys = boundedSet(options.state?.lastEventKeys, 1024);
   const rows: CostJsonlUsageRow[] = [];
@@ -219,6 +250,19 @@ export async function parseCodexCostJsonl(
     onLine: (line) => {
       const value = parseObject(line);
       if (value === undefined) return;
+      if (value.type === "session_meta") {
+        const metadata = codexSessionMetadata(value);
+        session = mergeCodexSession(session, metadata);
+        if (
+          totals === undefined &&
+          awaitingForkBaseline === undefined &&
+          options.forkBaseline !== undefined &&
+          session?.forkedFromId === options.forkBaseline.parentSessionId
+        ) {
+          awaitingForkBaseline = normalizedTokens(options.forkBaseline.totals);
+        }
+        return;
+      }
       if (value.type === "turn_context") {
         const payload = asObject(value.payload);
         const info = asObject(payload?.info);
@@ -243,19 +287,38 @@ export async function parseCodexCostJsonl(
         optionalText(value.model) ??
         currentModel ??
         codexUnattributedModel;
+      // A host-provided fork baseline is only trustworthy after the leaf has
+      // identified its parent. Avoid charging a prefix if malformed input
+      // places token records before its `session_meta` record.
+      if (options.forkBaseline !== undefined && totals === undefined && session === undefined)
+        return;
       const total = totalsFrom(info?.total_token_usage);
       const last = totalsFrom(info?.last_token_usage);
       let delta: CostJsonlTokens | undefined;
       if (total !== undefined) {
-        if (totals !== undefined && hasCounterRegression(total, totals)) {
-          cumulativeCounterUnsafe = true;
+        if (awaitingForkBaseline !== undefined) {
+          // Child rollouts replay the parent's cumulative prefix from a lower
+          // counter. Do not compare that prefix to the parent's final value;
+          // wait until the copied stream reaches the resolved boundary.
+          if (!hasReachedTotals(total, awaitingForkBaseline)) return;
+          delta = positiveDifference(total, awaitingForkBaseline);
+          totals = total;
+          awaitingForkBaseline = undefined;
+        } else {
+          if (totals !== undefined && hasCounterRegression(total, totals)) {
+            cumulativeCounterUnsafe = true;
+          }
+          delta = totals === undefined ? total : positiveDifference(total, totals);
+          totals = total;
+          // Do not substitute `last` after a detected total regression. It may
+          // be a copied fork prefix; omitting a row is safer than billing it.
+          if (cumulativeCounterUnsafe) return;
         }
-        delta = totals === undefined ? total : positiveDifference(total, totals);
-        totals = total;
-        // Do not substitute `last` after a detected total regression. It may
-        // be a copied fork prefix; omitting a row is safer than billing it.
-        if (cumulativeCounterUnsafe) return;
       } else if (last !== undefined) {
+        // A `last_token_usage` record cannot prove where a replayed prefix
+        // ends, so it is not billable until a cumulative total reaches the
+        // resolved parent boundary.
+        if (awaitingForkBaseline !== undefined) return;
         const key = `${timestamp}:${model}:${last.input}:${last.cachedInput}:${last.cacheCreationInput}:${last.output}:${last.reasoningOutput}`;
         if (lastEventKeys.has(key)) return;
         lastEventKeys.add(key);
@@ -292,6 +355,8 @@ export async function parseCodexCostJsonl(
     state: {
       ...(currentModel === undefined ? {} : { currentModel }),
       ...(totals === undefined ? {} : { totals }),
+      ...(session === undefined ? {} : { session }),
+      ...(awaitingForkBaseline === undefined ? {} : { awaitingForkBaseline }),
       ...(cumulativeCounterUnsafe ? { cumulativeCounterUnsafe: true } : {}),
       lastEventKeys: [...lastEventKeys],
     },
@@ -424,6 +489,64 @@ function optionalText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function codexSessionMetadata(
+  value: Record<string, unknown>,
+): CodexJsonlSessionMetadata | undefined {
+  const payload = asObject(value.payload);
+  if (payload === undefined) return undefined;
+  const id = optionalText(payload.id) ?? optionalText(payload.session_id);
+  const forkedFromId =
+    optionalText(payload.forked_from_id) ??
+    optionalText(payload.forkedFromId) ??
+    optionalText(payload.parent_session_id) ??
+    optionalText(payload.parentSessionId);
+  const forkTimestamp = parseTimestamp(payload.timestamp) ?? parseTimestamp(value.timestamp);
+  return id === undefined && forkedFromId === undefined && forkTimestamp === undefined
+    ? undefined
+    : {
+        ...(id === undefined ? {} : { id }),
+        ...(forkedFromId === undefined ? {} : { forkedFromId }),
+        ...(forkTimestamp === undefined ? {} : { forkTimestamp }),
+      };
+}
+
+function normalizedCodexSession(
+  session: CodexJsonlSessionMetadata | undefined,
+): CodexJsonlSessionMetadata | undefined {
+  if (session === undefined) return undefined;
+  const id = optionalText(session.id);
+  const forkedFromId = optionalText(session.forkedFromId);
+  const forkTimestamp =
+    typeof session.forkTimestamp === "number" && Number.isFinite(session.forkTimestamp)
+      ? session.forkTimestamp
+      : undefined;
+  return id === undefined && forkedFromId === undefined && forkTimestamp === undefined
+    ? undefined
+    : {
+        ...(id === undefined ? {} : { id }),
+        ...(forkedFromId === undefined ? {} : { forkedFromId }),
+        ...(forkTimestamp === undefined ? {} : { forkTimestamp }),
+      };
+}
+
+function mergeCodexSession(
+  current: CodexJsonlSessionMetadata | undefined,
+  next: CodexJsonlSessionMetadata | undefined,
+): CodexJsonlSessionMetadata | undefined {
+  if (current === undefined) return next;
+  if (next === undefined) return current;
+  // The first metadata record belongs to the leaf. Later metadata can be a
+  // copied fork prefix, so it may only fill fields that the leaf omitted.
+  const id = current.id ?? next.id;
+  const forkedFromId = current.forkedFromId ?? next.forkedFromId;
+  const forkTimestamp = current.forkTimestamp ?? next.forkTimestamp;
+  return {
+    ...(id === undefined ? {} : { id }),
+    ...(forkedFromId === undefined ? {} : { forkedFromId }),
+    ...(forkTimestamp === undefined ? {} : { forkTimestamp }),
+  };
+}
+
 function integer(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
   const truncated = Math.trunc(value);
@@ -470,6 +593,16 @@ function hasCounterRegression(current: CostJsonlTokens, previous: CostJsonlToken
     current.cacheCreationInput < previous.cacheCreationInput ||
     current.output < previous.output ||
     current.reasoningOutput < previous.reasoningOutput
+  );
+}
+
+function hasReachedTotals(current: CostJsonlTokens, boundary: CostJsonlTokens): boolean {
+  return (
+    current.input >= boundary.input &&
+    current.cachedInput >= boundary.cachedInput &&
+    current.cacheCreationInput >= boundary.cacheCreationInput &&
+    current.output >= boundary.output &&
+    current.reasoningOutput >= boundary.reasoningOutput
   );
 }
 

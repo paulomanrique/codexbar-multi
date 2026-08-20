@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -6,11 +6,60 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   scanNodeClaudeCostJsonl,
   scanNodeCodexCostJsonl,
+  inventoryNodeCostJsonlFiles,
   CostJsonlSourceChangedError,
   CostJsonlInvalidSourceError,
 } from "../src/node-cost-jsonl.ts";
 
 describe("Node cost JSONL adapter", () => {
+  it("inventories nested logs deterministically without following symlinks or duplicate identities", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-cost-jsonl-inventory-"));
+    const root = join(directory, "sessions");
+    const nested = join(root, "legacy", "rollout");
+    try {
+      await mkdir(nested, { recursive: true });
+      const first = join(root, "a.jsonl");
+      const nestedLog = join(nested, "b.JSONL");
+      await writeFile(first, "{}\n");
+      await writeFile(nestedLog, "{}\n");
+      await writeFile(join(root, "ignore.txt"), "{}\n");
+      await link(first, join(root, "duplicate.jsonl"));
+      await symlink(first, join(root, "linked.jsonl"));
+      await symlink(join(root, "legacy"), join(root, "linked-directory"));
+
+      const result = await inventoryNodeCostJsonlFiles({ roots: [root] });
+      expect(result.files.map((file) => file.path)).toEqual([first, nestedLog]);
+      expect(result.files[0]?.identity).toMatchObject({
+        device: expect.any(String),
+        inode: expect.any(String),
+      });
+      expect(result.truncated).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds recursive inventory and rejects a symlink root", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-cost-jsonl-inventory-bounds-"));
+    const root = join(directory, "sessions");
+    const alias = join(directory, "sessions-link");
+    try {
+      await mkdir(root);
+      await writeFile(join(root, "a.jsonl"), "{}\n");
+      await writeFile(join(root, "b.jsonl"), "{}\n");
+      const result = await inventoryNodeCostJsonlFiles({ roots: [root], maxFiles: 1 });
+      expect(result.files).toHaveLength(1);
+      expect(result.truncated).toBe(true);
+
+      await symlink(root, alias);
+      await expect(inventoryNodeCostJsonlFiles({ roots: [alias] })).rejects.toBeInstanceOf(
+        CostJsonlInvalidSourceError,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("resumes a stable Codex file from its committed cursor", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-cost-jsonl-"));
     const path = join(directory, "session.jsonl");
