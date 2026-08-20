@@ -17,8 +17,12 @@ test("selects the exact host-native keyring package", () => {
     fileName: "keyring.win32-x64-msvc.node",
   });
   assert.deepEqual(selectKeyringPackage({ platform: "darwin", arch: "arm64", isMusl: false }), {
-    packageName: "@napi-rs/keyring-darwin-universal",
-    fileName: "keyring.darwin-universal.node",
+    packageName: "@napi-rs/keyring-darwin-arm64",
+    fileName: "keyring.darwin-arm64.node",
+  });
+  assert.deepEqual(selectKeyringPackage({ platform: "darwin", arch: "x64", isMusl: false }), {
+    packageName: "@napi-rs/keyring-darwin-x64",
+    fileName: "keyring.darwin-x64.node",
   });
   assert.deepEqual(selectKeyringPackage({ platform: "linux", arch: "x64", isMusl: true }), {
     packageName: "@napi-rs/keyring-linux-x64-musl",

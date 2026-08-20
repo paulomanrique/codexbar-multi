@@ -27,8 +27,8 @@ export const selectKeyringPackage = (host: SeaHost): SeaNativeAsset => {
     case "darwin":
       if (host.arch === "x64" || host.arch === "arm64")
         return {
-          packageName: "@napi-rs/keyring-darwin-universal",
-          fileName: "keyring.darwin-universal.node",
+          packageName: `@napi-rs/keyring-darwin-${host.arch}`,
+          fileName: `keyring.darwin-${host.arch}.node`,
         };
       break;
     case "linux":

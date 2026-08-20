@@ -2,34 +2,48 @@
   "name": "@codexbar/desktop",
   "version": "0.1.0",
   "private": true,
+  "description": "Cross-platform provider usage desktop shell for CodexBar Multi.",
+  "author": "Paulo Manrique",
+  "desktopName": "codexbar-multi.desktop",
   "type": "module",
   "main": "dist/main/index.js",
   "scripts": {
     "build": "vp build --config vite.main.config.ts && vp build --config vite.preload.config.ts && vp build",
     "dev": "vp dev",
+    "package:host": "node ../../scripts/build-desktop-artifact.ts",
     "typecheck": "tsgo --build --pretty false",
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
+    "@napi-rs/keyring": "catalog:"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring-darwin-arm64": "catalog:",
+    "@napi-rs/keyring-darwin-x64": "catalog:",
+    "@napi-rs/keyring-linux-arm64-gnu": "catalog:",
+    "@napi-rs/keyring-linux-arm64-musl": "catalog:",
+    "@napi-rs/keyring-linux-x64-gnu": "catalog:",
+    "@napi-rs/keyring-linux-x64-musl": "catalog:",
+    "@napi-rs/keyring-win32-arm64-msvc": "catalog:",
+    "@napi-rs/keyring-win32-x64-msvc": "catalog:"
+  },
+  "devDependencies": {
     "@codexbar/contracts": "workspace:*",
     "@codexbar/core": "workspace:*",
     "@codexbar/platform": "workspace:*",
     "@codexbar/plugin-runtime": "workspace:*",
     "@codexbar/providers": "workspace:*",
-    "@napi-rs/keyring": "catalog:",
-    "effect": "catalog:",
-    "react": "catalog:",
-    "react-dom": "catalog:"
-  },
-  "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "effect": "catalog:",
     "electron": "catalog:",
     "electron-builder": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
@@ -38,6 +52,16 @@
     "appId": "com.paulomanrique.codexbar-multi",
     "productName": "CodexBar Multi",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@napi-rs/**/*.node"
+    ],
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "forceCodeSigning": false,
     "protocols": [
       {
         "name": "CodexBar Multi",
@@ -46,6 +70,31 @@
         ]
       }
     ],
-    "publish": null
+    "publish": null,
+    "linux": {
+      "category": "Utility",
+      "icon": "../../Icon.icon/Assets/codexbar.png",
+      "executableName": "codexbar-multi",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage"
+      ]
+    },
+    "win": {
+      "executableName": "codexbar-multi",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "../../Sources/CodexBar/Resources/Icon-classic.icns",
+      "identity": null,
+      "target": [
+        "dmg"
+      ]
+    }
   }
 }
