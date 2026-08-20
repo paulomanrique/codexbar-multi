@@ -10,11 +10,25 @@ import {
   HistoryQueryResultDTO,
   LoginRequestDTO,
   LoginResultDTO,
+  InstallPluginRequestDTO,
+  InstalledPluginDTO,
+  PluginApprovalPreviewDTO,
+  PluginApprovalPreviewRequestDTO,
+  PluginApprovalRequestDTO,
+  PluginListResultDTO,
+  RemovePluginRequestDTO,
+  TestPluginRequestDTO,
+  TestPluginResultDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
   type CostUsageQueryDTO as CostUsageQuery,
   type HistoryQueryDTO as HistoryQuery,
   type LoginRequestDTO as LoginRequest,
+  type InstallPluginRequestDTO as InstallPluginRequest,
+  type PluginApprovalPreviewRequestDTO as PluginApprovalPreviewRequest,
+  type PluginApprovalRequestDTO as PluginApprovalRequest,
+  type RemovePluginRequestDTO as RemovePluginRequest,
+  type TestPluginRequestDTO as TestPluginRequest,
   type RefreshProviderRequestDTO as RefreshProviderRequest,
 } from "@codexbar/contracts";
 
@@ -31,6 +45,17 @@ const decodeLoginRequest = Schema.decodeUnknownPromise(LoginRequestDTO);
 const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
 const decodeRefreshRequest = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
 const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
+const decodeInstallPluginRequest = Schema.decodeUnknownPromise(InstallPluginRequestDTO);
+const decodeInstalledPlugin = Schema.decodeUnknownPromise(InstalledPluginDTO);
+const decodePluginList = Schema.decodeUnknownPromise(PluginListResultDTO);
+const decodePluginApprovalPreviewRequest = Schema.decodeUnknownPromise(
+  PluginApprovalPreviewRequestDTO,
+);
+const decodePluginApprovalRequest = Schema.decodeUnknownPromise(PluginApprovalRequestDTO);
+const decodePluginApprovalPreview = Schema.decodeUnknownPromise(PluginApprovalPreviewDTO);
+const decodeRemovePluginRequest = Schema.decodeUnknownPromise(RemovePluginRequestDTO);
+const decodeTestPluginRequest = Schema.decodeUnknownPromise(TestPluginRequestDTO);
+const decodeTestPluginResult = Schema.decodeUnknownPromise(TestPluginResultDTO);
 const api: CodexBarDesktopApi = Object.freeze({
   getOverview: async () => decodeOverview(await ipcRenderer.invoke(DesktopChannels.overview)),
   getHistory: async (query: HistoryQuery) =>
@@ -63,6 +88,38 @@ const api: CodexBarDesktopApi = Object.freeze({
         DesktopChannels.refreshProvider,
         await decodeRefreshRequest(request),
       ),
+    ),
+  listPlugins: async () => decodePluginList(await ipcRenderer.invoke(DesktopChannels.listPlugins)),
+  installPlugin: async (request: InstallPluginRequest) =>
+    decodeInstalledPlugin(
+      await ipcRenderer.invoke(
+        DesktopChannels.installPlugin,
+        await decodeInstallPluginRequest(request),
+      ),
+    ),
+  previewPluginApproval: async (request: PluginApprovalPreviewRequest) =>
+    decodePluginApprovalPreview(
+      await ipcRenderer.invoke(
+        DesktopChannels.previewPluginApproval,
+        await decodePluginApprovalPreviewRequest(request),
+      ),
+    ),
+  approvePlugin: async (request: PluginApprovalRequest) =>
+    decodePluginApprovalPreview(
+      await ipcRenderer.invoke(
+        DesktopChannels.approvePlugin,
+        await decodePluginApprovalRequest(request),
+      ),
+    ),
+  removePlugin: async (request: RemovePluginRequest) => {
+    await ipcRenderer.invoke(
+      DesktopChannels.removePlugin,
+      await decodeRemovePluginRequest(request),
+    );
+  },
+  testPlugin: async (request: TestPluginRequest) =>
+    decodeTestPluginResult(
+      await ipcRenderer.invoke(DesktopChannels.testPlugin, await decodeTestPluginRequest(request)),
     ),
 });
 

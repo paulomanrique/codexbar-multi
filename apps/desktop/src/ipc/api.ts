@@ -8,6 +8,15 @@ import type {
   HistoryQueryResultDTO,
   LoginRequestDTO,
   LoginResultDTO,
+  InstallPluginRequestDTO,
+  InstalledPluginDTO,
+  PluginApprovalPreviewDTO,
+  PluginApprovalPreviewRequestDTO,
+  PluginApprovalRequestDTO,
+  PluginListResultDTO,
+  RemovePluginRequestDTO,
+  TestPluginRequestDTO,
+  TestPluginResultDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
 } from "@codexbar/contracts";
@@ -22,6 +31,12 @@ export const DesktopChannels = Object.freeze({
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
   refreshProvider: "codexbar-multi:refresh-provider",
+  listPlugins: "codexbar-multi:list-plugins",
+  installPlugin: "codexbar-multi:install-plugin",
+  previewPluginApproval: "codexbar-multi:preview-plugin-approval",
+  approvePlugin: "codexbar-multi:approve-plugin",
+  removePlugin: "codexbar-multi:remove-plugin",
+  testPlugin: "codexbar-multi:test-plugin",
 });
 
 export interface CodexBarDesktopApi {
@@ -36,4 +51,12 @@ export interface CodexBarDesktopApi {
   readonly refreshProvider: (
     request: RefreshProviderRequestDTO,
   ) => Promise<RefreshProviderResultDTO>;
+  readonly listPlugins: () => Promise<PluginListResultDTO>;
+  readonly installPlugin: (request: InstallPluginRequestDTO) => Promise<InstalledPluginDTO>;
+  readonly previewPluginApproval: (
+    request: PluginApprovalPreviewRequestDTO,
+  ) => Promise<PluginApprovalPreviewDTO>;
+  readonly approvePlugin: (request: PluginApprovalRequestDTO) => Promise<PluginApprovalPreviewDTO>;
+  readonly removePlugin: (request: RemovePluginRequestDTO) => Promise<void>;
+  readonly testPlugin: (request: TestPluginRequestDTO) => Promise<TestPluginResultDTO>;
 }

@@ -7,6 +7,15 @@ import {
   CostUsageQueryDTO,
   CostUsageQueryResultDTO,
   LoginRequestDTO,
+  InstallPluginRequestDTO,
+  InstalledPluginDTO,
+  PluginApprovalPreviewDTO,
+  PluginApprovalPreviewRequestDTO,
+  PluginApprovalRequestDTO,
+  PluginListResultDTO,
+  RemovePluginRequestDTO,
+  TestPluginRequestDTO,
+  TestPluginResultDTO,
   DashboardSnapshotDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
@@ -42,6 +51,8 @@ import { DesktopChannels } from "../ipc/api.js";
 import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./browser-session.js";
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
+import { DesktopPluginManager } from "./plugin-manager.js";
+import { makeElectronPluginSandbox } from "./plugin-sandbox-process.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 let window: BrowserWindow | undefined;
@@ -49,6 +60,8 @@ let tray: Tray | undefined;
 let persistence: NodeSqliteWorkerPersistence | undefined;
 let providerRuntime: ProviderRuntimeService | undefined;
 let desktopConfig: PersistedCodexBarConfig | undefined;
+let pluginManager: DesktopPluginManager | undefined;
+let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
 const providerClock = makeSystemClock();
 let storageClosing = false;
 
@@ -61,6 +74,10 @@ const activePersistence = (): NodeSqliteWorkerPersistence => {
 const activeProviderRuntime = (): ProviderRuntimeService => {
   if (providerRuntime === undefined) throw new Error("Provider runtime is not ready");
   return providerRuntime;
+};
+const activePluginManager = (): DesktopPluginManager => {
+  if (pluginManager === undefined) throw new Error("Plugin manager is not ready");
+  return pluginManager;
 };
 
 const overviewProviders = () => {
@@ -143,6 +160,15 @@ void app
       http: makeFetchHttpTransport(),
       clock: providerClock,
     });
+    pluginSandbox = makeElectronPluginSandbox();
+    pluginManager = new DesktopPluginManager({
+      storageRoot: app.getPath("userData"),
+      sandbox: pluginSandbox,
+      reservedIds: new Set(PROVIDERS.map((provider) => provider.id)),
+      readSecret: (pluginId, key) =>
+        Effect.runPromise(credentials.read(`plugin/${pluginId}/secret/${key}`)),
+      log: (pluginId, message) => console.info(`[plugin:${pluginId}]`, message),
+    });
     const decodeVoid = Schema.decodeUnknownPromise(Schema.Void);
     const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
     const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -155,6 +181,17 @@ void app
     const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
+    const decodeInstallPlugin = Schema.decodeUnknownPromise(InstallPluginRequestDTO);
+    const decodeInstalledPlugin = Schema.decodeUnknownPromise(InstalledPluginDTO);
+    const decodePluginList = Schema.decodeUnknownPromise(PluginListResultDTO);
+    const decodePluginApprovalPreviewRequest = Schema.decodeUnknownPromise(
+      PluginApprovalPreviewRequestDTO,
+    );
+    const decodePluginApprovalRequest = Schema.decodeUnknownPromise(PluginApprovalRequestDTO);
+    const decodePluginApprovalPreview = Schema.decodeUnknownPromise(PluginApprovalPreviewDTO);
+    const decodeRemovePlugin = Schema.decodeUnknownPromise(RemovePluginRequestDTO);
+    const decodeTestPlugin = Schema.decodeUnknownPromise(TestPluginRequestDTO);
+    const decodeTestPluginResult = Schema.decodeUnknownPromise(TestPluginResultDTO);
     ipcMain.handle(DesktopChannels.overview, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         await decodeVoid(input);
@@ -224,6 +261,48 @@ void app
         });
       }),
     );
+    ipcMain.handle(DesktopChannels.listPlugins, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        return decodePluginList(await activePluginManager().list());
+      }),
+    );
+    ipcMain.handle(DesktopChannels.installPlugin, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeInstallPlugin(input);
+        return decodeInstalledPlugin(
+          await activePluginManager().install(request.source, request.language),
+        );
+      }),
+    );
+    ipcMain.handle(DesktopChannels.previewPluginApproval, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodePluginApprovalPreviewRequest(input);
+        return decodePluginApprovalPreview(
+          await activePluginManager().previewApproval(request.pluginId, request.settings),
+        );
+      }),
+    );
+    ipcMain.handle(DesktopChannels.approvePlugin, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodePluginApprovalPreview(
+          await activePluginManager().approve(await decodePluginApprovalRequest(input)),
+        ),
+      ),
+    );
+    ipcMain.handle(DesktopChannels.removePlugin, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeRemovePlugin(input);
+        await activePluginManager().remove(request.pluginId);
+        return decodeVoid(undefined);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.testPlugin, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeTestPlugin(input);
+        return decodeTestPluginResult(await activePluginManager().test(request.pluginId));
+      }),
+    );
     window = createWindow();
     tray = new Tray(trayImage());
     tray.setToolTip("CodexBar Multi");
@@ -239,6 +318,8 @@ void app
   });
 
 app.on("before-quit", (event) => {
+  pluginSandbox?.terminate();
+  pluginSandbox = undefined;
   if (persistence === undefined || storageClosing) return;
   event.preventDefault();
   storageClosing = true;

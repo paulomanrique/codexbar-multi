@@ -10,6 +10,7 @@ export type PluginErrorKind =
   | "cancelled"
   | "terminated"
   | "approval-drift"
+  | "approval-required"
   | "response-too-large";
 
 export class PluginRuntimeError extends Error {

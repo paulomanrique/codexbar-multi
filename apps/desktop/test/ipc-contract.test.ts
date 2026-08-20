@@ -4,7 +4,10 @@ import {
   CostUsageQueryDTO,
   CostUsageRecordDTO,
   HistoryQueryDTO,
+  InstallPluginRequestDTO,
   LoginRequestDTO,
+  PluginApprovalRequestDTO,
+  RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
 } from "@codexbar/contracts";
 
@@ -64,5 +67,29 @@ describe("desktop IPC boundary", () => {
     const channels = Object.values(DesktopChannels);
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
+  });
+
+  it("bounds plugin lifecycle input and never accepts a filesystem path", () => {
+    const decodeInstall = Schema.decodeUnknownSync(InstallPluginRequestDTO);
+    const decodeApproval = Schema.decodeUnknownSync(PluginApprovalRequestDTO);
+    const decodeRemove = Schema.decodeUnknownSync(RemovePluginRequestDTO);
+    expect(decodeInstall({ source: "defineProvider({})", language: "javascript" })).toEqual({
+      source: "defineProvider({})",
+      language: "javascript",
+    });
+    expect(() => decodeInstall({ path: "/tmp/plugin.js", language: "javascript" })).toThrow();
+    expect(() =>
+      decodeInstall({ source: "x".repeat(1_048_577), language: "javascript" }),
+    ).toThrow();
+    expect(() => decodeRemove({ pluginId: "../escape" })).toThrow();
+    expect(() =>
+      decodeApproval({
+        pluginId: "fixture-plugin",
+        settings: Object.fromEntries(
+          Array.from({ length: 33 }, (_, index) => [`KEY${index}`, "value"]),
+        ),
+        typedConfirmations: {},
+      }),
+    ).toThrow();
   });
 });
