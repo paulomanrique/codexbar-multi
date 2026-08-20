@@ -188,6 +188,56 @@ describe("CLI user plugins", () => {
     expect(fetches).toBe(0);
   });
 
+  it("permits an approved cookie plugin only when the host explicitly supports exported credentials", async () => {
+    const output = capture();
+    const exported: CLIPluginStore = {
+      supportsExportedBrowserCookies: true,
+      list: async () => ({
+        plugins: [{ ...plugin, capabilities: ["browser-cookies"] }],
+        invalidFiles: [],
+      }),
+      fetch: async () => ({
+        plugin: { ...plugin, capabilities: ["browser-cookies"] },
+        snapshot,
+      }),
+      test: async () => ({
+        plugin: { ...plugin, capabilities: ["browser-cookies"] },
+        snapshot,
+      }),
+    };
+    expect(
+      (
+        await runPlugins(
+          ["test", "sample-plugin", "--json"],
+          output.io,
+          runtime({ plugins: exported }),
+        )
+      ).exitCode,
+    ).toBe(0);
+  });
+
+  it("bounds secret capability input before a store can receive it", async () => {
+    let wrote = false;
+    const output = capture();
+    const store: CLIPluginStore = {
+      list: async () => ({ plugins: [plugin], invalidFiles: [] }),
+      fetch: async () => ({ plugin, snapshot }),
+      setSecret: async () => {
+        wrote = true;
+      },
+    };
+    expect(
+      (
+        await runPlugins(
+          ["secret", "set", "sample-plugin", "TOKEN", "--json"],
+          { ...output.io, readSecret: async () => "x".repeat(64 * 1024 + 1) },
+          runtime({ plugins: store }),
+        )
+      ).exitCode,
+    ).toBe(69);
+    expect(wrote).toBe(false);
+  });
+
   it("renders only bounded usage fields and never identity or detail values", async () => {
     const output = capture();
     expect(
@@ -275,5 +325,128 @@ describe("CLI command dispatch", () => {
     expect(
       (await runCLI({ argv: ["plugins", "list"], io: plugins.io, runtime: runtime() })).exitCode,
     ).toBe(69);
+  });
+
+  it("routes lifecycle operations through explicit host capabilities without exposing settings", async () => {
+    const calls: string[] = [];
+    const lifecycle: CLIPluginStore = {
+      list: async () => ({ plugins: [plugin], invalidFiles: [] }),
+      fetch: async () => ({ plugin, snapshot }),
+      install: async (path) => {
+        calls.push(`install:${path}`);
+        return plugin;
+      },
+      previewApproval: async (id, settings) => {
+        calls.push(`preview:${id}:${settings.ENDPOINT}`);
+        return {
+          pluginId: id,
+          origins: ["https://api.example.test"],
+          authMode: "none",
+          secretNames: [],
+          capabilities: [],
+          cookieDomains: [],
+          typedConfirmationOrigins: [],
+        };
+      },
+      approve: async (id, settings, confirmations) => {
+        calls.push(`approve:${id}:${settings.ENDPOINT}:${confirmations["http://127.0.0.1"]}`);
+        return {
+          pluginId: id,
+          origins: ["http://127.0.0.1"],
+          authMode: "none",
+          secretNames: ["TOKEN"],
+          capabilities: [],
+          cookieDomains: [],
+          typedConfirmationOrigins: ["http://127.0.0.1"],
+        };
+      },
+      remove: async (id) => {
+        calls.push(`remove:${id}`);
+      },
+      setSecret: async (id, key, value) => {
+        expect(value).toBe("fixture-secret");
+        calls.push(`set-secret:${id}:${key}`);
+      },
+      removeSecret: async (id, key) => {
+        calls.push(`remove-secret:${id}:${key}`);
+      },
+    };
+    const install = capture();
+    expect(
+      (
+        await runPlugins(
+          ["install", "/tmp/fixture.js", "--json"],
+          install.io,
+          runtime({ plugins: lifecycle }),
+        )
+      ).exitCode,
+    ).toBe(0);
+    expect(install.stdout[0]).not.toContain("fixture-secret");
+    const preview = capture();
+    expect(
+      (
+        await runPlugins(
+          ["preview", "sample-plugin", "--setting", "ENDPOINT=https://api.example.test", "--json"],
+          preview.io,
+          runtime({ plugins: lifecycle }),
+        )
+      ).exitCode,
+    ).toBe(0);
+    const approve = capture();
+    expect(
+      (
+        await runPlugins(
+          [
+            "approve",
+            "sample-plugin",
+            "--setting=ENDPOINT=http://127.0.0.1",
+            "--confirm=http://127.0.0.1=http://127.0.0.1",
+            "--json",
+          ],
+          approve.io,
+          runtime({ plugins: lifecycle }),
+        )
+      ).exitCode,
+    ).toBe(0);
+    const remove = capture();
+    expect(
+      (
+        await runPlugins(
+          ["remove", "sample-plugin", "--json"],
+          remove.io,
+          runtime({ plugins: lifecycle }),
+        )
+      ).exitCode,
+    ).toBe(0);
+    const setSecret = capture();
+    expect(
+      (
+        await runPlugins(
+          ["secret", "set", "sample-plugin", "TOKEN", "--json"],
+          { ...setSecret.io, readSecret: async () => "fixture-secret" },
+          runtime({ plugins: lifecycle }),
+        )
+      ).exitCode,
+    ).toBe(0);
+    expect(setSecret.stdout[0]).not.toContain("fixture-secret");
+    const removeSecret = capture();
+    expect(
+      (
+        await runPlugins(
+          ["secret", "remove", "sample-plugin", "TOKEN", "--json"],
+          removeSecret.io,
+          runtime({ plugins: lifecycle }),
+        )
+      ).exitCode,
+    ).toBe(0);
+    expect(calls).toEqual([
+      "install:/tmp/fixture.js",
+      "preview:sample-plugin:https://api.example.test",
+      "approve:sample-plugin:http://127.0.0.1:http://127.0.0.1",
+      "remove:sample-plugin",
+      "set-secret:sample-plugin:TOKEN",
+      "remove-secret:sample-plugin:TOKEN",
+    ]);
+    expect(approve.stdout[0]).not.toContain("TOKEN=");
   });
 });

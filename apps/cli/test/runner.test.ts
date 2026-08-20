@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ClassifiedFetchFailure, type ProviderFetchOutcome } from "@codexbar/core";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
-import { CLIExitCode, runCLI, type CLIIO, type CLIProviderRuntime } from "../src/runner.ts";
+import {
+  CLIExitCode,
+  readNonInteractiveSecret,
+  runCLI,
+  type CLIIO,
+  type CLIProviderRuntime,
+} from "../src/runner.ts";
 import { encodeToon } from "../src/toon.ts";
 
 const snapshot: UsageSnapshot = {
@@ -54,6 +60,17 @@ const capture = (): {
 };
 
 describe("CodexBar Multi CLI runner", () => {
+  it("accepts bounded non-interactive secret input and fails closed for terminals or oversized input", async () => {
+    async function* input(value: string): AsyncGenerator<string> {
+      yield value;
+    }
+    await expect(readNonInteractiveSecret(input("value\r\n"), false)).resolves.toBe("value");
+    await expect(readNonInteractiveSecret(input("value"), true)).resolves.toBeUndefined();
+    await expect(
+      readNonInteractiveSecret(input("x".repeat(64 * 1024 + 1)), false),
+    ).resolves.toBeUndefined();
+  });
+
   it("prints top-level help without initializing a provider request", async () => {
     const output = capture();
     const result = await runCLI({ argv: ["--help"], io: output.io, runtime: runtime() });

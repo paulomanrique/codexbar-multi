@@ -37,6 +37,11 @@ import { runHooks, type HookProcessRequest } from "./hooks.ts";
 import { runSessions, runSessionsFocus } from "./sessions.ts";
 import { runCookie, type CLICookieStore } from "./cookie.ts";
 import { runPlugins, type CLIPluginStore } from "./plugins.ts";
+import { NodeCLIPluginStore, pluginSecretKey } from "./node-plugin-store.ts";
+import {
+  decodePluginBrowserCredential,
+  pluginBrowserCredentialKey,
+} from "./plugin-browser-session.ts";
 import { runServe } from "./serve.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
@@ -58,7 +63,32 @@ export type CLIOutputFormat = "text" | "json" | "toon";
 export interface CLIIO {
   readonly stdout: (line: string) => void;
   readonly stderr: (line: string) => void;
+  /** Secret material is accepted only from a non-interactive host input channel. */
+  readonly readSecret?: () => Promise<string | undefined>;
 }
+
+/** Bounded stdin-only secret reader. Terminal sessions fail closed by design. */
+export const readNonInteractiveSecret = async (
+  input: AsyncIterable<Uint8Array | string>,
+  isTTY: boolean | undefined,
+): Promise<string | undefined> => {
+  if (isTTY === true) return undefined;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of input) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.byteLength;
+      if (size > 64 * 1024) return undefined;
+      chunks.push(bytes);
+    }
+    let value = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+    while (value.endsWith("\n") || value.endsWith("\r")) value = value.slice(0, -1);
+    return value === "" ? undefined : value;
+  } catch {
+    return undefined;
+  }
+};
 
 export interface CLIProviderDescriptor {
   readonly id: ProviderId;
@@ -81,6 +111,8 @@ export interface CLIProviderRuntime {
   readonly runHook?: (request: HookProcessRequest) => Promise<{ readonly stdout: string }>;
   readonly cookies?: CLICookieStore;
   readonly plugins?: CLIPluginStore;
+  /** Optional host lifecycle cleanup; the renderer never receives this capability. */
+  readonly dispose?: () => void | Promise<void>;
   readonly now?: () => number;
 }
 
@@ -637,6 +669,32 @@ export const makeNodeCLIProviderRuntime = (
       },
     },
   });
+  // SEA embeds the main CLI but not a disposable plugin child.  Until the SEA
+  // packager extracts that audited asset, user plugins fail closed rather than
+  // falling back to in-process or unrestricted execution.
+  const plugins =
+    process.versions.sea === undefined
+      ? new NodeCLIPluginStore({
+          storageRoot: dirname(configPath),
+          reservedIds: new Set(PROVIDERS.map(({ id }) => id)),
+          readSecret: (pluginId, key) =>
+            Effect.runPromise(credentials.read(pluginSecretKey(pluginId, key))),
+          writeSecret: (pluginId, key, value) =>
+            Effect.runPromise(credentials.write(pluginSecretKey(pluginId, key), value)),
+          removeSecret: (pluginId, key) =>
+            Effect.runPromise(credentials.remove(pluginSecretKey(pluginId, key))),
+          readBrowserCookie: async (pluginId, domain) => {
+            const raw = await Effect.runPromise(
+              credentials.read(pluginBrowserCredentialKey(pluginId, domain)),
+            );
+            return raw === undefined
+              ? undefined
+              : decodePluginBrowserCredential(raw, pluginId, domain);
+          },
+          removeBrowserCookie: (pluginId, domain) =>
+            Effect.runPromise(credentials.remove(pluginBrowserCredentialKey(pluginId, domain))),
+        })
+      : undefined;
   return {
     providers: PROVIDERS.map(({ id, name, status, isPrimaryProvider }) => ({
       id,
@@ -679,6 +737,8 @@ export const makeNodeCLIProviderRuntime = (
       // delete here; never reinterpret `cache --cost` as history deletion.
       clearCost: async () => ({ cleared: 0 }),
     },
+    ...(plugins === undefined ? {} : { plugins }),
+    dispose: () => plugins?.dispose(),
     runHook: async (request) => {
       const input = new TextEncoder().encode(request.input);
       if (input.byteLength > 4_096) throw new Error("hook payload too large");
@@ -701,4 +761,5 @@ export const makeNodeCLIProviderRuntime = (
 export const nodeIO: CLIIO = {
   stdout: (line) => process.stdout.write(`${line}\n`),
   stderr: (line) => process.stderr.write(`${line}\n`),
+  readSecret: () => readNonInteractiveSecret(process.stdin, process.stdin.isTTY),
 };

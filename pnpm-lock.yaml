@@ -113,6 +113,9 @@ importers:
       '@codexbar/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@codexbar/plugin-runtime':
+        specifier: workspace:*
+        version: link:../../packages/plugin-runtime
       '@codexbar/providers':
         specifier: workspace:*
         version: link:../../packages/providers

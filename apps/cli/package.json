@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "build": "vp build",
-    "dev": "node --experimental-strip-types src/index.ts",
+    "dev": "pnpm run build && node dist/index.js",
     "typecheck": "tsgo --build --pretty false",
     "test": "vp test run --passWithNoTests"
   },
@@ -16,6 +16,7 @@
     "@codexbar/contracts": "workspace:*",
     "@codexbar/core": "workspace:*",
     "@codexbar/platform": "workspace:*",
+    "@codexbar/plugin-runtime": "workspace:*",
     "@codexbar/providers": "workspace:*",
     "@napi-rs/keyring": "catalog:",
     "effect": "catalog:"

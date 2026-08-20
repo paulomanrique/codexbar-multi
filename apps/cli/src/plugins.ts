@@ -21,6 +21,16 @@ export interface CLIPluginFetchResult {
   readonly snapshot: UsageSnapshot;
 }
 
+export interface CLIPluginApprovalPreview {
+  readonly pluginId: string;
+  readonly origins: readonly string[];
+  readonly authMode: string;
+  readonly secretNames: readonly string[];
+  readonly capabilities: readonly string[];
+  readonly cookieDomains: readonly string[];
+  readonly typedConfirmationOrigins: readonly string[];
+}
+
 /** Host owns discovery, approval storage, and QuickJS execution. CLI only formats safe DTOs. */
 export interface CLIPluginStore {
   readonly list: () => Promise<{
@@ -28,14 +38,43 @@ export interface CLIPluginStore {
     readonly invalidFiles: readonly CLIInvalidPluginFile[];
   }>;
   readonly fetch: (pluginId: string) => Promise<CLIPluginFetchResult>;
+  /** True only when the host validates desktop-exported, per-plugin cookie credentials. */
+  readonly supportsExportedBrowserCookies?: boolean;
+  readonly install?: (sourcePath: string) => Promise<CLIInstalledPlugin>;
+  readonly previewApproval?: (
+    pluginId: string,
+    settings: Readonly<Record<string, string>>,
+  ) => Promise<CLIPluginApprovalPreview>;
+  readonly approve?: (
+    pluginId: string,
+    settings: Readonly<Record<string, string>>,
+    typedConfirmations: Readonly<Record<string, string>>,
+  ) => Promise<CLIPluginApprovalPreview>;
+  readonly test?: (pluginId: string) => Promise<CLIPluginFetchResult>;
+  readonly remove?: (pluginId: string) => Promise<void>;
+  readonly setSecret?: (pluginId: string, key: string, value: string) => Promise<void>;
+  readonly removeSecret?: (pluginId: string, key: string) => Promise<void>;
 }
 
 type PluginRuntime = CLIProviderRuntime & { readonly plugins?: CLIPluginStore };
 type PluginFormat = "text" | "json";
 
 type ParsedPluginArguments = {
-  readonly action: "list" | "fetch";
+  readonly action:
+    | "list"
+    | "fetch"
+    | "install"
+    | "preview"
+    | "approve"
+    | "test"
+    | "remove"
+    | "set-secret"
+    | "remove-secret";
   readonly id?: string;
+  readonly sourcePath?: string;
+  readonly secretKey?: string;
+  readonly settings: Readonly<Record<string, string>>;
+  readonly typedConfirmations: Readonly<Record<string, string>>;
   readonly format: PluginFormat;
   readonly pretty: boolean;
 };
@@ -44,7 +83,13 @@ type PluginParseResult =
   | { readonly ok: false; readonly message: string };
 
 const terminalText = (value: string, maximum = 512): string => {
-  const normalized = value.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
+  const normalized = [...value]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 31 || code === 127 ? " " : character;
+    })
+    .join("")
+    .trim();
   return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum - 3)}...`;
 };
 
@@ -62,6 +107,8 @@ const parsePluginArguments = (arguments_: readonly string[]): PluginParseResult 
   const positional: string[] = [];
   let format: PluginFormat = "text";
   let pretty = false;
+  const settings: Record<string, string> = {};
+  const typedConfirmations: Record<string, string> = {};
   const seen = new Set<string>();
   const duplicate = (name: string): PluginParseResult => ({
     ok: false,
@@ -89,6 +136,26 @@ const parsePluginArguments = (arguments_: readonly string[]): PluginParseResult 
       pretty = true;
       continue;
     }
+    if (
+      argument === "--setting" ||
+      argument.startsWith("--setting=") ||
+      argument === "--confirm" ||
+      argument.startsWith("--confirm=")
+    ) {
+      const isConfirmation = argument === "--confirm" || argument.startsWith("--confirm=");
+      const name = isConfirmation ? "--confirm" : "--setting";
+      const value = argument === name ? arguments_[index + 1] : argument.slice(`${name}=`.length);
+      if (value === undefined || value === "" || value.startsWith("-")) return missing(name);
+      if (argument === name) index += 1;
+      const separator = value.indexOf("=");
+      if (separator <= 0 || separator === value.length - 1)
+        return { ok: false, message: `${name} expects KEY=VALUE` };
+      const key = value.slice(0, separator);
+      const settingValue = value.slice(separator + 1);
+      if (isConfirmation) typedConfirmations[key] = settingValue;
+      else settings[key] = settingValue;
+      continue;
+    }
     if (argument === "--format" || argument.startsWith("--format=")) {
       if (seen.has("--format")) return duplicate("--format");
       seen.add("--format");
@@ -103,18 +170,62 @@ const parsePluginArguments = (arguments_: readonly string[]): PluginParseResult 
     }
     return { ok: false, message: `Unknown option ${argument}` };
   }
-  const action = positional[0];
-  if (action !== "list" && action !== "fetch")
-    return { ok: false, message: "plugins accepts list or fetch <id>" };
+  const leadingAction = positional[0];
+  const action =
+    leadingAction === "secret" && positional[1] === "set"
+      ? "set-secret"
+      : leadingAction === "secret" && positional[1] === "remove"
+        ? "remove-secret"
+        : leadingAction;
+  if (
+    action !== "list" &&
+    action !== "fetch" &&
+    action !== "install" &&
+    action !== "preview" &&
+    action !== "approve" &&
+    action !== "test" &&
+    action !== "remove" &&
+    action !== "set-secret" &&
+    action !== "remove-secret"
+  )
+    return {
+      ok: false,
+      message:
+        "plugins accepts list, install <file>, preview <id>, approve <id>, test <id>, fetch <id>, remove <id>, or secret set|remove <id> <key>",
+    };
   if (action === "list" && positional.length !== 1)
     return { ok: false, message: "plugins list accepts no positional arguments" };
-  if (action === "fetch" && (positional.length !== 2 || positional[1] === ""))
-    return { ok: false, message: "plugins fetch requires <id>" };
+  if (action === "install" && (positional.length !== 2 || positional[1] === ""))
+    return { ok: false, message: "plugins install requires <file>" };
+  if (
+    (action === "fetch" ||
+      action === "preview" ||
+      action === "approve" ||
+      action === "test" ||
+      action === "remove") &&
+    (positional.length !== 2 || positional[1] === "")
+  )
+    return { ok: false, message: `plugins ${action} requires <id>` };
+  if (
+    (action === "set-secret" || action === "remove-secret") &&
+    (positional.length !== 4 || positional[2] === "" || positional[3] === "")
+  )
+    return { ok: false, message: "plugins secret set|remove requires <id> <key>" };
+  if (action !== "preview" && action !== "approve" && Object.keys(settings).length > 0)
+    return { ok: false, message: "--setting is only valid with plugins preview or approve" };
+  if (action !== "approve" && Object.keys(typedConfirmations).length > 0)
+    return { ok: false, message: "--confirm is only valid with plugins approve" };
   return {
     ok: true,
     value: {
       action,
       ...(positional[1] === undefined ? {} : { id: positional[1] }),
+      ...(action === "install" && positional[1] !== undefined ? { sourcePath: positional[1] } : {}),
+      ...(action === "set-secret" || action === "remove-secret"
+        ? { id: positional[2], secretKey: positional[3] }
+        : {}),
+      settings,
+      typedConfirmations,
       format,
       pretty,
     },
@@ -167,6 +278,44 @@ const emitUnavailable = (io: CLIIO, format: PluginFormat, pretty: boolean): CLIC
   return { exitCode: 69 };
 };
 
+const emitLifecycleUnavailable = (
+  io: CLIIO,
+  format: PluginFormat,
+  pretty: boolean,
+  action: string,
+): CLICommandResult => {
+  const message = `Plugin ${action} is unavailable; this host does not provide a secure plugin lifecycle adapter`;
+  if (format === "json")
+    io.stdout(JSON.stringify({ error: message }, undefined, pretty ? 2 : undefined));
+  else io.stderr(`Error: ${message}`);
+  return { exitCode: 69 };
+};
+
+const safeApprovalPreview = (value: CLIPluginApprovalPreview): Record<string, unknown> => ({
+  plugin: terminalText(value.pluginId, 128),
+  origins: value.origins.slice(0, 16).map((origin) => terminalText(origin, 512)),
+  authMode: terminalText(value.authMode, 64),
+  secretNames: value.secretNames.slice(0, 32).map((name) => terminalText(name, 64)),
+  capabilities: value.capabilities.slice(0, 8).map((name) => terminalText(name, 64)),
+  cookieDomains: value.cookieDomains.slice(0, 64).map((domain) => terminalText(domain, 253)),
+  typedConfirmationOrigins: value.typedConfirmationOrigins
+    .slice(0, 16)
+    .map((origin) => terminalText(origin, 512)),
+});
+
+const lifecycleFailure = (
+  io: CLIIO,
+  format: PluginFormat,
+  pretty: boolean,
+  action: string,
+): CLICommandResult => {
+  const message = `Plugin ${action} failed`;
+  if (format === "json")
+    io.stdout(JSON.stringify({ error: message }, undefined, pretty ? 2 : undefined));
+  else io.stderr(`Error: ${message}`);
+  return { exitCode: 1 };
+};
+
 export const runPlugins = async (
   arguments_: readonly string[],
   io: CLIIO,
@@ -182,8 +331,95 @@ export const runPlugins = async (
     else io.stderr(`Error: ${parsed.message}`);
     return { exitCode: 64 };
   }
-  const { action, id, format, pretty } = parsed.value;
+  const { action, id, sourcePath, secretKey, settings, typedConfirmations, format, pretty } =
+    parsed.value;
   if (runtime.plugins === undefined) return emitUnavailable(io, format, pretty);
+  if (action === "set-secret" || action === "remove-secret") {
+    const operation =
+      action === "set-secret" ? runtime.plugins.setSecret : runtime.plugins.removeSecret;
+    if (operation === undefined)
+      return emitLifecycleUnavailable(io, format, pretty, "secret configuration");
+    try {
+      if (action === "set-secret") {
+        const value = await io.readSecret?.();
+        if (
+          value === undefined ||
+          value === "" ||
+          new TextEncoder().encode(value).byteLength > 64 * 1024
+        )
+          return emitLifecycleUnavailable(io, format, pretty, "secret input");
+        await runtime.plugins.setSecret!(id as string, secretKey as string, value);
+      } else await runtime.plugins.removeSecret!(id as string, secretKey as string);
+      const safe = {
+        plugin: terminalText(id as string, 128),
+        key: terminalText(secretKey as string, 64),
+        configured: action === "set-secret",
+      };
+      if (format === "json") io.stdout(JSON.stringify(safe, undefined, pretty ? 2 : undefined));
+      else io.stdout(`${safe.plugin}\t${safe.key}\t${safe.configured ? "configured" : "removed"}`);
+      return { exitCode: 0 };
+    } catch {
+      return lifecycleFailure(io, format, pretty, "secret configuration");
+    }
+  }
+  if (action === "install") {
+    if (runtime.plugins.install === undefined)
+      return emitLifecycleUnavailable(io, format, pretty, action);
+    try {
+      const plugin = safePluginDescriptor(await runtime.plugins.install(sourcePath as string));
+      if (format === "json")
+        io.stdout(JSON.stringify({ plugin }, undefined, pretty ? 2 : undefined));
+      else io.stdout(`${plugin.id}\t${plugin.name}\tinstalled`);
+      return { exitCode: 0 };
+    } catch {
+      return lifecycleFailure(io, format, pretty, action);
+    }
+  }
+  if (action === "preview" || action === "approve") {
+    const operation =
+      action === "preview" ? runtime.plugins.previewApproval : runtime.plugins.approve;
+    if (operation === undefined) return emitLifecycleUnavailable(io, format, pretty, action);
+    try {
+      const result =
+        action === "preview"
+          ? await runtime.plugins.previewApproval!(id as string, settings)
+          : await runtime.plugins.approve!(id as string, settings, typedConfirmations);
+      const safe = safeApprovalPreview(result);
+      if (format === "json") io.stdout(JSON.stringify(safe, undefined, pretty ? 2 : undefined));
+      else {
+        const typed = safe.typedConfirmationOrigins as readonly string[];
+        io.stdout(
+          [
+            `${safe.plugin}`,
+            `Origins: ${(safe.origins as readonly string[]).join(", ") || "<none>"}`,
+            ...(typed.length === 0 ? [] : [`Typed confirmation: ${typed.join(", ")}`]),
+          ].join("\n"),
+        );
+      }
+      return { exitCode: 0 };
+    } catch {
+      return lifecycleFailure(io, format, pretty, action);
+    }
+  }
+  if (action === "remove") {
+    if (runtime.plugins.remove === undefined)
+      return emitLifecycleUnavailable(io, format, pretty, action);
+    try {
+      await runtime.plugins.remove(id as string);
+      if (format === "json")
+        io.stdout(
+          JSON.stringify(
+            { plugin: terminalText(id as string, 128), removed: true },
+            undefined,
+            pretty ? 2 : undefined,
+          ),
+        );
+      else io.stdout(`${terminalText(id as string, 128)}\tremoved`);
+      return { exitCode: 0 };
+    } catch {
+      return lifecycleFailure(io, format, pretty, action);
+    }
+  }
   if (action === "list") {
     let result: Awaited<ReturnType<CLIPluginStore["list"]>>;
     try {
@@ -243,7 +479,10 @@ export const runPlugins = async (
     else io.stderr(`Error: ${message}`);
     return { exitCode: 1 };
   }
-  if (plugin.capabilities.includes("browser-cookies")) {
+  if (
+    plugin.capabilities.includes("browser-cookies") &&
+    runtime.plugins.supportsExportedBrowserCookies !== true
+  ) {
     const message = "Browser-cookie plugins are unavailable in the CLI";
     if (format === "json") io.stdout(JSON.stringify({ plugin: pluginId, error: message }));
     else io.stderr(`Error: ${message}`);
@@ -256,11 +495,14 @@ export const runPlugins = async (
     return { exitCode: 69 };
   }
   try {
-    const result = await runtime.plugins.fetch(pluginId);
+    const result = await (action === "test" && runtime.plugins.test !== undefined
+      ? runtime.plugins.test(pluginId)
+      : runtime.plugins.fetch(pluginId));
     if (
       result.plugin.id !== pluginId ||
       result.plugin.approvalStatus !== "approved" ||
-      result.plugin.capabilities.includes("browser-cookies")
+      (result.plugin.capabilities.includes("browser-cookies") &&
+        runtime.plugins.supportsExportedBrowserCookies !== true)
     ) {
       throw new Error("plugin approval binding changed during execution");
     }
