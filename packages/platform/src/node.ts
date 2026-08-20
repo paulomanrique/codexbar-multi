@@ -732,6 +732,12 @@ export const makeEnvironmentProviderSettings = (
     ),
 });
 
+export {
+  accountIdFromJwt,
+  discoverNodeCodexCredential,
+  type NodeCodexCredential,
+} from "./node-codex-credential.ts";
+
 /** Only an allowlisted, encrypted cookie header is released to a declared provider domain. */
 export const makeCredentialBrowserSessions = (
   credentials: CredentialStoreService,

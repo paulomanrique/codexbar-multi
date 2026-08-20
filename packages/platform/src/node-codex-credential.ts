@@ -1,0 +1,77 @@
+import { lstatSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export interface NodeCodexCredential {
+  readonly accessToken?: string;
+  readonly accountId?: string;
+  readonly personalAccessToken?: string;
+}
+
+export function accountIdFromJwt(token: string | undefined): string | undefined {
+  if (token === undefined) return undefined;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+    const auth = payload["https://api.openai.com/auth"];
+    if (typeof auth === "object" && auth !== null && "chatgpt_account_id" in auth) {
+      const accountId = auth.chatgpt_account_id;
+      return typeof accountId === "string" && accountId !== "" ? accountId : undefined;
+    }
+    return typeof payload.chatgpt_account_id === "string" ? payload.chatgpt_account_id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function discoverNodeCodexCredential(
+  options: {
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+    readonly homeDirectory?: string;
+    readonly read?: (path: string) => string;
+  } = {},
+): NodeCodexCredential {
+  const environment = options.environment ?? process.env;
+  const authPath = join(
+    environment.CODEX_HOME ?? join(options.homeDirectory ?? homedir(), ".codex"),
+    "auth.json",
+  );
+  try {
+    const sourceText =
+      options.read === undefined ? readPrivateAuthFile(authPath) : options.read(authPath);
+    const source = JSON.parse(sourceText) as Record<string, unknown>;
+    if (typeof source !== "object" || source === null || Array.isArray(source)) return {};
+    const tokens =
+      typeof source.tokens === "object" && source.tokens !== null && !Array.isArray(source.tokens)
+        ? (source.tokens as Record<string, unknown>)
+        : {};
+    const access = tokens.access_token ?? tokens.accessToken ?? source.OPENAI_API_KEY;
+    const idToken = tokens.id_token ?? tokens.idToken;
+    const configuredAccount = tokens.account_id ?? tokens.accountId;
+    const accessToken = nonEmptyString(access);
+    const personalAccessToken = nonEmptyString(
+      source.personal_access_token ?? source.personalAccessToken,
+    );
+    const accountId =
+      nonEmptyString(configuredAccount) ??
+      accountIdFromJwt(typeof idToken === "string" ? idToken : accessToken);
+    return {
+      ...(accessToken === undefined ? {} : { accessToken }),
+      ...(accountId === undefined ? {} : { accountId }),
+      ...(personalAccessToken === undefined ? {} : { personalAccessToken }),
+    };
+  } catch {
+    return {};
+  }
+}
+
+const nonEmptyString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+
+const readPrivateAuthFile = (path: string): string => {
+  const info = lstatSync(path, { bigint: true });
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error("Codex auth file is not regular");
+  if (info.size > 1024n * 1024n) throw new Error("Codex auth file exceeds 1 MiB");
+  return readFileSync(path, "utf8");
+};

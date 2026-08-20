@@ -37,6 +37,7 @@ import {
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
+  discoverNodeCodexCredential,
   makeNodeConfigRepository,
   makeSystemClock,
   makeNodeSqliteWorkerPersistence,
@@ -205,9 +206,20 @@ void app
         return result.value;
       });
     const credentials = makeNativeCredentialStore();
+    const codexCredential = discoverNodeCodexCredential();
     providerRuntime = makeFirstPartyProviderRuntime({
       providers: FIRST_PARTY_PROVIDERS,
-      settings: makeEnvironmentProviderSettings(),
+      settings: {
+        read: (providerId, setting) => {
+          if (providerId === "codex" && setting === "CODEX_ACCESS_TOKEN")
+            return Effect.succeed(codexCredential.accessToken);
+          if (providerId === "codex" && setting === "CODEX_ACCOUNT_ID")
+            return Effect.succeed(codexCredential.accountId);
+          if (providerId === "codex" && setting === "CODEX_PERSONAL_ACCESS_TOKEN")
+            return Effect.succeed(codexCredential.personalAccessToken);
+          return makeEnvironmentProviderSettings().read(providerId, setting);
+        },
+      },
       credentials,
       browserSessions: makeCredentialBrowserSessions(credentials),
       local: makeNodeFirstPartyLocalCapabilities(),
