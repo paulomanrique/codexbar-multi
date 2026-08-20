@@ -14,6 +14,8 @@ import type {
   PluginApprovalPreviewRequestDTO,
   PluginApprovalRequestDTO,
   PluginListResultDTO,
+  PluginSecretRequestDTO,
+  PluginSecretResultDTO,
   RemovePluginRequestDTO,
   TestPluginRequestDTO,
   TestPluginResultDTO,
@@ -37,6 +39,7 @@ export const DesktopChannels = Object.freeze({
   approvePlugin: "codexbar-multi:approve-plugin",
   removePlugin: "codexbar-multi:remove-plugin",
   testPlugin: "codexbar-multi:test-plugin",
+  configurePluginSecret: "codexbar-multi:configure-plugin-secret",
 });
 
 export interface CodexBarDesktopApi {
@@ -59,4 +62,7 @@ export interface CodexBarDesktopApi {
   readonly approvePlugin: (request: PluginApprovalRequestDTO) => Promise<PluginApprovalPreviewDTO>;
   readonly removePlugin: (request: RemovePluginRequestDTO) => Promise<void>;
   readonly testPlugin: (request: TestPluginRequestDTO) => Promise<TestPluginResultDTO>;
+  readonly configurePluginSecret: (
+    request: PluginSecretRequestDTO,
+  ) => Promise<PluginSecretResultDTO>;
 }

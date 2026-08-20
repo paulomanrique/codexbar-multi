@@ -13,6 +13,8 @@ import {
   PluginApprovalPreviewRequestDTO,
   PluginApprovalRequestDTO,
   PluginListResultDTO,
+  PluginSecretRequestDTO,
+  PluginSecretResultDTO,
   RemovePluginRequestDTO,
   TestPluginRequestDTO,
   TestPluginResultDTO,
@@ -167,6 +169,10 @@ void app
       reservedIds: new Set(PROVIDERS.map((provider) => provider.id)),
       readSecret: (pluginId, key) =>
         Effect.runPromise(credentials.read(`plugin/${pluginId}/secret/${key}`)),
+      writeSecret: (pluginId, key, value) =>
+        Effect.runPromise(credentials.write(`plugin/${pluginId}/secret/${key}`, value)),
+      removeSecret: (pluginId, key) =>
+        Effect.runPromise(credentials.remove(`plugin/${pluginId}/secret/${key}`)),
       log: (pluginId, message) => console.info(`[plugin:${pluginId}]`, message),
     });
     const decodeVoid = Schema.decodeUnknownPromise(Schema.Void);
@@ -192,6 +198,8 @@ void app
     const decodeRemovePlugin = Schema.decodeUnknownPromise(RemovePluginRequestDTO);
     const decodeTestPlugin = Schema.decodeUnknownPromise(TestPluginRequestDTO);
     const decodeTestPluginResult = Schema.decodeUnknownPromise(TestPluginResultDTO);
+    const decodePluginSecret = Schema.decodeUnknownPromise(PluginSecretRequestDTO);
+    const decodePluginSecretResult = Schema.decodeUnknownPromise(PluginSecretResultDTO);
     ipcMain.handle(DesktopChannels.overview, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         await decodeVoid(input);
@@ -302,6 +310,13 @@ void app
         const request = await decodeTestPlugin(input);
         return decodeTestPluginResult(await activePluginManager().test(request.pluginId));
       }),
+    );
+    ipcMain.handle(DesktopChannels.configurePluginSecret, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodePluginSecretResult(
+          await activePluginManager().configureSecret(await decodePluginSecret(input)),
+        ),
+      ),
     );
     window = createWindow();
     tray = new Tray(trayImage());

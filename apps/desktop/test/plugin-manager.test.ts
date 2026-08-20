@@ -18,11 +18,13 @@ async function fixture(
     primary: { usedPercent: 42 },
     identity: { loginMethod: "plugin" },
   }),
-): Promise<{ root: string; manager: DesktopPluginManager }> {
+): Promise<{ root: string; manager: DesktopPluginManager; secrets: Map<string, string> }> {
   const root = await mkdtemp(join(tmpdir(), "codexbar-multi-plugin-manager-"));
   roots.push(root);
+  const secrets = new Map<string, string>();
   return {
     root,
+    secrets,
     manager: new DesktopPluginManager({
       storageRoot: root,
       sandbox: {
@@ -30,6 +32,13 @@ async function fixture(
         execute,
       },
       reservedIds: new Set(["codex", "claude"]),
+      readSecret: async (pluginId, key) => secrets.get(`${pluginId}/${key}`),
+      writeSecret: async (pluginId, key, value) => {
+        secrets.set(`${pluginId}/${key}`, value);
+      },
+      removeSecret: async (pluginId, key) => {
+        secrets.delete(`${pluginId}/${key}`);
+      },
     }),
   };
 }
@@ -129,5 +138,31 @@ describe("desktop plugin lifecycle", () => {
     await expect(manager.test("fixture-meter")).rejects.toThrow(
       "snapshot must contain at least one",
     );
+  });
+
+  it("writes declared secrets without returning values and clears them on removal", async () => {
+    const { manager, secrets } = await fixture();
+    const secureSource = `
+      defineProvider({
+        id: "secret-meter",
+        name: "Secret Meter",
+        endpoints: ["https://api.example.test"],
+        auth: { type: "bearer", secret: "TOKEN" },
+        settings: [{ key: "TOKEN", title: "Token", type: "secure" }],
+        async fetchUsage() { return { primary: { usedPercent: 1 } }; },
+      });
+    `;
+    await manager.install(secureSource, "javascript");
+    const configured = await manager.configureSecret({
+      pluginId: "secret-meter",
+      key: "TOKEN",
+      operation: "set",
+      value: "fixture-secret",
+    });
+    expect(configured).toEqual({ pluginId: "secret-meter", key: "TOKEN", configured: true });
+    expect(configured).not.toHaveProperty("value");
+    expect(secrets.get("secret-meter/TOKEN")).toBe("fixture-secret");
+    await manager.remove("secret-meter");
+    expect(secrets.has("secret-meter/TOKEN")).toBe(false);
   });
 });

@@ -10,6 +10,8 @@ import type {
   PluginApprovalRequestDTO,
   PluginListResultDTO,
   PluginSourceLanguage,
+  PluginSecretRequestDTO,
+  PluginSecretResultDTO,
   TestPluginResultDTO,
 } from "@codexbar/contracts";
 import {
@@ -207,6 +209,8 @@ export class DesktopPluginManager {
   private readonly sandbox: PluginSandbox;
   private readonly reservedIds: ReadonlySet<string>;
   private readonly readSecret: (pluginId: string, key: string) => Promise<string | undefined>;
+  private readonly writeSecret: (pluginId: string, key: string, value: string) => Promise<void>;
+  private readonly removeSecret: (pluginId: string, key: string) => Promise<void>;
   private readonly readCookie: (pluginId: string, domain: string) => Promise<string | undefined>;
   private readonly log: (pluginId: string, message: string) => void | Promise<void>;
   private readonly fetchImplementation: typeof globalThis.fetch;
@@ -219,6 +223,8 @@ export class DesktopPluginManager {
     readonly sandbox: PluginSandbox;
     readonly reservedIds: ReadonlySet<string>;
     readonly readSecret?: (pluginId: string, key: string) => Promise<string | undefined>;
+    readonly writeSecret?: (pluginId: string, key: string, value: string) => Promise<void>;
+    readonly removeSecret?: (pluginId: string, key: string) => Promise<void>;
     readonly readCookie?: (pluginId: string, domain: string) => Promise<string | undefined>;
     readonly log?: (pluginId: string, message: string) => void | Promise<void>;
     readonly fetch?: typeof globalThis.fetch;
@@ -230,6 +236,12 @@ export class DesktopPluginManager {
     this.sandbox = options.sandbox;
     this.reservedIds = options.reservedIds;
     this.readSecret = options.readSecret ?? (async () => undefined);
+    this.writeSecret =
+      options.writeSecret ??
+      (async () => {
+        throw new PluginRuntimeError("secret-access", "plugin secret storage is unavailable");
+      });
+    this.removeSecret = options.removeSecret ?? (async () => undefined);
     this.readCookie = options.readCookie ?? (async () => undefined);
     this.log = options.log ?? (() => undefined);
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
@@ -333,10 +345,34 @@ export class DesktopPluginManager {
       const metadata = await lstat(path);
       if (!metadata.isFile() || metadata.isSymbolicLink())
         throw new Error("installed plugin is not a regular file");
+      const removals = await Promise.allSettled(
+        discovered.loaded.manifest.settings
+          .filter((setting) => setting.type === "secure")
+          .map((setting) => this.removeSecret(pluginId, setting.key)),
+      );
+      if (removals.some((result) => result.status === "rejected"))
+        throw new PluginRuntimeError("secret-access", "plugin secret cleanup failed");
       await unlink(path);
       const approvals = await this.loadApprovals();
       delete approvals[pluginId];
       await this.saveApprovals(approvals);
+    });
+  }
+
+  async configureSecret(request: PluginSecretRequestDTO): Promise<PluginSecretResultDTO> {
+    return this.mutate(async () => {
+      const discovered = await this.find(request.pluginId);
+      const setting = discovered.loaded.manifest.settings.find(
+        (candidate) => candidate.key === request.key,
+      );
+      if (setting?.type !== "secure")
+        throw new PluginRuntimeError("secret-access", "plugin secure setting is not declared");
+      if (request.operation === "set") {
+        await this.writeSecret(request.pluginId, request.key, request.value);
+        return { pluginId: request.pluginId, key: request.key, configured: true };
+      }
+      await this.removeSecret(request.pluginId, request.key);
+      return { pluginId: request.pluginId, key: request.key, configured: false };
     });
   }
 

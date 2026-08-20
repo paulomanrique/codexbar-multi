@@ -105,3 +105,25 @@ export const TestPluginResultDTO = Schema.Struct({
   snapshot: UsageSnapshot,
 });
 export type TestPluginResultDTO = Schema.Schema.Type<typeof TestPluginResultDTO>;
+
+export const PluginSecretRequestDTO = Schema.Union([
+  Schema.Struct({
+    pluginId: UserPluginId,
+    key: Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,63}$/))),
+    operation: Schema.Literal("set"),
+    value: Schema.String.pipe(Schema.check(Schema.isMaxLength(16_384))),
+  }),
+  Schema.Struct({
+    pluginId: UserPluginId,
+    key: Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,63}$/))),
+    operation: Schema.Literal("clear"),
+  }),
+]);
+export type PluginSecretRequestDTO = Schema.Schema.Type<typeof PluginSecretRequestDTO>;
+
+export const PluginSecretResultDTO = Schema.Struct({
+  pluginId: UserPluginId,
+  key: Schema.String,
+  configured: Schema.Boolean,
+});
+export type PluginSecretResultDTO = Schema.Schema.Type<typeof PluginSecretResultDTO>;

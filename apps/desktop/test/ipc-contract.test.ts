@@ -7,6 +7,7 @@ import {
   InstallPluginRequestDTO,
   LoginRequestDTO,
   PluginApprovalRequestDTO,
+  PluginSecretRequestDTO,
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
 } from "@codexbar/contracts";
@@ -82,6 +83,14 @@ describe("desktop IPC boundary", () => {
       decodeInstall({ source: "x".repeat(1_048_577), language: "javascript" }),
     ).toThrow();
     expect(() => decodeRemove({ pluginId: "../escape" })).toThrow();
+    const decodeSecret = Schema.decodeUnknownSync(PluginSecretRequestDTO);
+    expect(() =>
+      decodeSecret({
+        pluginId: "fixture-plugin",
+        key: "TOKEN",
+        operation: "read",
+      }),
+    ).toThrow();
     expect(() =>
       decodeApproval({
         pluginId: "fixture-plugin",

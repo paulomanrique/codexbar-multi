@@ -16,6 +16,8 @@ import {
   PluginApprovalPreviewRequestDTO,
   PluginApprovalRequestDTO,
   PluginListResultDTO,
+  PluginSecretRequestDTO,
+  PluginSecretResultDTO,
   RemovePluginRequestDTO,
   TestPluginRequestDTO,
   TestPluginResultDTO,
@@ -27,6 +29,7 @@ import {
   type InstallPluginRequestDTO as InstallPluginRequest,
   type PluginApprovalPreviewRequestDTO as PluginApprovalPreviewRequest,
   type PluginApprovalRequestDTO as PluginApprovalRequest,
+  type PluginSecretRequestDTO as PluginSecretRequest,
   type RemovePluginRequestDTO as RemovePluginRequest,
   type TestPluginRequestDTO as TestPluginRequest,
   type RefreshProviderRequestDTO as RefreshProviderRequest,
@@ -56,6 +59,8 @@ const decodePluginApprovalPreview = Schema.decodeUnknownPromise(PluginApprovalPr
 const decodeRemovePluginRequest = Schema.decodeUnknownPromise(RemovePluginRequestDTO);
 const decodeTestPluginRequest = Schema.decodeUnknownPromise(TestPluginRequestDTO);
 const decodeTestPluginResult = Schema.decodeUnknownPromise(TestPluginResultDTO);
+const decodePluginSecretRequest = Schema.decodeUnknownPromise(PluginSecretRequestDTO);
+const decodePluginSecretResult = Schema.decodeUnknownPromise(PluginSecretResultDTO);
 const api: CodexBarDesktopApi = Object.freeze({
   getOverview: async () => decodeOverview(await ipcRenderer.invoke(DesktopChannels.overview)),
   getHistory: async (query: HistoryQuery) =>
@@ -120,6 +125,13 @@ const api: CodexBarDesktopApi = Object.freeze({
   testPlugin: async (request: TestPluginRequest) =>
     decodeTestPluginResult(
       await ipcRenderer.invoke(DesktopChannels.testPlugin, await decodeTestPluginRequest(request)),
+    ),
+  configurePluginSecret: async (request: PluginSecretRequest) =>
+    decodePluginSecretResult(
+      await ipcRenderer.invoke(
+        DesktopChannels.configurePluginSecret,
+        await decodePluginSecretRequest(request),
+      ),
     ),
 });
 
