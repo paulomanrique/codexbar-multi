@@ -972,19 +972,22 @@ providers:
   - id: commandcode
     swiftGlobs:
       - Sources/CodexBar/Providers/CommandCode/**/*.swift
+      - Sources/CodexBarCore/Providers/CommandCode/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*CommandCode*Tests.swift
         - TestsLinux/*CommandCode*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-e.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/CommandCode/**/*
     tsPaths:
       expected: [packages/providers/src/providers/commandcode.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/commandcode.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-e.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: qoder
@@ -1011,19 +1014,22 @@ providers:
   - id: stepfun
     swiftGlobs:
       - Sources/CodexBar/Providers/StepFun/**/*.swift
+      - Sources/CodexBarCore/Providers/StepFun/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*StepFun*Tests.swift
         - TestsLinux/*StepFun*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-e.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/StepFun/**/*
     tsPaths:
       expected: [packages/providers/src/providers/stepfun.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/stepfun.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-e.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: bedrock
@@ -1229,19 +1235,22 @@ providers:
   - id: longcat
     swiftGlobs:
       - Sources/CodexBar/Providers/LongCat/**/*.swift
+      - Sources/CodexBarCore/Providers/LongCat/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*LongCat*Tests.swift
         - TestsLinux/*LongCat*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/web-cookie-providers-e.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/LongCat/**/*
     tsPaths:
       expected: [packages/providers/src/providers/longcat.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/longcat.ts
+    tsTestGlobs:
+      - packages/providers/test/web-cookie-providers-e.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: sub2api
@@ -1327,19 +1336,22 @@ providers:
   - id: zoommate
     swiftGlobs:
       - Sources/CodexBar/Providers/ZoomMate/**/*.swift
+      - Sources/CodexBarCore/Providers/ZoomMate/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*ZoomMate*Tests.swift
         - TestsLinux/*ZoomMate*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/zoommate-notion-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/ZoomMate/**/*
     tsPaths:
       expected: [packages/providers/src/providers/zoommate.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/zoommate.ts
+    tsTestGlobs:
+      - packages/providers/test/zoommate-notion-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: xai
@@ -1365,19 +1377,22 @@ providers:
   - id: notion
     swiftGlobs:
       - Sources/CodexBar/Providers/Notion/**/*.swift
+      - Sources/CodexBarCore/Providers/Notion/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Notion*Tests.swift
         - TestsLinux/*Notion*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/zoommate-notion-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Notion/**/*
     tsPaths:
       expected: [packages/providers/src/providers/notion.ts]
-      real: []
-    tsTestGlobs: []
-    status: unported
+      real:
+        - packages/providers/src/providers/notion.ts
+    tsTestGlobs:
+      - packages/providers/test/zoommate-notion-parity.test.ts
+    status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
   - id: ibmbob

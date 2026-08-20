@@ -14,6 +14,7 @@ import { clawrouter } from "./providers/clawrouter.ts";
 import { clinepass } from "./providers/clinepass.ts";
 import { codex } from "./providers/codex.ts";
 import { codebuff } from "./providers/codebuff.ts";
+import { commandcode } from "./providers/commandcode.ts";
 import { copilot } from "./providers/copilot.ts";
 import { crof } from "./providers/crof.ts";
 import { cursor } from "./providers/cursor.ts";
@@ -31,12 +32,14 @@ import { ibmbob } from "./providers/ibmbob.ts";
 import { kimi } from "./providers/kimi.ts";
 import { llmproxy } from "./providers/llmproxy.ts";
 import { litellm } from "./providers/litellm.ts";
+import { longcat } from "./providers/longcat.ts";
 import { manus } from "./providers/manus.ts";
 import { mimo } from "./providers/mimo.ts";
 import { mistral } from "./providers/mistral.ts";
 import { moonshot } from "./providers/moonshot.ts";
 import { minimax } from "./providers/minimax.ts";
 import { neuralwatt } from "./providers/neuralwatt.ts";
+import { notion } from "./providers/notion.ts";
 import { openai } from "./providers/openai.ts";
 import { ollama } from "./providers/ollama.ts";
 import { opencode } from "./providers/opencode.ts";
@@ -49,6 +52,7 @@ import { qwencloud } from "./providers/qwencloud.ts";
 import { sakana } from "./providers/sakana.ts";
 import { sub2api } from "./providers/sub2api.ts";
 import { synthetic } from "./providers/synthetic.ts";
+import { stepfun } from "./providers/stepfun.ts";
 import { t3chat } from "./providers/t3chat.ts";
 import { venice } from "./providers/venice.ts";
 import { vertexai } from "./providers/vertexai.ts";
@@ -58,6 +62,7 @@ import { zai } from "./providers/zai.ts";
 import { warp } from "./providers/warp.ts";
 import { wayfinder } from "./providers/wayfinder.ts";
 import { zenmux } from "./providers/zenmux.ts";
+import { zoommate } from "./providers/zoommate.ts";
 
 export const FIRST_PARTY_PROVIDERS = [
   codex,
@@ -71,6 +76,7 @@ export const FIRST_PARTY_PROVIDERS = [
   clawrouter,
   clinepass,
   codebuff,
+  commandcode,
   copilot,
   crof,
   cursor,
@@ -88,12 +94,14 @@ export const FIRST_PARTY_PROVIDERS = [
   kimi,
   llmproxy,
   litellm,
+  longcat,
   manus,
   mimo,
   mistral,
   moonshot,
   minimax,
   neuralwatt,
+  notion,
   openai,
   ollama,
   opencode,
@@ -106,6 +114,7 @@ export const FIRST_PARTY_PROVIDERS = [
   sakana,
   sub2api,
   synthetic,
+  stepfun,
   t3chat,
   venice,
   vertexai,
@@ -115,6 +124,7 @@ export const FIRST_PARTY_PROVIDERS = [
   xai,
   zai,
   zenmux,
+  zoommate,
 ] as const;
 
 export const PROVIDERS = installProviderRegistry(FIRST_PARTY_PROVIDERS);
@@ -132,6 +142,7 @@ export { chutes } from "./providers/chutes.ts";
 export { codex } from "./providers/codex.ts";
 export { clinepass } from "./providers/clinepass.ts";
 export { codebuff } from "./providers/codebuff.ts";
+export { commandcode } from "./providers/commandcode.ts";
 export { copilot } from "./providers/copilot.ts";
 export { crof } from "./providers/crof.ts";
 export { cursor } from "./providers/cursor.ts";
@@ -149,12 +160,14 @@ export { ibmbob } from "./providers/ibmbob.ts";
 export { kimi } from "./providers/kimi.ts";
 export { llmproxy } from "./providers/llmproxy.ts";
 export { litellm } from "./providers/litellm.ts";
+export { longcat } from "./providers/longcat.ts";
 export { manus } from "./providers/manus.ts";
 export { mimo } from "./providers/mimo.ts";
 export { mistral } from "./providers/mistral.ts";
 export { moonshot } from "./providers/moonshot.ts";
 export { minimax } from "./providers/minimax.ts";
 export { neuralwatt } from "./providers/neuralwatt.ts";
+export { notion } from "./providers/notion.ts";
 export { openai } from "./providers/openai.ts";
 export { ollama } from "./providers/ollama.ts";
 export { opencode } from "./providers/opencode.ts";
@@ -167,6 +180,7 @@ export { qwencloud } from "./providers/qwencloud.ts";
 export { sakana } from "./providers/sakana.ts";
 export { sub2api } from "./providers/sub2api.ts";
 export { synthetic } from "./providers/synthetic.ts";
+export { stepfun } from "./providers/stepfun.ts";
 export { t3chat } from "./providers/t3chat.ts";
 export { venice } from "./providers/venice.ts";
 export { vertexai } from "./providers/vertexai.ts";
@@ -176,3 +190,4 @@ export { wayfinder } from "./providers/wayfinder.ts";
 export { xai } from "./providers/xai.ts";
 export { zai } from "./providers/zai.ts";
 export { zenmux } from "./providers/zenmux.ts";
+export { zoommate } from "./providers/zoommate.ts";
