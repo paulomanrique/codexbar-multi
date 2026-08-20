@@ -68,7 +68,11 @@ describe("HTTP provider wave fixtures", () => {
   it("maps Moonshot balance identity without synthesizing a quota", async () => {
     const snapshot = await moonshot.fetchUsage(
       context(
-        { code: 0, status: true, data: { available_balance: 49.58, cash_balance: 12.34 } },
+        {
+          code: 0,
+          status: true,
+          data: { available_balance: 49.58, voucher_balance: 50, cash_balance: 12.34 },
+        },
         { MOONSHOT_API_KEY: "fixture-key" },
       ),
     );
