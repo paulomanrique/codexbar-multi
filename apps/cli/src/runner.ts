@@ -18,6 +18,7 @@ import {
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
+  makeNodeProcessRunner,
   makeNodeConfigRepository,
   makeNodeSqlitePersistence,
   makeSystemClock,
@@ -31,6 +32,9 @@ import { runCards } from "./cards.ts";
 import { runCache, type CLICacheStore } from "./cache.ts";
 import { runDashboard } from "./dashboard.ts";
 import { runDiagnose } from "./diagnose.ts";
+import { runGuard } from "./guard.ts";
+import { runHooks, type HookProcessRequest } from "./hooks.ts";
+import { runSessions, runSessionsFocus } from "./sessions.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
@@ -41,6 +45,7 @@ export const CLIExitCode = {
   parseError: 3,
   timeout: 4,
   usage: 64,
+  unavailable: 69,
 } as const;
 export type CLIExitCode = (typeof CLIExitCode)[keyof typeof CLIExitCode];
 
@@ -70,6 +75,7 @@ export interface CLIProviderRuntime {
   readonly config?: CLIConfigStore;
   readonly costs?: CLICostStore;
   readonly cache?: CLICacheStore;
+  readonly runHook?: (request: HookProcessRequest) => Promise<{ readonly stdout: string }>;
   readonly now?: () => number;
 }
 
@@ -531,6 +537,15 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
   if (command === "dashboard") return runDashboard(raw.slice(1), options.io, options.runtime);
   if (command === "diagnose") return runDiagnose(raw.slice(1), options.io, options.runtime);
   if (command === "cache") return runCache(raw.slice(1), options.io, options.runtime);
+  if (command === "guard") return runGuard(raw.slice(1), options.io, options.runtime);
+  if (command === "hooks") return runHooks(raw.slice(1), options.io, options.runtime);
+  if (command === "sessions") {
+    const sessionArgs = raw.slice(1);
+    if (sessionArgs[0] === "focus")
+      return runSessionsFocus(sessionArgs.slice(1), options.io, options.runtime);
+    const listArgs = sessionArgs[0] === "list" ? sessionArgs.slice(1) : sessionArgs;
+    return runSessions(listArgs, options.io, options.runtime);
+  }
   if (command === "config")
     return runConfig(
       raw.slice(1),
@@ -566,6 +581,23 @@ export const makeNodeCLIProviderRuntime = (
   const databasePath = join(dirname(configPath), "usage.sqlite");
   let costPersistencePromise: Promise<NodeSqlitePersistence> | undefined;
   const credentials = makeNativeCredentialStore();
+  const hookEnvironment = Object.fromEntries(
+    [
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "SHELL",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+      "TERM",
+      "TMPDIR",
+    ].flatMap((key) =>
+      environment[key] === undefined ? [] : ([[key, environment[key]]] as const),
+    ),
+  );
+  const hookProcessRunner = makeNodeProcessRunner({ environment: hookEnvironment });
   const environmentSettings = makeEnvironmentProviderSettings(environment);
   const codexCredential = discoverCodexCredential({ environment });
   const runtime: ProviderRuntimeService = makeFirstPartyProviderRuntime({
@@ -634,6 +666,22 @@ export const makeNodeCLIProviderRuntime = (
       // the JSONL scanner cache exists in TypeScript there is nothing safe to
       // delete here; never reinterpret `cache --cost` as history deletion.
       clearCost: async () => ({ cleared: 0 }),
+    },
+    runHook: async (request) => {
+      const input = new TextEncoder().encode(request.input);
+      if (input.byteLength > 4_096) throw new Error("hook payload too large");
+      const result = await Effect.runPromise(
+        hookProcessRunner.run({
+          command: request.executable,
+          args: request.arguments,
+          env: request.environment,
+          stdin: input,
+          timeoutMs: request.timeoutMs,
+        }),
+        { signal: request.signal },
+      );
+      if (result.exitCode !== 0) throw new Error(`exit ${result.exitCode ?? "unknown"}`);
+      return { stdout: new TextDecoder("utf-8", { fatal: true }).decode(result.stdout) };
     },
   };
 };

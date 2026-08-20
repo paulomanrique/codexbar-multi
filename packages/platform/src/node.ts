@@ -259,13 +259,17 @@ const maximumLocalOutputBytes = 1024 * 1024;
  * shell, bounds output, and terminates its child when the Effect is aborted.
  */
 export const makeNodeProcessRunner = (
-  options: { readonly maximumOutputBytes?: number } = {},
+  options: {
+    readonly maximumOutputBytes?: number;
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+  } = {},
 ): ProcessRunnerService => {
   const maximumOutputBytes = options.maximumOutputBytes ?? maximumLocalOutputBytes;
+  const environment = options.environment ?? process.env;
   return {
     run: (spec) =>
       Effect.tryPromise({
-        try: (signal) => runNodeProcess(spec, signal, maximumOutputBytes),
+        try: (signal) => runNodeProcess(spec, signal, maximumOutputBytes, environment),
         catch: (error) =>
           new InfrastructureError("run process", `Unable to run '${spec.command}'.`, error),
       }),
@@ -276,6 +280,7 @@ const runNodeProcess = (
   spec: ProcessSpec,
   signal: AbortSignal,
   maximumOutputBytes: number,
+  baseEnvironment: Readonly<Record<string, string | undefined>>,
 ): Promise<ProcessResult> =>
   new Promise((resolvePromise, rejectPromise) => {
     let settled = false;
@@ -299,7 +304,11 @@ const runNodeProcess = (
     try {
       child = spawn(spec.command, [...(spec.args ?? [])], {
         cwd: spec.cwd,
-        env: spec.env === undefined ? undefined : { ...process.env, ...spec.env },
+        env: Object.fromEntries(
+          Object.entries({ ...baseEnvironment, ...spec.env }).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,

@@ -138,4 +138,24 @@ describe("Node first-party local capabilities", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("uses an explicitly sanitized base environment when requested by a host", async () => {
+    const runner = makeNodeProcessRunner({
+      environment: { CODEXBAR_SAFE_BASE: "visible", PROVIDER_SECRET: undefined },
+    });
+    const result = await Effect.runPromise(
+      runner.run({
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(JSON.stringify({safe:process.env.CODEXBAR_SAFE_BASE,event:process.env.CODEXBAR_EVENT,secret:process.env.PROVIDER_SECRET}))",
+        ],
+        env: { CODEXBAR_EVENT: "quota_reached" },
+      }),
+    );
+    expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({
+      safe: "visible",
+      event: "quota_reached",
+    });
+  });
 });
