@@ -6,9 +6,11 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 
+const ansiControlSequence = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-?]*[ -/]*[@-~]`, "gu");
+
 /** Parses the non-interactive `kiro-cli ... /usage` display produced by the Swift probe. */
 export const parseKiroUsage = (raw: string, ctx: ProviderContext) => {
-  const output = raw.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "").trim();
+  const output = raw.replace(ansiControlSequence, "").trim();
   const pct = /([0-9]+(?:\.[0-9]+)?)%\s*(?:used|usage)/iu.exec(output)?.[1];
   if (!pct) throw ctx.fail.parseFailure("Could not parse Kiro CLI usage output.");
   return { primary: { usedPercent: Math.max(0, Math.min(100, Number(pct))) } };

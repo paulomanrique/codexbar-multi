@@ -208,6 +208,12 @@ export function isAllowedBrowserLoginNavigation(
 const matchesName = (name: string, exactNames: ReadonlySet<string>, prefixes: readonly string[]) =>
   exactNames.has(name) || prefixes.some((prefix) => name.startsWith(prefix));
 
+const containsCookieDelimiterOrControl = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return character === ";" || code <= 0x1f || code === 0x7f;
+  });
+
 /**
  * Produce the only credential material that may leave an isolated Electron
  * partition. Unknown cookies are discarded before the native keyring write.
@@ -222,7 +228,7 @@ export function exportableCookieHeader(
     if (
       cookie.value.length === 0 ||
       cookie.value.length > 4_096 ||
-      /[;\u0000-\u001f\u007f]/u.test(cookie.value) ||
+      containsCookieDelimiterOrControl(cookie.value) ||
       !matchesName(cookie.name, descriptor.cookieNames, descriptor.cookieNamePrefixes)
     )
       continue;

@@ -7,6 +7,12 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const WINDOWS_SID = /^S-\d+(?:-\d+)+$/iu;
 
+const containsWindowsPathDelimiterOrControl = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return character === "\\" || character === "/" || code <= 0x1f;
+  });
+
 /**
  * The small native boundary used to keep files owned by CodexBar Multi out of
  * other local Windows accounts. Node's `mode` option is ignored by NTFS, so
@@ -73,7 +79,12 @@ const nativeWindowsAcl: WindowsAclAdapter = {
   },
   replaceWithCurrentUserDacl: async (path, sid) => {
     const name = windowsPath.basename(path);
-    if (name.length === 0 || name === "." || name === ".." || /[\\/\u0000-\u001f]/u.test(name)) {
+    if (
+      name.length === 0 ||
+      name === "." ||
+      name === ".." ||
+      containsWindowsPathDelimiterOrControl(name)
+    ) {
       throw new Error("Windows private path basename is invalid");
     }
     const parent = windowsPath.dirname(path);
