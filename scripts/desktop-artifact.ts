@@ -33,6 +33,16 @@ export interface DesktopArtifactTarget {
   readonly executableRelativePath: readonly string[];
 }
 
+const unpackedDirectoryFor = (
+  platform: DesktopArtifactTarget["platform"],
+  arch: DesktopArtifactTarget["arch"],
+): string => {
+  const suffix = arch === "x64" ? "" : `-${arch}`;
+  return platform === "darwin"
+    ? `mac${suffix}`
+    : `${platform === "win32" ? "win" : "linux"}${suffix}-unpacked`;
+};
+
 const targetForPlatform = (
   platform: DesktopArtifactHost["platform"],
   arch: DesktopArtifactTarget["arch"],
@@ -46,7 +56,7 @@ const targetForPlatform = (
         artifactArch: arch === "x64" ? "x86_64" : arch,
         electronBuilderArgs: ["--linux", "AppImage", `--${arch}`, "--dir", "--publish", "never"],
         expectedExtension: ".AppImage",
-        unpackedDirectory: "linux-unpacked",
+        unpackedDirectory: unpackedDirectoryFor(platform, arch),
         executableRelativePath: ["codexbar-multi"],
       };
     case "win32":
@@ -57,7 +67,7 @@ const targetForPlatform = (
         artifactArch: arch,
         electronBuilderArgs: ["--win", "nsis", `--${arch}`, "--dir", "--publish", "never"],
         expectedExtension: ".exe",
-        unpackedDirectory: "win-unpacked",
+        unpackedDirectory: unpackedDirectoryFor(platform, arch),
         executableRelativePath: ["CodexBar Multi.exe"],
       };
     case "darwin":
@@ -68,7 +78,7 @@ const targetForPlatform = (
         artifactArch: arch,
         electronBuilderArgs: ["--mac", "dmg", `--${arch}`, "--dir", "--publish", "never"],
         expectedExtension: ".dmg",
-        unpackedDirectory: "mac",
+        unpackedDirectory: unpackedDirectoryFor(platform, arch),
         executableRelativePath: ["CodexBar Multi.app", "Contents", "MacOS", "CodexBar Multi"],
       };
     default:

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { access, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,7 @@ import {
   expectedDesktopArtifactName,
   getHostDesktopTarget,
 } from "./desktop-artifact.ts";
+import { detectMusl, selectKeyringPackage } from "./cli-sea.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 assertDesktopArtifactNodeVersion(process.version);
@@ -37,20 +38,6 @@ const existingDirectory = async (path: string, description: string): Promise<voi
   if (!directory.isDirectory()) throw new Error(`${description} is not a directory: ${path}`);
 };
 
-const hasNativeKeyring = async (unpackedResources: string): Promise<boolean> => {
-  try {
-    const entries = await readdir(unpackedResources, { recursive: true });
-    return entries.some(
-      (entry) =>
-        typeof entry === "string" &&
-        entry.startsWith("node_modules/@napi-rs/keyring-") &&
-        entry.endsWith(".node"),
-    );
-  } catch {
-    return false;
-  }
-};
-
 await rm(artifactDirectory, { recursive: true, force: true });
 await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
 
@@ -73,15 +60,23 @@ const artifact = join(artifactDirectory, expectedDesktopArtifactName(manifest.ve
 const unpacked = join(artifactDirectory, target.unpackedDirectory);
 const executable = join(unpacked, ...target.executableRelativePath);
 const unpackedResources = join(unpacked, "resources", "app.asar.unpacked");
+const nativeKeyring = selectKeyringPackage({
+  platform: process.platform,
+  arch: process.arch,
+  isMusl: detectMusl(process.report?.getReport()),
+});
+const nativeKeyringPath = join(
+  unpackedResources,
+  "node_modules",
+  nativeKeyring.packageName,
+  nativeKeyring.fileName,
+);
 
 await regularFile(artifact, "Desktop artifact");
 await existingDirectory(unpacked, "Unpacked desktop artifact");
 await regularFile(executable, "Unpacked Electron executable");
 await access(join(unpacked, "resources", "app.asar"));
-if (!(await hasNativeKeyring(unpackedResources)))
-  throw new Error(
-    "The packaged desktop artifact is missing its unpacked native credential module.",
-  );
+await regularFile(nativeKeyringPath, "Host-native unpacked credential module");
 
 // This asks the Electron binary for its version without starting our main
 // process. It therefore cannot open a provider, a credential store, or the

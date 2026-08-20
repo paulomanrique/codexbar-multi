@@ -48,16 +48,25 @@ test("rejects unsupported architectures and synthetic cross-build hosts", () => 
 });
 
 test("preserves a native arm64 target instead of cross-building x64", () => {
-  const target = getHostDesktopTarget({ platform: "linux", arch: "arm64" });
-  assert.deepEqual(target.electronBuilderArgs.slice(0, 4), [
+  const linux = getHostDesktopTarget({ platform: "linux", arch: "arm64" });
+  assert.deepEqual(linux.electronBuilderArgs.slice(0, 4), [
     "--linux",
     "AppImage",
     "--arm64",
     "--dir",
   ]);
   assert.equal(
-    expectedDesktopArtifactName("0.1.0", target),
+    expectedDesktopArtifactName("0.1.0", linux),
     "CodexBar Multi-0.1.0-linux-arm64.AppImage",
+  );
+  assert.equal(linux.unpackedDirectory, "linux-arm64-unpacked");
+  assert.equal(
+    getHostDesktopTarget({ platform: "win32", arch: "arm64" }).unpackedDirectory,
+    "win-arm64-unpacked",
+  );
+  assert.equal(
+    getHostDesktopTarget({ platform: "darwin", arch: "arm64" }).unpackedDirectory,
+    "mac-arm64",
   );
 });
 
@@ -100,7 +109,7 @@ test("declares a non-publishing desktop package with the fixed product identity"
   assert.deepEqual(build.win, {
     executableName: "codexbar-multi",
     icon: "build/icon.ico",
-    signAndEditExecutable: false,
+    signExecutable: false,
     target: ["nsis"],
   });
   assert.deepEqual(build.mac, {
