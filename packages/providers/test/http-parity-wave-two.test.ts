@@ -143,6 +143,97 @@ describe("Swift-derived HTTP provider parity wave two", () => {
     });
   });
 
+  it("discovers one Fireworks account across paginated account pages", async () => {
+    const requests: Request[] = [];
+    const snapshot = await fireworks.fetchUsage(
+      context(
+        (request) => {
+          if (request.url.pathname === "/v1/accounts") {
+            if (request.url.searchParams.get("pageToken") === "page-2") {
+              return json({ accounts: [{ name: "accounts/discovered-team" }] });
+            }
+            return json({ accounts: [{ name: "accounts/invalid slug" }], nextPageToken: "page-2" });
+          }
+          expect(request.url.pathname).toBe("/v1/accounts/discovered-team/billing/summary");
+          return json({
+            lineItems: [{ totalCost: { currencyCode: "USD", units: "2", nanos: 250_000_000 } }],
+          });
+        },
+        { settings: { FIREWORKS_API_KEY: "fixture-key" }, requests },
+      ),
+    );
+
+    expect(requests.map(({ url }) => `${url.pathname}${url.search}`)).toEqual([
+      "/v1/accounts",
+      "/v1/accounts?pageToken=page-2",
+      "/v1/accounts/discovered-team/billing/summary?startTime=2026-07-21T12%3A00%3A00.000Z&endTime=2026-08-20T12%3A00%3A00.000Z",
+    ]);
+    expect(snapshot).toEqual({
+      cost: { used: 2.25, limit: 0, currency: "USD", period: "Last 30 days" },
+      identity: {},
+    });
+  });
+
+  it("verifies an explicit Fireworks slug after an empty summary and rejects unknown accounts", async () => {
+    const requests: Request[] = [];
+    await expect(
+      fireworks.fetchUsage(
+        context(
+          (request) => {
+            if (request.url.pathname === "/v1/accounts/explicit-slug/billing/summary") {
+              return json({ lineItems: [] });
+            }
+            return json({ accounts: [{ name: "accounts/different-slug" }] });
+          },
+          {
+            settings: { FIREWORKS_API_KEY: "fixture-key", FIREWORKS_ACCOUNT_SLUG: "explicit-slug" },
+            requests,
+          },
+        ),
+      ),
+    ).rejects.toThrow("Fireworks account slug 'explicit-slug' not found");
+    expect(requests.map(({ url }) => url.pathname)).toEqual([
+      "/v1/accounts/explicit-slug/billing/summary",
+      "/v1/accounts",
+    ]);
+  });
+
+  it("reports zero and multiple visible Fireworks accounts when the slug is omitted", async () => {
+    await expect(
+      fireworks.fetchUsage(
+        context(() => json({ accounts: [] }), { settings: { FIREWORKS_API_KEY: "fixture-key" } }),
+      ),
+    ).rejects.toThrow("No Fireworks accounts are visible");
+
+    await expect(
+      fireworks.fetchUsage(
+        context(() => json({ accounts: [{ name: "accounts/zeta" }, { name: "accounts/alpha" }] }), {
+          settings: { FIREWORKS_API_KEY: "fixture-key" },
+        }),
+      ),
+    ).rejects.toThrow("alpha, zeta");
+  });
+
+  it("classifies Fireworks authentication and availability failures like the Swift fetcher", async () => {
+    for (const [responseStatus, expectedKind] of [
+      [401, "authentication-expired"],
+      [403, "authentication-expired"],
+      [429, "rate-limited"],
+      [500, "provider-unavailable"],
+    ] as const) {
+      await expect(
+        fireworks.fetchUsage(
+          context(() => json({ error: "secret-ish provider body" }, responseStatus), {
+            settings: {
+              FIREWORKS_API_KEY: "fixture-key",
+              FIREWORKS_ACCOUNT_SLUG: "fixture-account",
+            },
+          }),
+        ),
+      ).rejects.toThrow(expectedKind);
+    }
+  });
+
   it("matches Groq Prometheus query paths, mixed scalar values and rate windows", async () => {
     const requests: Request[] = [];
     const snapshot = await groq.fetchUsage(
