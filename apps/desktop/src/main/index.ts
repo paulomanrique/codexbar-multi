@@ -70,6 +70,11 @@ import {
 } from "./provider-settings.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
+// Electron otherwise derives this directory from the executable name, which
+// becomes `Electron` in development and varies across packaged platforms.
+// Keep the product data namespace stable without teaching domain packages
+// anything about operating-system paths.
+app.setPath("userData", join(app.getPath("appData"), "codexbar-multi"));
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let persistence: NodeSqliteWorkerPersistence | undefined;
