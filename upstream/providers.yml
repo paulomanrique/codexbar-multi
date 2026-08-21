@@ -21,16 +21,21 @@ providers:
         - TestsLinux/*Codex*Tests.swift
       tsGlobs:
         - packages/providers/test/codex.test.ts
+        - apps/cli/test/codex-credential.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Codex/**/*
       - Tests/CodexBarTests/Fixtures/codex-*
       - Tests/CodexBarTests/Fixtures/*session*
     tsPaths:
-      expected: [packages/providers/src/providers/codex.ts]
+      expected:
+        - packages/providers/src/providers/codex.ts
+        - packages/providers/src/providers/codex-pat.ts
       real:
         - packages/providers/src/providers/codex.ts
+        - packages/providers/src/providers/codex-pat.ts
     tsTestGlobs:
       - packages/providers/test/codex.test.ts
+      - apps/cli/test/codex-credential.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

@@ -124,6 +124,8 @@ components:
       - packages/providers/src/**/*.ts
     tests:
       - Tests/CodexBarTests/APITokenFetchStrategyTests.swift
+      - Tests/CodexBarTests/CodexPATTests.swift
+      - Tests/CodexBarTests/CodexPATAppPublicationTests.swift
       - Tests/CodexBarTests/*Credentials*Tests.swift
       - Tests/CodexBarTests/BrowserCookie*.swift
     fixtures:
