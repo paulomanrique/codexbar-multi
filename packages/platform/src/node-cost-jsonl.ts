@@ -9,6 +9,7 @@ import {
   type ClaudeJsonlState,
   type CodexJsonlParseResult,
   type CodexJsonlForkBaseline,
+  type CodexJsonlPriorityTurn,
   type CodexJsonlState,
   type CostJsonlCursor,
   type CostJsonlTokens,
@@ -99,6 +100,7 @@ interface NodeCostJsonlOptions<ParserState> {
 
 export interface NodeCodexCostJsonlOptions extends NodeCostJsonlOptions<CodexJsonlState> {
   readonly forkBaseline?: CodexJsonlForkBaseline;
+  readonly priorityTurns?: Readonly<Record<string, CodexJsonlPriorityTurn>>;
   readonly collectTotalsForForkBaseline?: boolean;
 }
 export interface NodeClaudeCostJsonlOptions extends NodeCostJsonlOptions<ClaudeJsonlState> {}
@@ -247,6 +249,7 @@ export const scanNodeCodexCostJsonl = async (
         ...(initial.parser === undefined ? {} : { state: initial.parser }),
         ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
         ...(options.forkBaseline === undefined ? {} : { forkBaseline: options.forkBaseline }),
+        ...(options.priorityTurns === undefined ? {} : { priorityTurns: options.priorityTurns }),
         ...(options.collectTotalsForForkBaseline === true
           ? { collectTotalsForForkBaseline: true }
           : {}),
@@ -322,6 +325,8 @@ export const scanNodeCodexForkFamily = async (options: {
   /** Defaults to 512 KiB and can only make a pass more restrictive. */
   readonly maxLineBytes?: number;
   readonly catalog?: PricingCatalog;
+  /** Host-resolved, sanitized trace metadata used only for final row pricing. */
+  readonly priorityTurns?: Readonly<Record<string, CodexJsonlPriorityTurn>>;
 }): Promise<NodeCodexForkFamilyResult> => {
   const maxSources = boundedForkFamilyOption(
     options.maxSources ?? defaultForkFamilyMaxSources,
@@ -494,6 +499,7 @@ export const scanNodeCodexForkFamily = async (options: {
         maxBytes,
         maxLineBytes,
         ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+        ...(options.priorityTurns === undefined ? {} : { priorityTurns: options.priorityTurns }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       if (!isCompleteCodexScan(scan)) {

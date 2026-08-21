@@ -11,6 +11,7 @@ import { join, resolve, win32 } from "node:path";
 import { Effect } from "effect";
 import {
   InfrastructureError,
+  type CodexJsonlPriorityTurn,
   type CostUsageRecord,
   type CostUsageRepositoryService,
 } from "@codexbar/core";
@@ -24,6 +25,7 @@ import {
   type NodeClaudeCostJsonlState,
   type NodeCodexCostJsonlState,
 } from "./node-cost-jsonl.ts";
+import { makeNodeCodexPriorityTurnResolver } from "./node-codex-priority.ts";
 
 const scannerCheckpointVersion = 1 as const;
 const maximumScanAttempts = 2;
@@ -85,6 +87,8 @@ export interface NodeLocalCostUsageScannerOptions {
   readonly maxSourceBytes?: number;
   /** Optional stricter aggregate read budget for one Codex fork family. */
   readonly maxCodexFamilyScanBytes?: number;
+  /** Host-owned Codex trace database; absent defaults to `<CODEX_HOME>/logs_2.sqlite`. */
+  readonly codexPriorityDatabasePath?: string;
 }
 
 interface CheckpointEnvelope<State> {
@@ -115,6 +119,7 @@ export const makeNodeLocalCostUsageScanner = (
   const home = options.homeDirectory ?? homedir();
   const platform = options.platform ?? process.platform;
   const defaultRoots = resolveNodeLocalCostRoots(environment, home, platform);
+  const codexHome = resolveNodeCodexHome(environment, home, platform);
   const roots = {
     codex: options.roots?.codex ?? defaultRoots.codex,
     claude: options.roots?.claude ?? defaultRoots.claude,
@@ -129,6 +134,16 @@ export const makeNodeLocalCostUsageScanner = (
     "maxCodexFamilyScanBytes",
     maximumCodexFamilyScanBytes,
   );
+  // Explicit test roots are a closed corpus. Never reach into the ambient
+  // Codex home beside them unless the host also explicitly supplied its trace
+  // database; this keeps fixtures hermetic and avoids an accidental live
+  // credential/trace probe during local tests.
+  const resolvePriorityTurns =
+    options.codexPriorityDatabasePath !== undefined || options.roots?.codex === undefined
+      ? makeNodeCodexPriorityTurnResolver({
+          databasePath: options.codexPriorityDatabasePath ?? join(codexHome, "logs_2.sqlite"),
+        })
+      : undefined;
 
   return {
     refresh: async (providerId, signal) => {
@@ -150,11 +165,28 @@ export const makeNodeLocalCostUsageScanner = (
             maxSourceBytes,
           ) > maxCodexFamilyBytes;
         if (!inventory.truncated && !familyByteBoundExceeded) {
+          let priorityTurns;
+          try {
+            priorityTurns = resolvePriorityTurns === undefined ? {} : await resolvePriorityTurns();
+          } catch {
+            // Treat an unreadable/corrupt priority source as incomplete and
+            // leave the previous family generation authoritative. Repricing
+            // the family as standard would silently erase a known surcharge.
+            return {
+              providerId,
+              scannedSources: inventory.files.length,
+              committedSources: 0,
+              retries,
+              inventoryTruncated: inventory.truncated,
+              incomplete: true,
+            };
+          }
           const committed = await refreshCodexFamily({
             files: inventory.files.map((file) => file.path),
             costs: options.costs,
             maxSourceBytes,
             signal,
+            priorityTurns,
           });
           committedSources = committed.committedSources;
           retries = committed.retries;
@@ -207,6 +239,7 @@ const refreshCodexFamily = async (options: {
   readonly costs: CostUsageRepositoryService;
   readonly maxSourceBytes: number;
   readonly signal: AbortSignal | undefined;
+  readonly priorityTurns: Readonly<Record<string, CodexJsonlPriorityTurn>>;
 }): Promise<{
   readonly committedSources: number;
   readonly retries: number;
@@ -241,6 +274,7 @@ const refreshCodexFamily = async (options: {
         maxBytes: options.maxSourceBytes,
         maxLineBytes: maximumLineBytes,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        priorityTurns: options.priorityTurns,
       });
       // An unresolved member means the graph is incomplete or ambiguous. No
       // member checkpoint is advanced; keeping the old family is safer than
@@ -348,6 +382,23 @@ export const resolveNodeLocalCostRoots = (
         ]
       : [paths.join(expand(claudeConfig, homeDirectory), "projects")];
   return { codex: [codexSessions, codexArchived], claude: claudeRoots };
+};
+
+/** Isolated so the trace adapter follows the exact same CODEX_HOME semantics. */
+const resolveNodeCodexHome = (
+  environment: Readonly<Record<string, string | undefined>>,
+  homeDirectory: string,
+  platform: NodeJS.Platform,
+): string => {
+  const paths = platform === "win32" ? win32 : { join, resolve };
+  const configured = environment.CODEX_HOME?.trim();
+  if (configured === undefined || configured.length === 0)
+    return paths.join(homeDirectory, ".codex");
+  if (configured === "~") return homeDirectory;
+  if (configured.startsWith("~/") || configured.startsWith("~\\")) {
+    return paths.join(homeDirectory, configured.slice(2));
+  }
+  return paths.resolve(configured);
 };
 
 const refreshOneSource = async (options: {

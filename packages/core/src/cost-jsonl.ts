@@ -8,6 +8,8 @@
  */
 import {
   claudeCostUSD,
+  codexAPIFastCostUSD,
+  codexAPIFastMultiplier,
   codexCostUSD,
   codexUnattributedModel,
   normalizeClaudeModel,
@@ -35,6 +37,12 @@ export interface CostJsonlUsageRow {
   readonly provenance: CostProvenance;
   /** Stable within a source file when the source exposes message/request IDs. */
   readonly dedupeKey?: string;
+  /** Codex's task/turn owner, retained for trace-priority attribution. */
+  readonly turnId?: string;
+  /** The model selected by a priority trace, when it is safe to price with it. */
+  readonly pricingModel?: string;
+  /** Swift's priority overlay marks a turn even when no Fast price exists. */
+  readonly pricingMode?: "standard" | "priority";
 }
 
 export interface CostJsonlCursor {
@@ -181,6 +189,8 @@ export async function scanCostJsonlChunks(
 
 export interface CodexJsonlState {
   readonly currentModel?: string;
+  /** The last `task_started` turn applies to subsequent token observations. */
+  readonly currentTurnId?: string;
   readonly totals?: CostJsonlTokens;
   /** Session metadata read from the leaf `session_meta` record, when present. */
   readonly session?: CodexJsonlSessionMetadata;
@@ -213,6 +223,15 @@ export interface CodexJsonlForkBaseline {
   readonly totals: CostJsonlTokens;
 }
 
+/**
+ * Sanitized metadata supplied by the host-owned Codex trace-log adapter.
+ * It intentionally contains no trace/request body and lets the portable
+ * parser preserve Swift's standard-vs-priority cost decision.
+ */
+export interface CodexJsonlPriorityTurn {
+  readonly model?: string;
+}
+
 /** One raw cumulative observation used only by the platform fork resolver. */
 export interface CodexJsonlTotalSnapshot {
   readonly timestamp: number;
@@ -228,6 +247,8 @@ export interface CodexJsonlParseOptions {
    * baseline applies only after this file declares the same parent session.
    */
   readonly forkBaseline?: CodexJsonlForkBaseline;
+  /** Priority turns resolved by a host adapter from Codex's trace database. */
+  readonly priorityTurns?: Readonly<Record<string, CodexJsonlPriorityTurn>>;
   readonly catalog?: PricingCatalog;
   readonly pricingDate?: (timestamp: number) => Date;
   /**
@@ -252,6 +273,7 @@ export async function parseCodexCostJsonl(
   options: CodexJsonlParseOptions,
 ): Promise<CodexJsonlParseResult> {
   let currentModel = optionalText(options.state?.currentModel);
+  let currentTurnId = optionalText(options.state?.currentTurnId);
   let totals =
     options.state?.totals === undefined ? undefined : normalizedTokens(options.state.totals);
   let session = normalizedCodexSession(options.state?.session);
@@ -295,6 +317,12 @@ export async function parseCodexCostJsonl(
       }
       if (value.type !== "event_msg") return;
       const payload = asObject(value.payload);
+      if (payload?.type === "task_started") {
+        // Match Swift exactly: an unidentifiable new task clears the prior
+        // turn instead of carrying its priority overlay into another turn.
+        currentTurnId = codexTurnId(payload);
+        return;
+      }
       if (payload?.type !== "token_count") return;
       const timestamp = parseTimestamp(value.timestamp);
       if (timestamp === undefined) return;
@@ -306,6 +334,7 @@ export async function parseCodexCostJsonl(
         optionalText(value.model) ??
         currentModel ??
         codexUnattributedModel;
+      const turnId = codexTurnId(info) ?? codexTurnId(payload) ?? currentTurnId;
       // A host-provided fork baseline is only trustworthy after the leaf has
       // identified its parent. Avoid charging a prefix if malformed input
       // places token records before its `session_meta` record.
@@ -354,8 +383,16 @@ export async function parseCodexCostJsonl(
       }
       if (delta === undefined || tokenCount(delta) === 0) return;
       const normalizedModel = normalizeCodexModel(model);
-      const costUsd = codexCostUSD({
-        model: normalizedModel,
+      const priority = turnId === undefined ? undefined : options.priorityTurns?.[turnId];
+      // Swift only promotes the trace model when it is one of the API Fast
+      // routes. An arbitrary trace alias must not cross-charge a token row.
+      const priorityModel = optionalText(priority?.model);
+      const pricingModel =
+        priorityModel !== undefined && codexAPIFastMultiplier(priorityModel) !== undefined
+          ? normalizeCodexModel(priorityModel)
+          : normalizedModel;
+      const pricingInput = {
+        model: pricingModel,
         inputTokens: delta.input,
         cachedInputTokens: delta.cachedInput,
         cacheWriteInputTokens: delta.cacheCreationInput,
@@ -364,7 +401,16 @@ export async function parseCodexCostJsonl(
           ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
           pricingDate: (options.pricingDate ?? dateFromMilliseconds)(timestamp),
         },
-      });
+      };
+      const standardCostUsd = codexCostUSD(pricingInput);
+      const priorityCostUsd =
+        priority === undefined ? undefined : codexAPIFastCostUSD(pricingInput);
+      // The upstream overlay never makes a priority turn cheaper than its
+      // standard calculation and declines Fast pricing for long context.
+      const costUsd =
+        priorityCostUsd === undefined
+          ? standardCostUsd
+          : Math.max(priorityCostUsd, standardCostUsd ?? priorityCostUsd);
       rows.push({
         provider: "codex",
         timestamp,
@@ -372,6 +418,9 @@ export async function parseCodexCostJsonl(
         tokens: delta,
         ...(costUsd === undefined ? {} : { costUsd }),
         provenance: costUsd === undefined ? "unknown" : "list-price-estimate",
+        ...(turnId === undefined ? {} : { turnId }),
+        ...(pricingModel === normalizedModel ? {} : { pricingModel }),
+        ...(priority === undefined ? {} : { pricingMode: "priority" as const }),
       });
     },
   });
@@ -380,6 +429,7 @@ export async function parseCodexCostJsonl(
     rows,
     state: {
       ...(currentModel === undefined ? {} : { currentModel }),
+      ...(currentTurnId === undefined ? {} : { currentTurnId }),
       ...(totals === undefined ? {} : { totals }),
       ...(session === undefined ? {} : { session }),
       ...(awaitingForkBaseline === undefined ? {} : { awaitingForkBaseline }),
@@ -519,6 +569,11 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function optionalText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/** Swift's fast JSONL parser accepts both current and legacy turn spellings. */
+function codexTurnId(value: Record<string, unknown> | undefined): string | undefined {
+  return optionalText(value?.turn_id) ?? optionalText(value?.turnId) ?? optionalText(value?.id);
 }
 
 function codexSessionMetadata(

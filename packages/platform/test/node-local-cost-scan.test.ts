@@ -186,6 +186,59 @@ describe("Node local cost scanner", () => {
     });
   });
 
+  it("rebuilds a Codex family with the Swift priority trace surcharge atomically", async () => {
+    await withPersistence(
+      "local-cost-family-priority",
+      async ({ directory, sessions, databasePath }) => {
+        const rollout = join(sessions, "rollout.jsonl");
+        const tracePath = join(directory, "logs_2.sqlite");
+        await writeFile(
+          rollout,
+          codexMeta("priority") +
+            `${JSON.stringify({
+              type: "event_msg",
+              timestamp: "2026-08-20T10:00:00Z",
+              payload: { type: "task_started", turn_id: "turn" },
+            })}\n` +
+            firstCodexEvent(10, 2),
+        );
+        const trace = new DatabaseSync(tracePath);
+        trace.exec("CREATE TABLE logs (ts TEXT, feedback_log_body TEXT)");
+        trace
+          .prepare("INSERT INTO logs (ts, feedback_log_body) VALUES (?, ?)")
+          .run(
+            "0",
+            'INFO turn.id=turn websocket request: {"type":"response.create","model":"gpt-5.6-terra","service_tier":"priority"}',
+          );
+        trace.close();
+        const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+        try {
+          await makeNodeLocalCostUsageScanner({
+            costs: persistence.costs,
+            roots: { codex: [sessions] },
+            codexPriorityDatabasePath: tracePath,
+          }).refresh("codex");
+          // 10 input x $2/M + 2 output x $12/M, then Swift API Fast x2.
+          await expect(
+            Effect.runPromise(persistence.costs.list("codex", 0)),
+          ).resolves.toMatchObject([{ inputTokens: 10, outputTokens: 2, costUsd: 0.000088 }]);
+          // A warm refresh must replace this family generation, never append a
+          // second copy while its JSONL checkpoint is already populated.
+          await makeNodeLocalCostUsageScanner({
+            costs: persistence.costs,
+            roots: { codex: [sessions] },
+            codexPriorityDatabasePath: tracePath,
+          }).refresh("codex");
+          await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(
+            1,
+          );
+        } finally {
+          await Effect.runPromise(persistence.close);
+        }
+      },
+    );
+  });
+
   it("does not advance an existing Codex family when a newly discovered member is unresolved", async () => {
     await withPersistence("local-cost-family-partial", async ({ sessions, databasePath }) => {
       const parent = join(sessions, "parent.jsonl");

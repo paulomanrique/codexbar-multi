@@ -140,6 +140,84 @@ describe("Codex cost JSONL parser (Swift parity)", () => {
     expect(result.rows[0]?.costUsd).toBeUndefined();
   });
 
+  it("preserves Swift task_started priority metadata across an incremental cursor", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"task_started","turn_id":"priority-turn"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":10,"output_tokens":2}}}}\n',
+      ),
+      { priorityTurns: { "priority-turn": { model: "gpt-5.6-terra" } }, scan: {} },
+    );
+    expect(first.state.currentTurnId).toBe("priority-turn");
+    expect(first.rows[0]).toMatchObject({
+      turnId: "priority-turn",
+      pricingMode: "priority",
+      model: "gpt-5.6-terra",
+    });
+    // API Fast is a 2x rate for Terra at this request size. This locks the
+    // Swift `max(priority, standard)` overlay rather than just a label.
+    expect(first.rows[0]?.costUsd).toBeCloseTo(0.000088, 12);
+
+    const second = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:02Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":15,"output_tokens":3}}}}\n',
+      ),
+      {
+        state: first.state,
+        priorityTurns: { "priority-turn": { model: "gpt-5.6-terra" } },
+        scan: { cursor: first.cursor },
+      },
+    );
+    expect(second.rows[0]).toMatchObject({
+      turnId: "priority-turn",
+      pricingMode: "priority",
+      tokens: { input: 5, output: 1 },
+    });
+  });
+
+  it("uses a trace completion alias only when it has a supported Swift Fast price", async () => {
+    const supported = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"task_started","turn_id":"turn"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"model":"gpt-5.4-mini","total_token_usage":{"input_tokens":10,"output_tokens":2}}}}\n',
+      ),
+      { priorityTurns: { turn: { model: "gpt-5.6-terra" } }, scan: {} },
+    );
+    expect(supported.rows[0]).toMatchObject({
+      model: "gpt-5.4-mini",
+      pricingModel: "gpt-5.6-terra",
+      pricingMode: "priority",
+    });
+
+    const unsupported = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"task_started","turn_id":"turn"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"model":"gpt-5.4-mini","total_token_usage":{"input_tokens":10,"output_tokens":2}}}}\n',
+      ),
+      { priorityTurns: { turn: { model: "unpriced-trace-alias" } }, scan: {} },
+    );
+    expect(unsupported.rows[0]).toMatchObject({
+      model: "gpt-5.4-mini",
+      pricingMode: "priority",
+    });
+    expect(unsupported.rows[0]?.pricingModel).toBeUndefined();
+  });
+
+  it("clears a stale priority turn when Swift's task_started record has no turn id", async () => {
+    const result = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"task_started","turn_id":"priority-turn"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"event_msg"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:02Z","payload":{"type":"task_started"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:03Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":10,"output_tokens":2}}}}\n',
+      ),
+      { priorityTurns: { "priority-turn": { model: "gpt-5.6-terra" } }, scan: {} },
+    );
+    expect(result.rows[0]).toMatchObject({ model: "gpt-5.6-terra" });
+    expect(result.rows[0]?.pricingMode).toBeUndefined();
+    expect(result.state.currentTurnId).toBeUndefined();
+  });
+
   it("fails closed after a cumulative counter drop instead of guessing fork/interleaving deltas", async () => {
     const initial = await parseCodexCostJsonl(
       chunks(
