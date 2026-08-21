@@ -66,6 +66,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Port provider lane projection plus generic 5h/weekly source-identity reconciliation.
   - [x] Connect the always-tracked generic OpenCode Go history to desktop and CLI consumers.
   - [ ] Connect dedicated Codex, Claude, and Antigravity account-ownership history flows.
+    - [x] Connect Codex canonical account-owned plan history to desktop and CLI.
+    - [ ] Port Claude OAuth/token-account plan history ownership.
+    - [ ] Port Antigravity family/account plan history ownership.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.
   - [ ] Add persistent snapshot/cache TTL, status probes, real low-power/thermal/activity adapters, plugin refresh, and CLI orchestration.
