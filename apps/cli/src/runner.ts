@@ -4,6 +4,7 @@ import {
   ClassifiedFetchFailure,
   InfrastructureError,
   NoAvailableStrategy,
+  PlanUtilizationHistoryCoordinator,
   type ProviderFetchContext,
   type ProviderFetchOutcome,
   type ProviderRuntimeService,
@@ -34,6 +35,7 @@ import {
 import {
   CLAUDE_SWAP_MAX_OUTPUT_BYTES,
   makeNodeAgentSessionRuntime,
+  makeNodePlanUtilizationHistoryStore,
   refreshClaudeSwapAccounts,
   switchClaudeSwapAccount,
 } from "@codexbar/platform";
@@ -123,6 +125,12 @@ export interface CLIProviderRuntime {
     context: ProviderFetchContext,
     signal?: AbortSignal,
   ) => Promise<ProviderFetchOutcome>;
+  /** Best-effort host persistence for provider plan-utilization samples. */
+  readonly recordPlanUtilization?: (
+    providerId: ProviderId,
+    snapshot: UsageSnapshot,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   /** Optional in-memory/host-injected configuration store used by `config`. */
   readonly config?: CLIConfigStore;
   readonly costs?: CLICostStore;
@@ -532,6 +540,7 @@ const runUsage = async (
   arguments_: readonly string[],
   io: CLIIO,
   runtime: CLIProviderRuntime,
+  signal?: AbortSignal,
 ): Promise<CLICommandResult> => {
   const parsed = parseCLIArguments(arguments_, true);
   const output = outputFor(arguments_, true);
@@ -559,7 +568,15 @@ const runUsage = async (
       continue;
     }
     try {
-      const outcome = await runtime.fetch(providerId, { sourceMode: "auto", includeCredits: true });
+      const outcome = await runtime.fetch(
+        providerId,
+        { sourceMode: "auto", includeCredits: true },
+        signal,
+      );
+      await runtime.recordPlanUtilization?.(providerId, outcome.snapshot, signal).catch(() => {
+        // The CLI usage result is already complete. History remains best
+        // effort and cannot replace it with a storage error.
+      });
       payload.push({
         provider: providerId,
         source: outcome.source,
@@ -590,8 +607,9 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
     return { exitCode: CLIExitCode.success };
   }
   if (command === undefined || command.startsWith("-"))
-    return runUsage(raw, options.io, options.runtime);
-  if (command === "usage") return runUsage(raw.slice(1), options.io, options.runtime);
+    return runUsage(raw, options.io, options.runtime, options.signal);
+  if (command === "usage")
+    return runUsage(raw.slice(1), options.io, options.runtime, options.signal);
   if (command === "providers") return runProviders(raw.slice(1), options.io, options.runtime);
   if (command === "cost")
     return runCost(
@@ -643,7 +661,7 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
     command === "both" ||
     options.runtime.providers.some((provider) => provider.id === command.toLowerCase())
   ) {
-    return runUsage(raw, options.io, options.runtime);
+    return runUsage(raw, options.io, options.runtime, options.signal);
   }
   options.io.stderr(`Error: Unknown command '${command}'\n${usageHelp}`);
   return { exitCode: CLIExitCode.usage };
@@ -660,6 +678,11 @@ export const makeNodeCLIProviderRuntime = (
   const configPath = resolveCLIConfigPath(environment);
   const configRepository = makeNodeConfigRepository(configPath);
   const databasePath = join(dirname(configPath), "usage.sqlite");
+  const planUtilizationHistory = new PlanUtilizationHistoryCoordinator(
+    makeNodePlanUtilizationHistoryStore({
+      directoryPath: join(dirname(configPath), "history"),
+    }),
+  );
   let costPersistencePromise: Promise<NodeSqlitePersistence> | undefined;
   const credentials = makeNativeCredentialStore();
   const hookEnvironment = Object.fromEntries(
@@ -793,6 +816,17 @@ export const makeNodeCLIProviderRuntime = (
     })),
     fetch: (providerId, context, signal) =>
       Effect.runPromise(runtime.fetch(providerId, context), signal === undefined ? {} : { signal }),
+    recordPlanUtilization: async (providerId, snapshot, signal) => {
+      if (providerId !== "opencodego") return;
+      await Effect.runPromise(
+        planUtilizationHistory.recordGenericSessionEquivalent({
+          providerId,
+          snapshot,
+          capturedAt: new Date(),
+        }),
+        signal === undefined ? {} : { signal },
+      );
+    },
     config: makeNodeCLIConfigStore(configRepository, configPath),
     costs: costStore,
     costScanner,

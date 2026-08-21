@@ -97,6 +97,32 @@ describe("CodexBar Multi CLI runner", () => {
     expect(payload[0]).toMatchObject({ provider: "openai", source: "api-token" });
   });
 
+  it("passes cancellation to usage fetches and records successful plan history best effort", async () => {
+    const cancellation = new AbortController();
+    const recorded: Array<{ providerId: ProviderId; snapshot: UsageSnapshot }> = [];
+    const output = capture();
+    const result = await runCLI({
+      argv: ["usage", "openai", "--json"],
+      io: output.io,
+      signal: cancellation.signal,
+      runtime: {
+        ...runtime(),
+        fetch: async (providerId, _context, signal) => {
+          expect(signal).toBe(cancellation.signal);
+          return outcome(providerId);
+        },
+        recordPlanUtilization: async (providerId, value, signal) => {
+          expect(signal).toBe(cancellation.signal);
+          recorded.push({ providerId, snapshot: value });
+          throw new Error("history unavailable");
+        },
+      },
+    });
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    expect(recorded).toEqual([{ providerId: "openai", snapshot }]);
+    expect(JSON.parse(output.stdout[0] ?? "")[0]).toMatchObject({ provider: "openai" });
+  });
+
   it("uses the same JSON payload for JSON and TOON, including Swift snapshot wire keys", async () => {
     const json = capture();
     await runCLI({
