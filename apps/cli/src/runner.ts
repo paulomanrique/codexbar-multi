@@ -18,6 +18,7 @@ import {
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
+  makeNodeLocalCostUsageScanner,
   makeNodeProcessRunner,
   makeNodePrivateFileStore,
   resolveNodeClaudeSwapExecutablePath,
@@ -38,7 +39,7 @@ import {
 import { discoverCodexCredential } from "./codex-credential.ts";
 import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config.ts";
 import { resolveCLIConfigPath } from "./config-path.ts";
-import { runCost, type CLICostStore } from "./cost.ts";
+import { runCost, type CLICostScanner, type CLICostStore } from "./cost.ts";
 import { runCards } from "./cards.ts";
 import {
   claudeSwapActivatableSlot,
@@ -124,6 +125,7 @@ export interface CLIProviderRuntime {
   /** Optional in-memory/host-injected configuration store used by `config`. */
   readonly config?: CLIConfigStore;
   readonly costs?: CLICostStore;
+  readonly costScanner?: CLICostScanner;
   readonly cache?: CLICacheStore;
   readonly runHook?: (request: HookProcessRequest) => Promise<{ readonly stdout: string }>;
   readonly cookies?: CLICookieStore;
@@ -141,6 +143,8 @@ export interface CLICommandRunnerOptions {
   readonly argv: readonly string[];
   readonly io: CLIIO;
   readonly runtime: CLIProviderRuntime;
+  /** Node entrypoints inject SIGINT/SIGTERM here; embedded callers own their signal. */
+  readonly signal?: AbortSignal;
 }
 
 export interface CLICommandResult {
@@ -592,6 +596,10 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
         : {
             costs: options.runtime.costs,
             providers: options.runtime.providers,
+            ...(options.runtime.costScanner === undefined
+              ? {}
+              : { scanner: options.runtime.costScanner }),
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
             ...(options.runtime.now === undefined ? {} : { now: options.runtime.now }),
           },
     );
@@ -752,6 +760,23 @@ export const makeNodeCLIProviderRuntime = (
         }),
       ),
   };
+  const costStore: CLICostStore = {
+    list: async (providerId, since, limit) => {
+      costPersistencePromise ??= Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+      const persistence = await costPersistencePromise;
+      return Effect.runPromise(persistence.costs.list(providerId, since, limit));
+    },
+  };
+  const costScanner: CLICostScanner = {
+    refresh: async (providerId, signal) => {
+      costPersistencePromise ??= Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+      const persistence = await costPersistencePromise;
+      return makeNodeLocalCostUsageScanner({
+        costs: persistence.costs,
+        environment,
+      }).refresh(providerId, signal);
+    },
+  };
   return {
     providers: PROVIDERS.map(({ id, name, status, isPrimaryProvider }) => ({
       id,
@@ -762,13 +787,8 @@ export const makeNodeCLIProviderRuntime = (
     fetch: (providerId, context, signal) =>
       Effect.runPromise(runtime.fetch(providerId, context), signal === undefined ? {} : { signal }),
     config: makeNodeCLIConfigStore(configRepository, configPath),
-    costs: {
-      list: async (providerId, since, limit) => {
-        costPersistencePromise ??= Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
-        const persistence = await costPersistencePromise;
-        return Effect.runPromise(persistence.costs.list(providerId, since, limit));
-      },
-    },
+    costs: costStore,
+    costScanner,
     cache: {
       clearCookies: async (provider) => {
         const ids = provider === undefined ? PROVIDERS.map(({ id }) => id) : [provider];

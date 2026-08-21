@@ -12,9 +12,21 @@ export interface CLICostStore {
   ) => Promise<readonly CostUsageRecord[]>;
 }
 
+/** Host-owned local refresh; it has no renderer or provider-secret access. */
+export interface CLICostScanner {
+  readonly refresh: (
+    providerId: ProviderId,
+    signal?: AbortSignal,
+  ) => Promise<{ readonly inventoryTruncated?: boolean; readonly incomplete?: boolean }>;
+}
+
 export interface CostCommandRuntime {
   readonly costs: CLICostStore;
   readonly providers: readonly CLIProviderDescriptor[];
+  /** Optional during migration so embedded/test hosts remain read-only. */
+  readonly scanner?: CLICostScanner;
+  /** An embedding host may cancel a refresh without exposing process signals to core. */
+  readonly signal?: AbortSignal;
   readonly now?: () => number;
 }
 
@@ -231,6 +243,8 @@ type CostPayload = {
     readonly unmetered: 0;
     readonly estimated: 0;
   };
+  /** The bounded local inventory stopped before every source was inspected. */
+  readonly refreshIncomplete?: true;
   readonly error?: { readonly code: number; readonly message: string; readonly kind: "provider" };
 };
 
@@ -241,6 +255,7 @@ const makePayload = (
   records: readonly CostUsageRecord[],
   days: number,
   now: number,
+  refreshIncomplete = false,
 ): CostPayload => {
   const dailyMap = new Map<string, { input: number; output: number; cost: number }>();
   let inputTokens = 0;
@@ -297,6 +312,7 @@ const makePayload = (
     },
     provenance: "listPriceEstimate",
     coverage,
+    ...(refreshIncomplete ? { refreshIncomplete: true as const } : {}),
   };
 };
 
@@ -307,6 +323,9 @@ const textPayload = (descriptor: CLIProviderDescriptor, payload: CostPayload): s
     `${descriptor.name} Cost (API-rate estimate)`,
     `Today: ${textMoney(payload.sessionCostUSD)} · ${textNumber(payload.sessionTokens)} tokens`,
     `Last ${payload.historyDays} days: ${textMoney(payload.last30DaysCostUSD)} · ${textNumber(payload.last30DaysTokens)} tokens`,
+    ...(payload.refreshIncomplete
+      ? ["Local scan incomplete; only a bounded subset was refreshed"]
+      : []),
     "Not a subscription bill or plan value · local usage × public API prices",
   ].join("\n");
 
@@ -340,12 +359,8 @@ export const runCost = async (
     else io.stdout(JSON.stringify([errorPayload("cli", "Cost store is unavailable")]));
     return { exitCode: 1 };
   }
-  if (refresh || providerNativeOnly || groupBy !== "none") {
-    const requested = refresh
-      ? "--refresh"
-      : providerNativeOnly
-        ? "--provider-native-only"
-        : `--group-by ${groupBy}`;
+  if (providerNativeOnly || groupBy !== "none") {
+    const requested = providerNativeOnly ? "--provider-native-only" : `--group-by ${groupBy}`;
     const message = `${requested} requires the JSONL cost scanner, which is not available yet`;
     if (output.format === "text" && !output.jsonOnly) io.stderr(`Error: ${message}`);
     else io.stdout(JSON.stringify([errorPayload("cli", message)]));
@@ -381,15 +396,28 @@ export const runCost = async (
   let exitCode: CLIExitCode = 0;
   for (const descriptor of candidates) {
     try {
+      let refreshIncomplete = false;
+      if (refresh) {
+        if (runtime.scanner === undefined) {
+          throw new Error("--refresh requires the JSONL cost scanner, which is not available yet");
+        }
+        const refreshed = await runtime.scanner.refresh(descriptor.id, runtime.signal);
+        refreshIncomplete = refreshed.incomplete === true || refreshed.inventoryTruncated === true;
+      }
       const records = await runtime.costs.list(descriptor.id, since);
-      const payload = makePayload(descriptor.id, records, days, now);
+      const payload = makePayload(descriptor.id, records, days, now, refreshIncomplete);
       payloads.push(payload);
       if (output.format === "text" && !output.jsonOnly) {
         sections.push(textPayload(descriptor, payload));
       }
-    } catch {
+    } catch (error) {
       exitCode = 1;
-      payloads.push(errorPayload(descriptor.id, "Unable to read cost history") as CostPayload);
+      const detail = error instanceof Error ? error.message : "Unable to read cost history";
+      const safeMessage = /cost refresh|jsonl cost scanner|browser-session source/i.test(detail)
+        ? detail
+        : "Unable to read cost history";
+      payloads.push(errorPayload(descriptor.id, safeMessage) as CostPayload);
+      if (output.format === "text" && !output.jsonOnly) io.stderr(`Error: ${safeMessage}`);
     }
   }
   if (output.format === "text") {

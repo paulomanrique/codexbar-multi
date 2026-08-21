@@ -143,4 +143,90 @@ describe("CodexBar Multi cost CLI", () => {
       expect(output.stderr[0]).toContain("requires the JSONL cost scanner");
     }
   });
+
+  it("runs the injected JSONL scanner before reading history and exposes bounded inventory", async () => {
+    const output = capture();
+    const refreshed: string[] = [];
+    const result = await runCLI({
+      argv: ["cost", "codex", "--refresh", "--format", "json"],
+      io: output.io,
+      runtime: {
+        ...runtime(),
+        costScanner: {
+          refresh: async (providerId) => {
+            refreshed.push(providerId);
+            return { inventoryTruncated: true };
+          },
+        },
+      },
+    });
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    expect(refreshed).toEqual(["codex"]);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject([
+      { provider: "codex", refreshIncomplete: true },
+    ]);
+
+    const text = capture();
+    const textResult = await runCLI({
+      argv: ["cost", "codex", "--refresh"],
+      io: text.io,
+      runtime: {
+        ...runtime(),
+        costScanner: { refresh: async () => ({ inventoryTruncated: true }) },
+      },
+    });
+    expect(textResult.exitCode).toBe(CLIExitCode.success);
+    expect(text.stdout[0]).toContain("Local scan incomplete");
+  });
+
+  it("passes host cancellation to the scanner and keeps cursor's distinct native source fail-closed", async () => {
+    const controller = new AbortController();
+    const output = capture();
+    const result = await runCLI({
+      argv: ["cost", "codex", "--refresh", "--format", "json"],
+      io: output.io,
+      runtime: {
+        ...runtime(),
+        providers: [
+          ...runtime().providers,
+          { id: "cursor", name: "Cursor", status: "partial", isPrimaryProvider: true },
+        ],
+        costScanner: {
+          refresh: async (_providerId, signal) => {
+            expect(signal).toBe(controller.signal);
+            throw new Error("Cost refresh was cancelled");
+          },
+        },
+      },
+      signal: controller.signal,
+    });
+    expect(result.exitCode).toBe(CLIExitCode.failure);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject([
+      { provider: "codex", error: { message: "Cost refresh was cancelled" } },
+    ]);
+
+    const cursor = capture();
+    const cursorResult = await runCLI({
+      argv: ["cost", "cursor", "--refresh", "--format", "json"],
+      io: cursor.io,
+      runtime: {
+        ...runtime(),
+        providers: [
+          ...runtime().providers,
+          { id: "cursor", name: "Cursor", status: "partial", isPrimaryProvider: true },
+        ],
+        costScanner: {
+          refresh: async () => {
+            throw new Error(
+              "Cursor cost refresh requires its browser-session source, which is not available in this local scanner yet",
+            );
+          },
+        },
+      },
+    });
+    expect(cursorResult.exitCode).toBe(CLIExitCode.failure);
+    expect(JSON.parse(cursor.stdout[0] ?? "")).toMatchObject([
+      { provider: "cursor", error: { message: expect.stringContaining("browser-session source") } },
+    ]);
+  });
 });
