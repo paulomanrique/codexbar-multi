@@ -42,6 +42,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Keep overview enablement/source separate from TypeScript implementation status.
 - [ ] Run native smoke tests on Windows, Linux, and macOS.
   - [x] Linux Electron and packaged-main smoke under isolated profiles.
+  - [x] Windows x64 Node SEA build plus plugin install/approve/execute/remove smoke.
 
 ## Milestone 3 — core, persistence, CLI, and legacy import
 
@@ -55,7 +56,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.
   - [x] Connect the normal Node CLI to the sandboxed plugin lifecycle, native keyring, stdin-only secrets, and desktop-exported cookie credentials.
   - [x] Embed and verify the disposable QuickJS plugin child in the host-native SEA artifact.
-  - [ ] Complete serve Web UI/cache parity and produce the remaining Node SEA target matrix.
+  - [x] Port the serve Web UI, icon assets, progressive fill, cache/SWR, and cancellation behavior.
+  - [ ] Produce the remaining Node SEA target matrix.
   - [x] Produce a host-native Node SEA CLI executable with a verified extracted keyring addon; cross-compilation and release archives remain disabled.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
 - [ ] Connect legacy import UI/CLI and a separately-approved native credential migration.
