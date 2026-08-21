@@ -210,6 +210,70 @@ describe("Node SQLite worker persistence", () => {
     }
   });
 
+  it("preserves both tables and remains usable after a worker retention failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-retention-failure-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    try {
+      for (const recordedAt of [1, 2]) {
+        await Effect.runPromise(
+          persistence.history.append({
+            providerId: "codex" as ProviderId,
+            recordedAt,
+            snapshot: snapshot(`2026-01-01T00:00:0${recordedAt}Z`),
+          }),
+        );
+        await Effect.runPromise(
+          persistence.costs.append({
+            providerId: "codex" as ProviderId,
+            recordedAt,
+            inputTokens: recordedAt,
+            outputTokens: recordedAt,
+            costUsd: recordedAt / 100,
+          }),
+        );
+      }
+      const inspection = new DatabaseSync(databasePath);
+      try {
+        inspection.exec(`
+          CREATE TRIGGER fixture_abort_worker_cost_retention
+          BEFORE DELETE ON cost_usage_records
+          WHEN OLD.recorded_at = 2
+          BEGIN SELECT RAISE(ABORT, 'fixture worker retention failure'); END;
+        `);
+      } finally {
+        inspection.close();
+      }
+
+      await expect(
+        Effect.runPromise(persistence.retention.prune({ before: 3 })),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "prune usage records",
+      });
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toHaveLength(
+        2,
+      );
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(2);
+
+      const recovery = new DatabaseSync(databasePath);
+      try {
+        recovery.exec("DROP TRIGGER fixture_abort_worker_cost_retention");
+      } finally {
+        recovery.close();
+      }
+      await expect(Effect.runPromise(persistence.retention.prune({ before: 3 }))).resolves.toEqual({
+        deletedHistoryRecords: 2,
+        deletedCostUsageRecords: 2,
+      });
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([]);
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual([]);
+    } finally {
+      await Effect.runPromise(persistence.close).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("gets the latest history record in the worker with ID tie-breaking", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-latest-"));
     const databasePath = join(directory, "usage.sqlite");

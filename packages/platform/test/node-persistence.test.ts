@@ -588,6 +588,24 @@ describe("Node SQLite persistence", () => {
         2,
       );
       await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(2);
+
+      // The Swift store keeps the database after recoverable SQLite write
+      // failures, then continues using the same durable artifact once the
+      // condition is resolved. This portable trigger exercises the constraint
+      // path; disk-full injection is filesystem-specific but uses the same
+      // transaction/rollback boundary.
+      const recovery = new DatabaseSync(databasePath);
+      try {
+        recovery.exec("DROP TRIGGER fixture_abort_cost_retention");
+      } finally {
+        recovery.close();
+      }
+      await expect(Effect.runPromise(persistence.retention.prune({ before: 3 }))).resolves.toEqual({
+        deletedHistoryRecords: 2,
+        deletedCostUsageRecords: 2,
+      });
+      await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([]);
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual([]);
     } finally {
       await Effect.runPromise(persistence.close);
       await rm(directory, { recursive: true, force: true });
@@ -727,6 +745,15 @@ describe("Node SQLite persistence", () => {
         snapshot: snapshot("2026-01-01T00:00:00Z"),
       }),
     );
+    await Effect.runPromise(
+      writable.costs.append({
+        providerId: "codex" as ProviderId,
+        recordedAt: 1,
+        inputTokens: 1,
+        outputTokens: 1,
+        costUsd: 0.01,
+      }),
+    );
     await Effect.runPromise(writable.close);
 
     const readOnly = await Effect.runPromise(
@@ -748,6 +775,14 @@ describe("Node SQLite persistence", () => {
         _tag: "InfrastructureError",
         operation: "append cost usage record",
       });
+      await expect(
+        Effect.runPromise(readOnly.retention.prune({ before: 2 })),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "prune usage records",
+      });
+      await expect(Effect.runPromise(readOnly.history.list("codex", 0))).resolves.toHaveLength(1);
+      await expect(Effect.runPromise(readOnly.costs.list("codex", 0))).resolves.toHaveLength(1);
     } finally {
       await Effect.runPromise(readOnly.close);
       await rm(directory, { recursive: true, force: true });
