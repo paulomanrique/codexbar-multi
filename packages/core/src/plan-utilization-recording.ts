@@ -6,7 +6,7 @@ import type { InfrastructureError } from "./services.ts";
 export interface RecordFirstPartyPlanUtilizationInput {
   readonly coordinator: Pick<
     PlanUtilizationHistoryCoordinator,
-    "recordCodex" | "recordGenericSessionEquivalent"
+    "recordClaudeIdentity" | "recordCodex" | "recordGenericSessionEquivalent"
   >;
   readonly providerId: ProviderId;
   readonly snapshot: UsageSnapshot;
@@ -23,6 +23,11 @@ export const recordFirstPartyPlanUtilization = (
 ): Effect.Effect<boolean, InfrastructureError> => {
   if (input.providerId === "codex")
     return input.coordinator.recordCodex({
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+  if (input.providerId === "claude")
+    return input.coordinator.recordClaudeIdentity({
       snapshot: input.snapshot,
       capturedAt: input.capturedAt,
     });

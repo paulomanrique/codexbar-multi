@@ -67,6 +67,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Connect the always-tracked generic OpenCode Go history to desktop and CLI consumers.
   - [ ] Connect dedicated Codex, Claude, and Antigravity account-ownership history flows.
     - [x] Connect Codex canonical account-owned plan history to desktop and CLI.
+    - [x] Port Claude snapshot-identity plan history ownership and legacy email migration.
     - [ ] Port Claude OAuth/token-account plan history ownership.
     - [ ] Port Antigravity family/account plan history ownership.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.

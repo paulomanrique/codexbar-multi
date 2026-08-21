@@ -373,6 +373,167 @@ describe("plan-utilization history coordinator", () => {
     expect(saves).toBe(0);
   });
 
+  it("records Claude under a discriminated identity owner", async () => {
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({}),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordClaudeIdentity({
+          capturedAt,
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 10, windowMinutes: 300 },
+            secondary: { usedPercent: 20, windowMinutes: 10_080 },
+            tertiary: { usedPercent: 30, windowMinutes: 43_200 },
+            identity: {
+              providerId: "claude",
+              accountEmail: " Person@Example.com ",
+              accountOrganization: "Team Org",
+              loginMethod: "Claude Team",
+            },
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    const key = "21500b7561865f727d6ebb856154a26a8a3293af12e7f0271a0f1336d92ea351";
+    expect(saved?.claude?.preferredAccountKey).toBe(key);
+    expect(saved?.claude?.accounts[key]?.map((history) => history.name.rawValue)).toEqual([
+      "session",
+      "weekly",
+      "opus",
+    ]);
+    expect(saved?.claude?.unscoped).toEqual([]);
+  });
+
+  it("materializes legacy Claude email history into a new discriminator", async () => {
+    const legacyKey = "3c6300d22ba3ba6a16b29f2642fb28a9e0e76c74c3748fa6cadc10cc126ef5ca";
+    const weekly = new PlanUtilizationSeriesHistory({
+      name: "weekly",
+      windowMinutes: 10_080,
+      entries: [sample(42).entry],
+    });
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        claude: new PlanUtilizationHistoryBuckets({
+          preferredAccountKey: legacyKey,
+          accounts: { [legacyKey]: [weekly] },
+        }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordClaudeIdentity({
+        capturedAt: new Date("2026-08-21T13:05:00Z"),
+        snapshot: usageSnapshot({
+          secondary: { usedPercent: 55, windowMinutes: 10_080 },
+          identity: {
+            providerId: "claude",
+            accountEmail: "person@example.com",
+            accountOrganization: "Team Org",
+            loginMethod: "Claude Team",
+          },
+        }),
+      }),
+    );
+
+    const accountKey = "21500b7561865f727d6ebb856154a26a8a3293af12e7f0271a0f1336d92ea351";
+    expect(saved?.claude?.accounts[legacyKey]).toBeUndefined();
+    expect(saved?.claude?.preferredAccountKey).toBe(accountKey);
+    expect(
+      saved?.claude?.accounts[accountKey]?.[0]?.entries.map((entry) => entry.usedPercent),
+    ).toEqual([42, 55]);
+  });
+
+  it("adopts unscoped Claude history only before scoped ownership exists", async () => {
+    const unscopedWeekly = new PlanUtilizationSeriesHistory({
+      name: "weekly",
+      windowMinutes: 10_080,
+      entries: [sample(12).entry],
+    });
+    const existingKey = "existing";
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        claude: new PlanUtilizationHistoryBuckets({
+          unscoped: [unscopedWeekly],
+          accounts: {
+            [existingKey]: [
+              new PlanUtilizationSeriesHistory({
+                name: "weekly",
+                windowMinutes: 10_080,
+                entries: [sample(99).entry],
+              }),
+            ],
+          },
+        }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordClaudeIdentity({
+        capturedAt,
+        snapshot: usageSnapshot({
+          primary: { usedPercent: 10, windowMinutes: 300 },
+          identity: {
+            providerId: "claude",
+            accountEmail: "person@example.com",
+            loginMethod: "Claude Max",
+          },
+        }),
+      }),
+    );
+
+    expect(saved?.claude?.unscoped).toEqual([unscopedWeekly]);
+    expect(saved?.claude?.accounts[existingKey]?.[0]?.entries[0]?.usedPercent).toBe(99);
+  });
+
+  it("fails closed for missing, mismatched, or ownerless Claude identity", async () => {
+    let loads = 0;
+    let saves = 0;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.sync(() => {
+        loads += 1;
+        return {};
+      }),
+      save: () =>
+        Effect.sync(() => {
+          saves += 1;
+        }),
+    });
+    for (const identity of [
+      undefined,
+      { providerId: "codex" as const, accountEmail: "person@example.com" },
+      { providerId: "claude" as const },
+    ]) {
+      await expect(
+        Effect.runPromise(
+          coordinator.recordClaudeIdentity({
+            capturedAt,
+            snapshot: usageSnapshot({
+              primary: { usedPercent: 10, windowMinutes: 300 },
+              ...(identity === undefined ? {} : { identity }),
+            }),
+          }),
+        ),
+      ).resolves.toBe(false);
+    }
+    expect(loads).toBe(0);
+    expect(saves).toBe(0);
+  });
+
   it("removes only the requested provider and persists the new namespace", async () => {
     const other = "claude" as ProviderInstanceId;
     let saved: PlanUtilizationHistoryProviders | undefined;

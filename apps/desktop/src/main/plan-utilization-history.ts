@@ -8,7 +8,7 @@ import { Effect } from "effect";
 export interface RecordDesktopPlanUtilizationInput {
   readonly coordinator: Pick<
     PlanUtilizationHistoryCoordinator,
-    "recordCodex" | "recordGenericSessionEquivalent"
+    "recordClaudeIdentity" | "recordCodex" | "recordGenericSessionEquivalent"
   >;
   readonly providerId: ProviderId;
   readonly snapshot: UsageSnapshot;

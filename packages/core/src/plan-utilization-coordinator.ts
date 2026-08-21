@@ -19,7 +19,13 @@ import {
   codexHistoryCanonicalKey,
   resolveCodexHistoryIdentity,
 } from "./codex-history-ownership.ts";
+import {
+  claudePlanUtilizationIdentityAccountKey,
+  claudePlanUtilizationLegacyEmailAccountKey,
+} from "./claude-history-ownership.ts";
 import type { InfrastructureError } from "./services.ts";
+
+const PLAN_UTILIZATION_UNSCOPED_PREFERRED_KEY = "__unscoped__";
 
 export interface PlanUtilizationHistoryRepository {
   readonly load: Effect.Effect<PlanUtilizationHistoryProviders, InfrastructureError>;
@@ -151,6 +157,62 @@ export class PlanUtilizationHistoryCoordinator {
       samples,
       updatePreferredAccountKey: true,
     });
+  }
+
+  /**
+   * Records Claude only when the snapshot carries a provider-scoped identity
+   * with an email owner. OAuth file/keychain owner binding remains a separate
+   * host-mediated path; ownerless OAuth samples fail closed here.
+   */
+  recordClaudeIdentity(input: {
+    readonly snapshot: UsageSnapshot;
+    readonly capturedAt: Date;
+  }): Effect.Effect<boolean, InfrastructureError> {
+    const accountKey = claudePlanUtilizationIdentityAccountKey(input.snapshot);
+    if (accountKey === undefined) return Effect.succeed(false);
+    const samples = extractPlanUtilizationSeriesSamples({
+      providerId: "claude",
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+    if (samples.length === 0) return Effect.succeed(false);
+
+    const ensureLoaded = this.#ensureLoaded;
+    const stateRef = this.#state;
+    const repository = this.#repository;
+    return this.#semaphore.withPermit(
+      Effect.gen(function* () {
+        const state = yield* ensureLoaded;
+        const providers = cloneProviders(state.providers);
+        const buckets = providers.claude ?? new PlanUtilizationHistoryBuckets();
+        const originalBuckets = cloneBuckets(buckets);
+        const canAdoptUnscoped =
+          buckets.preferredAccountKey !== PLAN_UTILIZATION_UNSCOPED_PREFERRED_KEY &&
+          Object.keys(buckets.accounts).length === 0;
+
+        materializeLegacyClaudeHistory({
+          accountKey,
+          snapshot: input.snapshot,
+          buckets,
+        });
+        buckets.preferredAccountKey = accountKey;
+        if (canAdoptUnscoped) adoptUnscopedHistory(accountKey, buckets);
+
+        const existing = buckets.historiesFor(accountKey);
+        const updated = updatePlanUtilizationHistories(existing, samples);
+        if (updated !== undefined) buckets.setHistories(updated, accountKey);
+        if (bucketsEqual(buckets, originalBuckets)) return false;
+
+        const nextProviders = { ...providers, claude: buckets };
+        yield* Ref.set(stateRef, {
+          loaded: true,
+          revision: state.revision + 1,
+          providers: nextProviders,
+        });
+        yield* repository.save(cloneProviders(nextProviders));
+        return true;
+      }),
+    );
   }
 
   /**
@@ -322,6 +384,52 @@ const cloneHistories = (
         ),
       }),
   );
+
+const materializeLegacyClaudeHistory = (input: {
+  readonly accountKey: string;
+  readonly snapshot: UsageSnapshot;
+  readonly buckets: PlanUtilizationHistoryBuckets;
+}): void => {
+  const legacyKey = claudePlanUtilizationLegacyEmailAccountKey(input.snapshot);
+  if (legacyKey === undefined || legacyKey === input.accountKey) return;
+  const legacyHistories = input.buckets.accounts[legacyKey];
+  if (legacyHistories === undefined || legacyHistories.length === 0) return;
+  const existingHistories = input.buckets.accounts[input.accountKey] ?? [];
+  input.buckets.setHistories(
+    mergePlanUtilizationHistories(existingHistories, legacyHistories),
+    input.accountKey,
+  );
+  delete input.buckets.accounts[legacyKey];
+  if (input.buckets.preferredAccountKey === legacyKey)
+    input.buckets.preferredAccountKey = input.accountKey;
+};
+
+const adoptUnscopedHistory = (accountKey: string, buckets: PlanUtilizationHistoryBuckets): void => {
+  if (buckets.unscoped.length === 0) return;
+  const existingHistories = buckets.accounts[accountKey] ?? [];
+  buckets.setHistories(
+    mergePlanUtilizationHistories(existingHistories, buckets.unscoped),
+    accountKey,
+  );
+  buckets.setHistories([], null);
+};
+
+const mergePlanUtilizationHistories = (
+  ...sources: readonly (readonly PlanUtilizationSeriesHistory[])[]
+): readonly PlanUtilizationSeriesHistory[] => {
+  let merged: readonly PlanUtilizationSeriesHistory[] = [];
+  for (const histories of sources) {
+    const samples = histories.flatMap((history) =>
+      history.entries.map((entry) => ({
+        name: history.name,
+        windowMinutes: history.windowMinutes,
+        entry,
+      })),
+    );
+    merged = updatePlanUtilizationHistories(merged, samples) ?? merged;
+  }
+  return merged;
+};
 
 const bucketsEqual = (
   left: PlanUtilizationHistoryBuckets,

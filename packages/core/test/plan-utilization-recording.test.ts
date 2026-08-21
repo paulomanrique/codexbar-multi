@@ -18,6 +18,7 @@ describe("first-party plan-utilization recording policy", () => {
       Effect.runPromise(
         recordFirstPartyPlanUtilization({
           coordinator: {
+            recordClaudeIdentity: () => Effect.succeed(false),
             recordCodex: (input) =>
               Effect.sync(() => {
                 calls.push(input);
@@ -40,6 +41,7 @@ describe("first-party plan-utilization recording policy", () => {
       Effect.runPromise(
         recordFirstPartyPlanUtilization({
           coordinator: {
+            recordClaudeIdentity: () => Effect.succeed(false),
             recordCodex: () => Effect.succeed(false),
             recordGenericSessionEquivalent: (input) =>
               Effect.sync(() => {
@@ -56,9 +58,37 @@ describe("first-party plan-utilization recording policy", () => {
     expect(calls).toEqual([{ providerId: "opencodego", snapshot, capturedAt }]);
   });
 
-  it("skips opt-in and unported dedicated history providers", async () => {
+  it("routes Claude to identity-owned recording", async () => {
+    const calls: Array<{ snapshot: UsageSnapshot; capturedAt: Date }> = [];
+    await expect(
+      Effect.runPromise(
+        recordFirstPartyPlanUtilization({
+          coordinator: {
+            recordClaudeIdentity: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return true;
+              }),
+            recordCodex: () => Effect.succeed(false),
+            recordGenericSessionEquivalent: () => Effect.succeed(false),
+          },
+          providerId: "claude",
+          snapshot,
+          capturedAt,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(calls).toEqual([{ snapshot, capturedAt }]);
+  });
+
+  it("skips opt-in and still-unported dedicated history providers", async () => {
     let calls = 0;
     const coordinator = {
+      recordClaudeIdentity: () =>
+        Effect.sync(() => {
+          calls += 1;
+          return true;
+        }),
       recordCodex: () =>
         Effect.sync(() => {
           calls += 1;
@@ -70,7 +100,7 @@ describe("first-party plan-utilization recording policy", () => {
           return true;
         }),
     };
-    for (const providerId of ["zai", "claude", "antigravity"] as const) {
+    for (const providerId of ["zai", "antigravity"] as const) {
       await expect(
         Effect.runPromise(
           recordFirstPartyPlanUtilization({ coordinator, providerId, snapshot, capturedAt }),
