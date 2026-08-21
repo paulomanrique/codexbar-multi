@@ -55,10 +55,15 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Keep WAL readers outside the serialized writer queue and retry contended writers cooperatively.
 - [ ] Complete retention/pruning policies and full crash/disk-full parity tests.
   - [x] Prove transactional retention rollback and same-connection/worker recovery after a write failure and in read-only mode.
+  - [x] Prove genuine SQLite result code 13 recovery in the direct writer and data-only worker using a deterministic capacity cap.
   - [ ] Add a platform filesystem harness for a physical `SQLITE_FULL` failure.
 - [x] Complete atomic config persistence and migrations.
 - [ ] Complete history JSON compatibility where SQLite parity does not apply.
+  - [x] Port the per-provider schema-v1 codec, ISO8601 behavior, sorting, sanitization, accounts, and identity buckets.
+  - [ ] Persist/load the provider JSON files through a private platform adapter and connect them to history consumers.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
+  - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.
+  - [ ] Add persistent snapshot/cache TTL, status probes, real low-power/thermal/activity adapters, plugin refresh, and CLI orchestration.
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.
   - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.
   - [x] Connect the normal Node CLI to the sandboxed plugin lifecycle, native keyring, stdin-only secrets, and desktop-exported cookie credentials.
