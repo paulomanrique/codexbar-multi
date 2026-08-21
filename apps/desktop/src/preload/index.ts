@@ -4,6 +4,8 @@ import {
   CostUsageExportDTO,
   CostUsageQueryDTO,
   CostUsageQueryResultDTO,
+  SpendDashboardDTO,
+  SpendOverviewDTO,
   DashboardSnapshotDTO,
   HistoryExportDTO,
   HistoryQueryDTO,
@@ -45,6 +47,8 @@ const decodeHistoryExport = Schema.decodeUnknownPromise(HistoryExportDTO);
 const decodeCostQuery = Schema.decodeUnknownPromise(CostUsageQueryDTO);
 const decodeCostResult = Schema.decodeUnknownPromise(CostUsageQueryResultDTO);
 const decodeCostExport = Schema.decodeUnknownPromise(CostUsageExportDTO);
+const decodeSpendOverview = Schema.decodeUnknownPromise(SpendOverviewDTO);
+const decodeSpendDashboard = Schema.decodeUnknownPromise(SpendDashboardDTO);
 const decodeLoginRequest = Schema.decodeUnknownPromise(LoginRequestDTO);
 const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
 const decodeRefreshRequest = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
@@ -78,6 +82,10 @@ const api: CodexBarDesktopApi = Object.freeze({
     decodeCostExport(
       await ipcRenderer.invoke(DesktopChannels.exportCosts, await decodeCostQuery(query)),
     ),
+  getSpendOverview: async () =>
+    decodeSpendOverview(await ipcRenderer.invoke(DesktopChannels.spendOverview)),
+  getSpendDashboard: async () =>
+    decodeSpendDashboard(await ipcRenderer.invoke(DesktopChannels.spendDashboard)),
   startLogin: async (request: LoginRequest) =>
     decodeLoginResult(
       await ipcRenderer.invoke(DesktopChannels.startLogin, await decodeLoginRequest(request)),

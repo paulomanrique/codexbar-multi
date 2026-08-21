@@ -10,6 +10,7 @@ export * from "./provider-refresh.ts";
 export * from "./refresh-coordinator.ts";
 export * from "./services.ts";
 export * from "./spend-publication.ts";
+export * from "./spend-dashboard.ts";
 export * from "./testing.ts";
 export * from "./quota.ts";
 export * from "./reset.ts";

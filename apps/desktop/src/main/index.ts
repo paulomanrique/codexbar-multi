@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, nativeImage, Tray } from "electron";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,8 @@ import {
   CostUsageExportDTO,
   CostUsageQueryDTO,
   CostUsageQueryResultDTO,
+  SpendDashboardDTO,
+  SpendOverviewDTO,
   LoginRequestDTO,
   InstallPluginRequestDTO,
   InstalledPluginDTO,
@@ -59,6 +62,11 @@ import { DesktopChannels } from "../ipc/api.js";
 import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./browser-session.js";
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
+import {
+  DesktopSpendPublisher,
+  type DesktopSpendConfiguration,
+  type DesktopSpendProjection,
+} from "./spend-overview.js";
 import { DesktopPluginManager } from "./plugin-manager.js";
 import { makePluginCredentialBrowserSessions } from "./plugin-browser-session.js";
 import { makeElectronPluginSandbox } from "./plugin-sandbox-process.js";
@@ -83,6 +91,7 @@ let providerRuntime: ProviderRuntimeService | undefined;
 let desktopConfig: PersistedCodexBarConfig | undefined;
 let pluginManager: DesktopPluginManager | undefined;
 let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
+let spendPublisher: DesktopSpendPublisher | undefined;
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
   id: provider.descriptor.id,
@@ -110,6 +119,10 @@ const activePluginManager = (): DesktopPluginManager => {
   if (pluginManager === undefined) throw new Error("Plugin manager is not ready");
   return pluginManager;
 };
+const activeSpendPublisher = (): DesktopSpendPublisher => {
+  if (spendPublisher === undefined) throw new Error("Desktop spend publication is not ready");
+  return spendPublisher;
+};
 
 const overviewProviders = () => {
   const byId = new Map(desktopConfig?.providers.map((provider) => [provider.id, provider]));
@@ -124,6 +137,37 @@ const overviewProviders = () => {
       source: source !== undefined && availableSources.includes(source) ? source : "auto",
     } as const;
   });
+};
+
+/**
+ * Only non-sensitive provider ownership participates in this digest. It
+ * invalidates a reusable spend projection when enablement/source selection
+ * changes without ever placing the original config or account data in IPC.
+ */
+const spendConfiguration = (): DesktopSpendConfiguration => {
+  const enabled = overviewProviders().filter((provider) => provider.enabled);
+  const fingerprintMaterial = enabled
+    .map(
+      (provider) => `${provider.id}\u0000${provider.source}\u0000${provider.enabled ? "1" : "0"}`,
+    )
+    .join("\u0000");
+  return {
+    ownershipFingerprint: createHash("sha256").update(fingerprintMaterial).digest("hex"),
+    roster: enabled.map((provider) => ({
+      id: provider.id,
+      providerId: provider.id,
+      displayName: provider.name,
+    })),
+    requestedDays: 30,
+  };
+};
+
+const loadSpendProjection = async (refresh: boolean): Promise<DesktopSpendProjection> => {
+  const configuration = spendConfiguration();
+  const publisher = activeSpendPublisher();
+  return refresh
+    ? publisher.refresh(configuration)
+    : (publisher.current(configuration) ?? publisher.refresh(configuration));
 };
 
 const handleDesktopRequest = async <Value>(request: () => Promise<Value>): Promise<Value> => {
@@ -179,6 +223,7 @@ void app
         workerUrl: new URL(/* @vite-ignore */ "./sqlite-worker.js", import.meta.url),
       }),
     );
+    spendPublisher = new DesktopSpendPublisher(persistence);
     // The config adapter retains only registered plugin IDs. Populate this
     // mutable set from the hardened discovery pass before decoding a config,
     // so deleting one plugin cannot discard a sibling plugin's config entry.
@@ -288,6 +333,8 @@ void app
     const decodeCostQuery = Schema.decodeUnknownPromise(CostUsageQueryDTO);
     const decodeCostResult = Schema.decodeUnknownPromise(CostUsageQueryResultDTO);
     const decodeCostExport = Schema.decodeUnknownPromise(CostUsageExportDTO);
+    const decodeSpendOverview = Schema.decodeUnknownPromise(SpendOverviewDTO);
+    const decodeSpendDashboard = Schema.decodeUnknownPromise(SpendDashboardDTO);
     const decodeLogin = Schema.decodeUnknownPromise(LoginRequestDTO);
     const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
@@ -340,6 +387,18 @@ void app
       handleDesktopRequest(async () => {
         const query = await decodeCostQuery(input);
         return decodeCostExport(await exportCosts(activePersistence(), query));
+      }),
+    );
+    ipcMain.handle(DesktopChannels.spendOverview, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        return decodeSpendOverview((await loadSpendProjection(true)).overview);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.spendDashboard, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        return decodeSpendDashboard((await loadSpendProjection(false)).dashboard);
       }),
     );
     ipcMain.handle(DesktopChannels.startLogin, (_event, input: unknown) =>
@@ -469,6 +528,8 @@ void app
   });
 
 app.on("before-quit", (event) => {
+  spendPublisher?.cancel();
+  spendPublisher = undefined;
   pluginSandbox?.terminate();
   pluginSandbox = undefined;
   if (persistence === undefined || storageClosing) return;

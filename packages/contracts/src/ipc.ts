@@ -113,6 +113,82 @@ export const CostUsageExportDTO = Schema.Struct({
 });
 export type CostUsageExportDTO = Schema.Schema.Type<typeof CostUsageExportDTO>;
 
+/**
+ * Spend source identity remains main-process-only. The renderer receives only
+ * the human label and provider ownership required to render a card; it never
+ * receives account IDs, profile paths, cache identities, or configuration
+ * fingerprints.
+ */
+export const SpendSourceStateDTO = Schema.Literals([
+  "loading",
+  "available",
+  "confirmed-empty",
+  "unavailable",
+  "stale-last-known",
+]);
+export type SpendSourceStateDTO = Schema.Schema.Type<typeof SpendSourceStateDTO>;
+
+export const SpendSourceRoleDTO = Schema.Literals(["subscription", "enrichment"]);
+export type SpendSourceRoleDTO = Schema.Schema.Type<typeof SpendSourceRoleDTO>;
+
+export const SpendSourceDTO = Schema.Struct({
+  provider: ProviderInstanceId,
+  displayName: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(160))),
+  role: SpendSourceRoleDTO,
+  state: SpendSourceStateDTO,
+});
+export type SpendSourceDTO = Schema.Schema.Type<typeof SpendSourceDTO>;
+
+export const SpendTotalsDTO = Schema.Struct({
+  inputTokens: Schema.Natural,
+  outputTokens: Schema.Natural,
+  totalTokens: Schema.Natural,
+  costUsd: Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  coveredDayCount: Schema.Natural,
+  sourceCount: Schema.Natural,
+});
+export type SpendTotalsDTO = Schema.Schema.Type<typeof SpendTotalsDTO>;
+
+export const SpendProviderRowDTO = Schema.Struct({
+  provider: ProviderId,
+  displayName: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(160))),
+  totals: SpendTotalsDTO,
+});
+export type SpendProviderRowDTO = Schema.Schema.Type<typeof SpendProviderRowDTO>;
+
+const SpendBucketDate = Schema.String.pipe(Schema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/)));
+export const SpendDailyPointDTO = Schema.Struct({
+  provider: ProviderId,
+  day: SpendBucketDate,
+  inputTokens: Schema.Natural,
+  outputTokens: Schema.Natural,
+  costUsd: Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type SpendDailyPointDTO = Schema.Schema.Type<typeof SpendDailyPointDTO>;
+
+/** Shared safe projection used by the overview card and spend dashboard. */
+export const SpendOverviewDTO = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  revision: Schema.Natural,
+  generation: Schema.Natural,
+  loadedAt: ISODateString,
+  isRefreshing: Schema.Boolean,
+  truncated: Schema.Boolean,
+  sources: Schema.Array(SpendSourceDTO).pipe(Schema.check(Schema.isMaxLength(256))),
+  totals: SpendTotalsDTO,
+  providers: Schema.Array(SpendProviderRowDTO).pipe(Schema.check(Schema.isMaxLength(69))),
+});
+export type SpendOverviewDTO = Schema.Schema.Type<typeof SpendOverviewDTO>;
+
+export const SpendDashboardDTO = Schema.Struct({
+  overview: SpendOverviewDTO,
+  requestedDays: Schema.Natural.pipe(
+    Schema.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(365)),
+  ),
+  dailyPoints: Schema.Array(SpendDailyPointDTO).pipe(Schema.check(Schema.isMaxLength(69 * 365))),
+});
+export type SpendDashboardDTO = Schema.Schema.Type<typeof SpendDashboardDTO>;
+
 export const LoginRequestDTO = Schema.Struct({
   provider: ProviderId,
   accountId: Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/))),
@@ -179,6 +255,8 @@ export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("export-history"), query: HistoryQueryDTO }),
   Schema.Struct({ type: Schema.Literal("get-costs"), query: CostUsageQueryDTO }),
   Schema.Struct({ type: Schema.Literal("export-costs"), query: CostUsageQueryDTO }),
+  Schema.Struct({ type: Schema.Literal("get-spend-overview") }),
+  Schema.Struct({ type: Schema.Literal("get-spend-dashboard") }),
   Schema.Struct({ type: Schema.Literal("get-config") }),
   Schema.Struct({ type: Schema.Literal("get-provider-settings") }),
   Schema.Struct({
@@ -200,6 +278,8 @@ export const IPCResponse = Schema.Union([
   Schema.Struct({ type: Schema.Literal("history-export"), payload: HistoryExportDTO }),
   Schema.Struct({ type: Schema.Literal("costs"), payload: CostUsageQueryResultDTO }),
   Schema.Struct({ type: Schema.Literal("costs-export"), payload: CostUsageExportDTO }),
+  Schema.Struct({ type: Schema.Literal("spend-overview"), payload: SpendOverviewDTO }),
+  Schema.Struct({ type: Schema.Literal("spend-dashboard"), payload: SpendDashboardDTO }),
   Schema.Struct({ type: Schema.Literal("config"), payload: Schema.Unknown }),
   Schema.Struct({ type: Schema.Literal("provider-settings"), payload: ProviderSettingsListDTO }),
   Schema.Struct({ type: Schema.Literal("error"), error: ProviderError }),

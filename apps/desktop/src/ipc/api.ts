@@ -2,6 +2,8 @@ import type {
   CostUsageExportDTO,
   CostUsageQueryDTO,
   CostUsageQueryResultDTO,
+  SpendDashboardDTO,
+  SpendOverviewDTO,
   DashboardSnapshotDTO,
   HistoryExportDTO,
   HistoryQueryDTO,
@@ -32,6 +34,8 @@ export const DesktopChannels = Object.freeze({
   exportHistory: "codexbar-multi:export-history",
   costs: "codexbar-multi:costs",
   exportCosts: "codexbar-multi:export-costs",
+  spendOverview: "codexbar-multi:spend-overview",
+  spendDashboard: "codexbar-multi:spend-dashboard",
   startLogin: "codexbar-multi:start-login",
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
@@ -53,6 +57,9 @@ export interface CodexBarDesktopApi {
   readonly exportHistory: (query: HistoryQueryDTO) => Promise<HistoryExportDTO>;
   readonly getCosts: (query: CostUsageQueryDTO) => Promise<CostUsageQueryResultDTO>;
   readonly exportCosts: (query: CostUsageQueryDTO) => Promise<CostUsageExportDTO>;
+  /** High-level spend projections only; no source IDs, files, or credentials. */
+  readonly getSpendOverview: () => Promise<SpendOverviewDTO>;
+  readonly getSpendDashboard: () => Promise<SpendDashboardDTO>;
   readonly startLogin: (request: LoginRequestDTO) => Promise<LoginResultDTO>;
   readonly cancelLogin: (request: LoginRequestDTO) => Promise<void>;
   readonly logout: (request: LoginRequestDTO) => Promise<void>;

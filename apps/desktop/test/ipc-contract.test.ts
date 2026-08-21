@@ -12,6 +12,8 @@ import {
   ProviderSettingsListDTO,
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
+  SpendDashboardDTO,
+  SpendOverviewDTO,
 } from "@codexbar/contracts";
 
 import { DesktopChannels } from "../src/ipc/api.ts";
@@ -128,6 +130,63 @@ describe("desktop IPC boundary", () => {
     const channels = Object.values(DesktopChannels);
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
+  });
+
+  it("projects spend without account identifiers, paths, or configuration fingerprints", () => {
+    const decodeOverview = Schema.decodeUnknownSync(SpendOverviewDTO);
+    const decodeDashboard = Schema.decodeUnknownSync(SpendDashboardDTO);
+    const overview = decodeOverview({
+      schemaVersion: 1,
+      revision: 1,
+      generation: 2,
+      loadedAt: "2026-08-20T00:00:00.000Z",
+      isRefreshing: false,
+      truncated: false,
+      sources: [
+        {
+          provider: "codex",
+          displayName: "Codex work",
+          role: "subscription",
+          state: "available",
+          sourceId: "profile:/private/path",
+          ownershipFingerprint: "must never cross IPC",
+        },
+      ],
+      totals: {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        costUsd: 0.01,
+        coveredDayCount: 1,
+        sourceCount: 1,
+      },
+      providers: [
+        {
+          provider: "codex",
+          displayName: "Codex",
+          totals: {
+            inputTokens: 1,
+            outputTokens: 2,
+            totalTokens: 3,
+            costUsd: 0.01,
+            coveredDayCount: 1,
+            sourceCount: 1,
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(overview)).not.toContain("profile:/private/path");
+    expect(JSON.stringify(overview)).not.toContain("ownershipFingerprint");
+    expect(
+      decodeDashboard({
+        overview,
+        requestedDays: 30,
+        dailyPoints: [
+          { provider: "codex", day: "2026-08-20", inputTokens: 1, outputTokens: 2, costUsd: 0.01 },
+        ],
+      }),
+    ).toMatchObject({ requestedDays: 30 });
+    expect(() => decodeDashboard({ overview, requestedDays: 366, dailyPoints: [] })).toThrow();
   });
 
   it("bounds plugin lifecycle input and never accepts a filesystem path", () => {
