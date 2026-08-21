@@ -4,12 +4,17 @@ import type {
   ProviderContext,
   ProviderDefinition,
   ProviderDescriptor,
+  ProviderGrokCredentials,
   ProviderStrategy,
 } from "../types.ts";
 import { grokLocalSessionDetails } from "./grok-local-session.ts";
 
 const endpoint = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
+const proxyEndpoint = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const settingsEndpoint = "https://cli-chat-proxy.grok.com/v1/settings";
 const grpcRequestBody = new Uint8Array([0, 0, 0, 0, 0]);
+const oidcScopePrefix = "https://auth.x.ai::";
+const legacySessionScope = "https://accounts.x.ai/sign-in";
 
 class GrokGrpcError extends Error {
   readonly status: number;
@@ -37,6 +42,105 @@ const decoded = (value: string): string => {
   } catch {
     return value.trim();
   }
+};
+
+const nonEmptyString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+
+const normalizedOAuthToken = (value: string | undefined): string | undefined => {
+  let token = value?.trim() ?? "";
+  if (token.toLowerCase().startsWith("bearer ")) token = token.slice(7).trim();
+  if (
+    token === "" ||
+    token.toLowerCase().startsWith("cookie:") ||
+    token.toLowerCase().startsWith("xai-") ||
+    token.includes("=")
+  )
+    return undefined;
+  return token;
+};
+
+const isoDate = (value: unknown): string | undefined => {
+  const text = nonEmptyString(value);
+  if (text === undefined || !Number.isFinite(Date.parse(text))) return undefined;
+  return new Date(text).toISOString();
+};
+
+const record = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+
+/** Pure port of GrokCredentialsStore.parse: OIDC wins only when it has a usable bearer. */
+export const parseGrokAuthJson = (data: Uint8Array): ProviderGrokCredentials | undefined => {
+  if (data.byteLength === 0 || data.byteLength > 1024 * 1024)
+    throw new Error("Grok auth JSON is invalid.");
+  let root: Readonly<Record<string, unknown>> | undefined;
+  try {
+    root = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(data)));
+  } catch {
+    throw new Error("Grok auth JSON is invalid.");
+  }
+  if (root === undefined) throw new Error("Grok auth JSON must be an object.");
+  let oidc: readonly [string, Readonly<Record<string, unknown>>] | undefined;
+  let legacy: readonly [string, Readonly<Record<string, unknown>>] | undefined;
+  for (const [scope, candidate] of Object.entries(root)) {
+    const entry = record(candidate);
+    if (entry === undefined || normalizedOAuthToken(nonEmptyString(entry.key)) === undefined)
+      continue;
+    if (scope.startsWith(oidcScopePrefix)) oidc = [scope, entry];
+    else if (scope === legacySessionScope || scope.includes("/sign-in")) legacy = [scope, entry];
+  }
+  const selected = oidc ?? legacy;
+  if (selected === undefined) return undefined;
+  const [scope, entry] = selected;
+  const accessToken = normalizedOAuthToken(nonEmptyString(entry.key));
+  if (accessToken === undefined) return undefined;
+  const authMode = nonEmptyString(entry.auth_mode);
+  const email = nonEmptyString(entry.email);
+  const firstName = nonEmptyString(entry.first_name);
+  const lastName = nonEmptyString(entry.last_name);
+  const teamId = nonEmptyString(entry.team_id);
+  const principalType = nonEmptyString(entry.principal_type);
+  const expiresAt = isoDate(entry.expires_at);
+  return {
+    accessToken,
+    scope,
+    ...(authMode === undefined ? {} : { authMode }),
+    ...(email === undefined ? {} : { email }),
+    ...(firstName === undefined ? {} : { firstName }),
+    ...(lastName === undefined ? {} : { lastName }),
+    ...(teamId === undefined ? {} : { teamId }),
+    ...(principalType === undefined ? {} : { principalType }),
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+  };
+};
+
+const pastedGrokCredentials = (value: string | undefined): ProviderGrokCredentials | undefined => {
+  const accessToken = normalizedOAuthToken(value);
+  return accessToken === undefined ? undefined : { accessToken, scope: "", authMode: "oidc" };
+};
+
+const isExpired = (credentials: ProviderGrokCredentials, now: Date): boolean =>
+  credentials.expiresAt !== undefined && Date.parse(credentials.expiresAt) <= now.getTime();
+
+const grokPlan = (value: unknown): string | undefined => {
+  const source = nonEmptyString(value);
+  if (source === undefined) return undefined;
+  const normalized = source.replaceAll(/[_\s-]+/gu, "").toLowerCase();
+  if (normalized === "supergrokheavy" || normalized === "heavy") return "SuperGrok Heavy";
+  if (normalized === "supergrok") return "SuperGrok";
+  return source;
+};
+
+const grokIdentity = (credentials: ProviderGrokCredentials, tier?: string) => {
+  const loginMethod =
+    tier ?? (credentials.authMode?.toLowerCase() === "oidc" ? "SuperGrok" : credentials.authMode);
+  return {
+    ...(credentials.email === undefined ? {} : { accountEmail: credentials.email }),
+    ...(credentials.teamId === undefined ? {} : { accountOrganization: credentials.teamId }),
+    ...(loginMethod === undefined ? {} : { loginMethod }),
+  };
 };
 
 const grpcHeaderFields = (
@@ -306,11 +410,222 @@ const fetchOnce = async (ctx: ProviderContext, cookie: string): Promise<Provider
   return response;
 };
 
+const fetchOAuthGrpcOnce = async (
+  ctx: ProviderContext,
+  credentials: ProviderGrokCredentials,
+): Promise<ProviderBinaryResponse> => {
+  if (ctx.http.postBinary === undefined)
+    throw ctx.fail.providerUnavailable("Grok gRPC-web support is not configured by this host.");
+  const response = await ctx.http.postBinary(endpoint, {
+    body: grpcRequestBody,
+    timeoutSeconds: 15,
+    headers: {
+      Authorization: `Bearer ${credentials.accessToken}`,
+      Origin: "https://grok.com",
+      Referer: "https://grok.com/?_s=usage",
+      Accept: "*/*",
+      "Content-Type": "application/grpc-web+proto",
+      "x-grpc-web": "1",
+      "x-user-agent": "connect-es/2.1.1",
+      "User-Agent": "CodexBar",
+    },
+  });
+  if (response.status !== 200) throw new GrokHttpError(response.status);
+  throwGrpcStatus(grpcHeaderFields(response.headers));
+  throwGrpcStatus(grpcTrailerFields(response.body));
+  return response;
+};
+
+const proxyHeaders = (credentials: ProviderGrokCredentials): Readonly<Record<string, string>> => ({
+  Authorization: `Bearer ${credentials.accessToken}`,
+  "x-xai-token-auth": "xai-grok-cli",
+  Accept: "application/json",
+  "User-Agent": "CodexBar",
+});
+
+const proxyStatus = (ctx: ProviderContext, status: number): never => {
+  if (status === 401 || status === 403)
+    throw ctx.fail.authenticationExpired("Grok CLI proxy rejected credentials. Run 'grok login'.");
+  if (status === 429) throw ctx.fail.rateLimited("Grok CLI proxy returned HTTP 429.");
+  if (status >= 500) throw ctx.fail.providerUnavailable(`Grok CLI proxy returned HTTP ${status}.`);
+  throw ctx.fail.apiFailure(`Grok CLI proxy returned HTTP ${status}.`);
+};
+
+type GrokCreditsSnapshot = {
+  readonly usedPercent: number;
+  readonly resetsAt?: string;
+  readonly subscriptionTier?: string;
+};
+
+/** Pure port of GrokCreditsProxyFetcher.parseSnapshot. */
+export const parseGrokCreditsProxyResponse = (value: unknown): GrokCreditsSnapshot => {
+  const root = record(value);
+  const config = root === undefined ? undefined : record(root.config);
+  if (config === undefined) throw new Error("Grok CLI proxy response is invalid.");
+  const currentPeriod = record(config.currentPeriod);
+  const resetsAt = isoDate(currentPeriod?.end) ?? isoDate(config.billingPeriodEnd);
+  const percent = config.creditUsagePercent;
+  const cap = record(config.onDemandCap)?.val;
+  const used = record(config.onDemandUsed)?.val;
+  const candidate =
+    typeof percent === "number" && Number.isFinite(percent)
+      ? percent
+      : typeof cap === "number" &&
+          Number.isFinite(cap) &&
+          cap > 0 &&
+          typeof used === "number" &&
+          Number.isFinite(used)
+        ? (used / cap) * 100
+        : resetsAt === undefined
+          ? undefined
+          : 0;
+  if (candidate === undefined) throw new Error("Grok CLI proxy response has no usage data.");
+  const subscriptionTier = grokPlan(config.subscriptionTier ?? root?.subscriptionTier);
+  return {
+    usedPercent: Math.max(0, Math.min(100, candidate)),
+    ...(resetsAt === undefined ? {} : { resetsAt }),
+    ...(subscriptionTier === undefined ? {} : { subscriptionTier }),
+  };
+};
+
+const settingsTier = async (
+  ctx: ProviderContext,
+  credentials: ProviderGrokCredentials,
+): Promise<string | undefined> => {
+  try {
+    const response = await ctx.http.get(settingsEndpoint, {
+      timeoutSeconds: 2,
+      headers: proxyHeaders(credentials),
+    });
+    if (response.status !== 200) return undefined;
+    return grokPlan(record(JSON.parse(response.bodyText))?.subscription_tier_display);
+  } catch {
+    // Plan enrichment is best-effort and must not erase a valid billing result.
+    return undefined;
+  }
+};
+
+const resolvedOAuthCredentials = async (ctx: ProviderContext): Promise<ProviderGrokCredentials> => {
+  const pasted = pastedGrokCredentials(ctx.settings.getSecret("GROK_OAUTH_TOKEN"));
+  if (pasted !== undefined) return pasted;
+  const fromFile = await ctx.local?.fetchGrokCredentials?.();
+  if (fromFile === undefined || isExpired(fromFile, ctx.date.now()))
+    throw ctx.fail.missingCredential(
+      "Grok OAuth credentials are not configured. Run 'grok login'.",
+    );
+  return fromFile;
+};
+
+const oauthProxyUsage = async (ctx: ProviderContext) => {
+  const credentials = await resolvedOAuthCredentials(ctx);
+  const response = await ctx.http.get(proxyEndpoint, {
+    timeoutSeconds: 15,
+    headers: proxyHeaders(credentials),
+  });
+  if (response.status !== 200) return proxyStatus(ctx, response.status);
+  let parsed: GrokCreditsSnapshot;
+  try {
+    parsed = parseGrokCreditsProxyResponse(JSON.parse(response.bodyText));
+  } catch (error) {
+    throw ctx.fail.parseFailure(
+      error instanceof Error ? error.message : "Grok CLI proxy response is invalid.",
+    );
+  }
+  const tier = (await settingsTier(ctx, credentials)) ?? parsed.subscriptionTier;
+  return {
+    primary: {
+      usedPercent: parsed.usedPercent,
+      ...(parsed.resetsAt === undefined ? {} : { resetsAt: parsed.resetsAt }),
+    },
+    identity: grokIdentity(credentials, tier),
+  };
+};
+
+const cliBillingUsage = async (ctx: ProviderContext) => {
+  if (ctx.local?.fetchGrokCliBilling === undefined)
+    throw ctx.fail.providerUnavailable("Grok CLI billing is not configured by this host.");
+  const result = await ctx.local.fetchGrokCliBilling();
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  if (/authentication required|grok login|not authenticated/iu.test(output))
+    throw ctx.fail.authenticationExpired("Grok billing requires authentication. Run 'grok login'.");
+  if (result.exitCode !== 0)
+    throw ctx.fail.providerUnavailable(
+      `Grok CLI exited with status ${result.exitCode ?? "unknown"}.`,
+    );
+  const lines = result.stdout.split(/\r?\n/u).filter((line) => line.trim() !== "");
+  let billing: Readonly<Record<string, unknown>> | undefined;
+  for (const line of lines) {
+    if (new TextEncoder().encode(line).byteLength > 256 * 1024)
+      throw ctx.fail.parseFailure("Grok CLI response line exceeded 256 KiB.");
+    let message: Readonly<Record<string, unknown>> | undefined;
+    try {
+      message = record(JSON.parse(line));
+    } catch {
+      continue;
+    }
+    if (message?.id === 2) {
+      if (record(message.error) !== undefined)
+        throw ctx.fail.apiFailure(
+          nonEmptyString(record(message.error)?.message) ?? "Grok CLI billing failed.",
+        );
+      billing = record(message.result);
+      break;
+    }
+  }
+  if (billing === undefined) throw ctx.fail.parseFailure("Grok CLI billing response is missing.");
+  const cycle = record(billing.billingCycle);
+  const limit = record(billing.monthlyLimit)?.val;
+  const used = record(record(billing.usage)?.totalUsed)?.val;
+  if (
+    typeof limit !== "number" ||
+    !Number.isFinite(limit) ||
+    limit <= 0 ||
+    typeof used !== "number" ||
+    !Number.isFinite(used)
+  )
+    throw ctx.fail.parseFailure("Grok CLI billing response has no included usage.");
+  const start = isoDate(cycle?.billingPeriodStart);
+  const end = isoDate(cycle?.billingPeriodEnd);
+  const windowMinutes =
+    start === undefined || end === undefined
+      ? undefined
+      : Math.floor((Date.parse(end) - Date.parse(start)) / 60_000);
+  return {
+    primary: {
+      usedPercent: Math.max(0, Math.min(100, (used / limit) * 100)),
+      ...(end === undefined ? {} : { resetsAt: end }),
+      ...(windowMinutes === undefined || windowMinutes <= 0 ? {} : { windowMinutes }),
+    },
+  };
+};
+
+const oauthGrpcUsage = async (ctx: ProviderContext) => {
+  const credentials = await resolvedOAuthCredentials(ctx);
+  let response: ProviderBinaryResponse;
+  try {
+    response = await fetchOAuthGrpcOnce(ctx, credentials);
+  } catch (error) {
+    if (error instanceof GrokHttpError || error instanceof GrokGrpcError)
+      throw classify(ctx, error);
+    throw error;
+  }
+  try {
+    const primary = parseGrokGrpcWebResponse(response.body, ctx.date.now());
+    const tier = await settingsTier(ctx, credentials);
+    return { primary, identity: grokIdentity(credentials, tier) };
+  } catch (error) {
+    throw classify(ctx, error);
+  }
+};
+
 const definition: ProviderDefinition = {
   id: "grok",
   name: "Grok",
-  endpoints: ["https://grok.com"],
-  settings: [{ key: "GROK_COOKIE_HEADER", title: "Cookie header", type: "secure" }],
+  endpoints: ["https://grok.com", "https://cli-chat-proxy.grok.com"],
+  settings: [
+    { key: "GROK_OAUTH_TOKEN", title: "SuperGrok OAuth token", type: "secure" },
+    { key: "GROK_COOKIE_HEADER", title: "Cookie header", type: "secure" },
+  ],
   capabilities: ["browser-cookies"],
   cookieDomains: ["grok.com"],
   fetchUsage: async (ctx) => {
@@ -350,10 +665,48 @@ const definition: ProviderDefinition = {
   },
 };
 
-const strategy: ProviderStrategy = {
+const webStrategy: ProviderStrategy = {
   id: "grok.web",
   kind: "web",
   fetchUsage: definition.fetchUsage,
 };
-export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };
-export const grok: FirstPartyProvider = { ...strategy, descriptor };
+const cliStrategy: ProviderStrategy = {
+  id: "grok.cli",
+  kind: "cli",
+  fetchUsage: cliBillingUsage,
+  fallbackOn: [
+    "authentication-expired",
+    "missing-credential",
+    "provider-unavailable",
+    "parse-failure",
+    "api-failure",
+  ],
+};
+const oauthProxyStrategy: ProviderStrategy = {
+  id: "grok.oauth",
+  kind: "oauth",
+  fetchUsage: oauthProxyUsage,
+  fallbackOn: [
+    "authentication-expired",
+    "missing-credential",
+    "provider-unavailable",
+    "parse-failure",
+    "api-failure",
+  ],
+};
+const oauthGrpcStrategy: ProviderStrategy = {
+  id: "grok.oauth-grpc",
+  kind: "oauth",
+  fetchUsage: oauthGrpcUsage,
+};
+export const descriptor: ProviderDescriptor = {
+  ...definition,
+  status: "partial",
+  strategy: webStrategy,
+  strategies: [cliStrategy, oauthProxyStrategy, webStrategy, oauthGrpcStrategy],
+};
+export const grok: FirstPartyProvider = {
+  ...webStrategy,
+  descriptor,
+  strategies: [cliStrategy, oauthProxyStrategy, webStrategy, oauthGrpcStrategy],
+};

@@ -36,6 +36,7 @@ import type {
   FirstPartySettings,
 } from "./first-party-runtime.ts";
 import {
+  parseGrokAuthJson,
   parseGrokLocalSessionSignal,
   summarizeGrokLocalSessions,
   type ProviderLocalCommand,
@@ -56,6 +57,7 @@ export * from "./node-persistence-worker-client.ts";
 export * from "./first-party-runtime.ts";
 export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
+export * from "./node-codex-priority.ts";
 export * from "./node-local-cost-scan.ts";
 export * from "./node-grok-local-session.ts";
 export * from "./node-grok-local-token-scan.ts";
@@ -501,6 +503,39 @@ const executableByCommand: Readonly<Record<ProviderLocalCommand, { readonly env:
   "kiro-cli": { env: "KIRO_CLI_PATH" },
 };
 
+const grokCliBillingInput = new TextEncoder().encode(
+  `${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "1",
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    },
+  })}\n${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "x.ai/billing", params: {} })}\n`,
+);
+
+const grokHomeDirectory = (
+  environment: Readonly<Record<string, string | undefined>>,
+  home: string,
+): string => {
+  const configured = environment.GROK_HOME?.trim();
+  if (configured === undefined || configured === "") return join(home, ".grok");
+  if (configured === "~") return home;
+  if (configured.startsWith("~/") || configured.startsWith("~\\"))
+    return join(home, configured.slice(2));
+  return configured;
+};
+
+/** Fixed non-shell input matching GrokRPCClient's ACP initialize + x.ai/billing sequence. */
+export const nodeGrokCliBillingInput = (): Uint8Array => grokCliBillingInput.slice();
+
+/** Resolves only Grok Build's documented auth file, without leaking its path to a provider. */
+export const nodeGrokAuthFilePath = (
+  environment: Readonly<Record<string, string | undefined>>,
+  home: string,
+): string => join(grokHomeDirectory(environment, home), "auth.json");
+
 const jetBrainsIDEPrefixes = [
   "IntelliJIdea",
   "PyCharm",
@@ -677,6 +712,57 @@ export const makeNodeFirstPartyLocalCapabilities = (
             error,
           ),
       }),
+    fetchGrokCredentials: (providerId) =>
+      Effect.tryPromise({
+        try: async () => {
+          if (providerId !== "grok") throw new Error("Provider Grok OIDC is not allowlisted.");
+          const content = await Effect.runPromise(
+            privateFiles.read(
+              nodeGrokAuthFilePath(environment, options.homeDirectory ?? homedir()),
+            ),
+          );
+          if (content === undefined) return undefined;
+          if (content.byteLength > maximumLocalOutputBytes)
+            throw new Error("Grok auth file exceeded 1 MiB.");
+          return parseGrokAuthJson(content);
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "read Grok credentials",
+            "Unable to read Grok OIDC credentials.",
+            error,
+          ),
+      }),
+    fetchGrokCliBilling: (providerId) => {
+      if (providerId !== "grok")
+        return Effect.fail(
+          new InfrastructureError("Grok CLI billing", "Provider Grok CLI is not allowlisted."),
+        );
+      const configured = environment.GROK_CLI_PATH?.trim();
+      if (configured !== undefined && configured !== "" && !isSafeExecutable(configured)) {
+        return Effect.fail(
+          new InfrastructureError(
+            "Grok CLI billing",
+            "Configured Grok executable path is invalid.",
+          ),
+        );
+      }
+      return processRunner
+        .run({
+          command: configured || "grok",
+          args: ["agent", "stdio"],
+          stdin: nodeGrokCliBillingInput(),
+          timeoutMs: 10_000,
+        })
+        .pipe(
+          Effect.map((result) => ({
+            exitCode: result.exitCode,
+            signal: result.signal,
+            stdout: decodeLocalText(result.stdout),
+            stderr: decodeLocalText(result.stderr),
+          })),
+        );
+    },
   };
 };
 

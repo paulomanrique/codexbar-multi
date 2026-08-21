@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { grok, parseGrokGrpcWebResponse } from "../src/providers/grok.ts";
+import {
+  grok,
+  parseGrokAuthJson,
+  parseGrokCreditsProxyResponse,
+  parseGrokGrpcWebResponse,
+} from "../src/providers/grok.ts";
 import type { ProviderBinaryResponse, ProviderContext } from "../src/types.ts";
 
 const now = new Date("2026-08-20T12:00:00.000Z");
@@ -86,7 +91,10 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
       }),
     );
     expect(grok.id).toBe("grok.web");
-    expect(grok.descriptor.endpoints).toEqual(["https://grok.com"]);
+    expect(grok.descriptor.endpoints).toEqual([
+      "https://grok.com",
+      "https://cli-chat-proxy.grok.com",
+    ]);
     expect(snapshot).toMatchObject({
       primary: { usedPercent: 55.5, resetsAt: "2027-01-15T08:00:02.000Z" },
     });
@@ -241,5 +249,98 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
 
   it("fails closed when the host has not composed binary gRPC-web support", async () => {
     await expect(grok.fetchUsage(context())).rejects.toThrow("provider-unavailable");
+  });
+
+  it("ports Grok auth.json precedence, expiry fields, and OAuth proxy parsing", () => {
+    const credentials = parseGrokAuthJson(
+      new TextEncoder().encode(
+        JSON.stringify({
+          "https://auth.x.ai::fixture": {
+            key: "oidc-token",
+            auth_mode: "oidc",
+            email: "ada@example.test",
+            team_id: "team-1",
+            principal_type: "Team",
+            expires_at: "2026-08-22T00:00:00Z",
+          },
+          "https://accounts.x.ai/sign-in": { key: "legacy-token" },
+        }),
+      ),
+    );
+    expect(credentials).toMatchObject({ accessToken: "oidc-token", email: "ada@example.test" });
+    expect(
+      parseGrokCreditsProxyResponse({
+        config: {
+          onDemandCap: { val: 1000 },
+          onDemandUsed: { val: 250.5 },
+          currentPeriod: { end: "2026-08-23T00:00:00Z" },
+          subscriptionTier: "supergrok_heavy",
+        },
+      }),
+    ).toEqual({
+      usedPercent: 25.05,
+      resetsAt: "2026-08-23T00:00:00.000Z",
+      subscriptionTier: "SuperGrok Heavy",
+    });
+  });
+
+  it("uses the fixed OAuth proxy headers and CLI RPC result without exposing a process surface", async () => {
+    const proxy = grok.strategies?.find((strategy) => strategy.id === "grok.oauth");
+    const cli = grok.strategies?.find((strategy) => strategy.id === "grok.cli");
+    expect(proxy).toBeDefined();
+    expect(cli).toBeDefined();
+    const requests: Array<{ url: string; options: Record<string, unknown> | undefined }> = [];
+    const oauthContext: ProviderContext = {
+      ...context(),
+      settings: {
+        get: () => undefined,
+        getSecret: (key) => (key === "GROK_OAUTH_TOKEN" ? "Bearer token-123" : undefined),
+      },
+      http: {
+        get: async (url, options) => {
+          requests.push({ url, options });
+          if (url.endsWith("/v1/settings"))
+            return { status: 200, bodyText: '{"subscription_tier_display":"SuperGrok Heavy"}' };
+          return {
+            status: 200,
+            bodyText:
+              '{"config":{"creditUsagePercent":12.5,"currentPeriod":{"end":"2026-08-23T00:00:00Z"}}}',
+          };
+        },
+        getJSON: async () => ({ status: 200, bodyText: "{}", json: {} }),
+        postJSON: async () => ({ status: 200, bodyText: "{}", json: {} }),
+      },
+      local: {
+        run: async () => ({ exitCode: 0, signal: undefined, stdout: "", stderr: "" }),
+        readData: async () => undefined,
+        fetchGrokCredentials: async () => undefined,
+        fetchGrokCliBilling: async () => ({
+          exitCode: 0,
+          signal: undefined,
+          stdout:
+            '{"jsonrpc":"2.0","id":1,"result":{}}\n{"jsonrpc":"2.0","id":2,"result":{"monthlyLimit":{"val":1000},"usage":{"totalUsed":{"val":250}},"billingCycle":{"billingPeriodStart":"2026-08-16T00:00:00Z","billingPeriodEnd":"2026-08-23T00:00:00Z"}}}\n',
+          stderr: "",
+        }),
+      },
+    };
+    await expect(proxy!.fetchUsage(oauthContext)).resolves.toMatchObject({
+      primary: { usedPercent: 12.5 },
+      identity: { loginMethod: "SuperGrok Heavy" },
+    });
+    expect(requests).toEqual([
+      expect.objectContaining({
+        url: "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+        options: expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer token-123",
+            "x-xai-token-auth": "xai-grok-cli",
+          }),
+        }),
+      }),
+      expect.objectContaining({ url: "https://cli-chat-proxy.grok.com/v1/settings" }),
+    ]);
+    await expect(cli!.fetchUsage(oauthContext)).resolves.toMatchObject({
+      primary: { usedPercent: 25, windowMinutes: 10_080 },
+    });
   });
 });

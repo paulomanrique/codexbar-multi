@@ -46,6 +46,30 @@ export interface ProviderGrokLocalSessionSummary {
 }
 
 /**
+ * Sanitized OIDC record read from Grok Build's private auth.json. The platform
+ * owns the file path and returns no path, raw JSON, or refresh token.
+ */
+export interface ProviderGrokCredentials {
+  readonly accessToken: string;
+  readonly scope: string;
+  readonly authMode?: string;
+  readonly email?: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly teamId?: string;
+  readonly principalType?: string;
+  readonly expiresAt?: string;
+}
+
+/** Bounded result of the fixed `grok agent stdio` billing exchange. */
+export interface ProviderGrokCliBillingResponse {
+  readonly exitCode: number | undefined;
+  readonly signal: string | undefined;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
  * Deliberately narrow local capability broker. It is not a process or
  * filesystem API: every command and data source is an allowlisted symbolic
  * identifier, validated again by the platform host.
@@ -63,6 +87,10 @@ export interface ProviderLocalCapabilities {
   readonly fetchKiroUsageLimits?: () => Promise<ProviderKiroUsageLimitsResponse>;
   /** Optional diagnostic-only local Grok activity; it must never supply a quota window. */
   readonly fetchGrokLocalSessionSummary?: () => Promise<ProviderGrokLocalSessionSummary>;
+  /** Reads only the selected Grok OIDC record from the private auth file. */
+  readonly fetchGrokCredentials?: () => Promise<ProviderGrokCredentials | undefined>;
+  /** Executes the fixed, non-interactive Grok billing RPC; no process surface is exposed. */
+  readonly fetchGrokCliBilling?: () => Promise<ProviderGrokCliBillingResponse>;
 }
 
 /** Small, platform-neutral host surface used by first-party providers. */
@@ -207,7 +235,7 @@ export interface ProviderDefinition {
 
 export interface ProviderStrategy {
   readonly id: string;
-  readonly kind: "api" | "web" | "cli" | "local";
+  readonly kind: "api" | "web" | "cli" | "local" | "oauth";
   readonly fetchUsage: (context: ProviderContext) => Promise<ProviderSnapshot>;
   /**
    * Classified failures that may continue to the next declared strategy in

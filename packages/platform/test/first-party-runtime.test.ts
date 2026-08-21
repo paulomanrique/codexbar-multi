@@ -9,7 +9,7 @@ import {
   refreshProviderAndPersist,
   type HistoryRecord,
 } from "@codexbar/core";
-import { amp, openai } from "@codexbar/providers";
+import { amp, grok, openai } from "@codexbar/providers";
 import { ibmbob } from "@codexbar/providers";
 import type { FirstPartyProvider } from "@codexbar/providers";
 import { makeFirstPartyProviderRuntime, nextDailyReset } from "../src/first-party-runtime.ts";
@@ -22,6 +22,58 @@ const response = (value: unknown) => ({
 });
 
 describe("first-party refresh runtime", () => {
+  it("routes an explicit Grok OAuth refresh through the private credential capability", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [grok],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchGrokCredentials: () =>
+          Effect.succeed({
+            accessToken: "fixture-auth-file-token",
+            scope: "https://auth.x.ai::fixture",
+            authMode: "oidc",
+            email: "ada@example.test",
+          }),
+      },
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          return Effect.succeed({
+            status: 200,
+            headers: {},
+            body: new TextEncoder().encode(
+              request.url.endsWith("/v1/settings")
+                ? '{"subscription_tier_display":"SuperGrok Heavy"}'
+                : '{"config":{"creditUsagePercent":25,"currentPeriod":{"end":"2026-08-23T00:00:00Z"}}}',
+            ),
+            url: request.url,
+          });
+        },
+      },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+    const outcome = await Effect.runPromise(
+      runtime.fetch("grok", { sourceMode: "oauth", includeCredits: false }),
+    );
+    expect(outcome).toMatchObject({
+      strategyId: "grok.oauth",
+      source: "oauth",
+      snapshot: { primary: { usedPercent: 25 }, identity: { accountEmail: "ada@example.test" } },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.headers?.Authorization).toBe("Bearer fixture-auth-file-token");
+    expect(JSON.stringify(outcome)).not.toContain("fixture-auth-file-token");
+  });
+
   it("fails closed when a local provider is composed without a local capability broker", async () => {
     const clock = { now: Effect.succeed(1), sleep: () => Effect.void };
     const runtime = makeFirstPartyProviderRuntime({

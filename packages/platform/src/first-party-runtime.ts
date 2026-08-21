@@ -20,6 +20,8 @@ import type {
   ProviderBinaryResponse,
   ProviderContext,
   ProviderDescriptor,
+  ProviderGrokCliBillingResponse,
+  ProviderGrokCredentials,
   ProviderGrokLocalSessionSummary,
   ProviderKiroUsageLimitsResponse,
   ProviderJSONResponse,
@@ -81,6 +83,14 @@ export interface FirstPartyLocalCapabilities {
   readonly fetchGrokLocalSessionSummary?: (
     providerId: ProviderId,
   ) => Effect.Effect<ProviderGrokLocalSessionSummary, unknown>;
+  /** Grok-only private OIDC record. The adapter owns auth.json path selection. */
+  readonly fetchGrokCredentials?: (
+    providerId: ProviderId,
+  ) => Effect.Effect<ProviderGrokCredentials | undefined, unknown>;
+  /** Grok-only fixed JSON-RPC billing probe. It never accepts provider input. */
+  readonly fetchGrokCliBilling?: (
+    providerId: ProviderId,
+  ) => Effect.Effect<ProviderGrokCliBillingResponse, unknown>;
 }
 
 export interface FirstPartyProviderRuntimeOptions {
@@ -105,7 +115,9 @@ const sourceFor = (strategy: ProviderStrategy): ProviderFetchStrategy["source"] 
       ? "cli"
       : strategy.kind === "local"
         ? "local-probe"
-        : "api-token";
+        : strategy.kind === "oauth"
+          ? "oauth"
+          : "api-token";
 
 const acceptsSource = (
   strategy: ProviderStrategy,
@@ -114,6 +126,7 @@ const acceptsSource = (
   mode === "auto" ||
   (mode === "web" && strategy.kind === "web") ||
   (mode === "cli" && (strategy.kind === "cli" || strategy.kind === "local")) ||
+  (mode === "oauth" && strategy.kind === "oauth") ||
   (mode === "api" && strategy.kind === "api");
 
 const declaredStrategies = (provider: FirstPartyProvider): readonly ProviderStrategy[] =>
@@ -483,6 +496,60 @@ const localFor = (
           )))
     )
       throw failure("api-failure", "Grok local-session enrichment is invalid.");
+    return result;
+  },
+  fetchGrokCredentials: async () => {
+    if (local === undefined || local.fetchGrokCredentials === undefined)
+      throw failure(
+        "provider-unavailable",
+        "Grok OIDC credentials are not configured by this host.",
+      );
+    if (providerId !== "grok")
+      throw failure(
+        "permission-denied",
+        "Grok OIDC credentials are not declared for this provider.",
+      );
+    const result = await Effect.runPromise(local.fetchGrokCredentials(providerId), { signal });
+    if (
+      result !== undefined &&
+      (typeof result.accessToken !== "string" ||
+        result.accessToken.length === 0 ||
+        result.accessToken.length > maximumResponseBytes ||
+        typeof result.scope !== "string" ||
+        result.scope.length > 4_096 ||
+        [
+          result.authMode,
+          result.email,
+          result.firstName,
+          result.lastName,
+          result.teamId,
+          result.principalType,
+          result.expiresAt,
+        ].some(
+          (value) => value !== undefined && (typeof value !== "string" || value.length > 4_096),
+        ))
+    )
+      throw failure("api-failure", "Grok OIDC credential is invalid.");
+    return result;
+  },
+  fetchGrokCliBilling: async () => {
+    if (local === undefined || local.fetchGrokCliBilling === undefined)
+      throw failure("provider-unavailable", "Grok CLI billing is not configured by this host.");
+    if (providerId !== "grok")
+      throw failure("permission-denied", "Grok CLI billing is not declared for this provider.");
+    const result = await Effect.runPromise(local.fetchGrokCliBilling(providerId), { signal });
+    if (
+      (result.exitCode !== undefined && !Number.isSafeInteger(result.exitCode)) ||
+      (result.signal !== undefined &&
+        (typeof result.signal !== "string" || result.signal.length > 128)) ||
+      typeof result.stdout !== "string" ||
+      typeof result.stderr !== "string" ||
+      result.stdout.length > maximumResponseBytes ||
+      result.stderr.length > maximumResponseBytes ||
+      result.stdout.includes("\u0000") ||
+      result.stderr.includes("\u0000")
+    )
+      throw failure("api-failure", "Grok CLI billing response is invalid or exceeds 1 MiB.");
     return result;
   },
 });
