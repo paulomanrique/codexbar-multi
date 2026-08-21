@@ -61,7 +61,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [ ] Produce the remaining Node SEA target matrix.
   - [x] Produce a host-native Node SEA CLI executable with a verified extracted keyring addon; cross-compilation and release archives remain disabled.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
-- [ ] Connect legacy import UI/CLI and a separately-approved native credential migration.
+- [x] Connect the explicit inspect/execute/rollback legacy import CLI with opt-in and mutation confirmation.
+- [ ] Connect legacy import UI and a separately-approved native credential migration.
 
 ## Milestone 4 — untrusted plugin runtime
 
