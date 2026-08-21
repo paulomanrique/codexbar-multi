@@ -47,6 +47,11 @@ import {
   type NodeGrokLocalSessionScanOptions,
 } from "./node-grok-local-session.ts";
 import {
+  isNodeGrokCliCommand,
+  nodeGrokCliEnvironment,
+  runNodeGrokCliBilling,
+} from "./node-grok-rpc.ts";
+import {
   makeNodePrivateDirectoryRestriction,
   makeNodePrivateFileRestriction,
   type NodePrivatePathRestrictionOptions,
@@ -61,6 +66,7 @@ export * from "./node-codex-priority.ts";
 export * from "./node-local-cost-scan.ts";
 export * from "./node-grok-local-session.ts";
 export * from "./node-grok-local-token-scan.ts";
+export * from "./node-grok-rpc.ts";
 export * from "./node-private-path-security.ts";
 
 /** Node's explicit equivalent of Swift's `NSString.expandingTildeInPath`. */
@@ -503,18 +509,6 @@ const executableByCommand: Readonly<Record<ProviderLocalCommand, { readonly env:
   "kiro-cli": { env: "KIRO_CLI_PATH" },
 };
 
-const grokCliBillingInput = new TextEncoder().encode(
-  `${JSON.stringify({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: "1",
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    },
-  })}\n${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "x.ai/billing", params: {} })}\n`,
-);
-
 const grokHomeDirectory = (
   environment: Readonly<Record<string, string | undefined>>,
   home: string,
@@ -526,9 +520,6 @@ const grokHomeDirectory = (
     return join(home, configured.slice(2));
   return configured;
 };
-
-/** Fixed non-shell input matching GrokRPCClient's ACP initialize + x.ai/billing sequence. */
-export const nodeGrokCliBillingInput = (): Uint8Array => grokCliBillingInput.slice();
 
 /** Resolves only Grok Build's documented auth file, without leaking its path to a provider. */
 export const nodeGrokAuthFilePath = (
@@ -739,7 +730,7 @@ export const makeNodeFirstPartyLocalCapabilities = (
           new InfrastructureError("Grok CLI billing", "Provider Grok CLI is not allowlisted."),
         );
       const configured = environment.GROK_CLI_PATH?.trim();
-      if (configured !== undefined && configured !== "" && !isSafeExecutable(configured)) {
+      if (configured !== undefined && configured !== "" && !isNodeGrokCliCommand(configured)) {
         return Effect.fail(
           new InfrastructureError(
             "Grok CLI billing",
@@ -747,21 +738,24 @@ export const makeNodeFirstPartyLocalCapabilities = (
           ),
         );
       }
-      return processRunner
-        .run({
-          command: configured || "grok",
-          args: ["agent", "stdio"],
-          stdin: nodeGrokCliBillingInput(),
-          timeoutMs: 10_000,
-        })
-        .pipe(
-          Effect.map((result) => ({
-            exitCode: result.exitCode,
-            signal: result.signal,
-            stdout: decodeLocalText(result.stdout),
-            stderr: decodeLocalText(result.stderr),
-          })),
-        );
+      return Effect.tryPromise({
+        try: (signal) => {
+          const command = configured || "grok";
+          const home = options.homeDirectory ?? homedir();
+          const platform = options.platform ?? process.platform;
+          return runNodeGrokCliBilling({
+            command,
+            environment: nodeGrokCliEnvironment(environment, home, platform, command),
+            signal,
+          });
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "Grok CLI billing",
+            "Unable to read Grok CLI billing data.",
+            error,
+          ),
+      });
     },
   };
 };

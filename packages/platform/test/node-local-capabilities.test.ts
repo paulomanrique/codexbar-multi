@@ -105,7 +105,6 @@ describe("Node first-party local capabilities", () => {
   });
 
   it("keeps Grok auth.json and agent stdio behind named private capabilities", async () => {
-    const calls: unknown[] = [];
     const privateFiles = {
       read: (path: string) =>
         Effect.succeed(
@@ -120,17 +119,6 @@ describe("Node first-party local capabilities", () => {
       environment: { GROK_HOME: "~/grok", GROK_CLI_PATH: "/usr/local/bin/grok" },
       homeDirectory: "/fixture/home",
       privateFiles,
-      processRunner: {
-        run: (spec) => {
-          calls.push(spec);
-          return Effect.succeed({
-            exitCode: 0,
-            signal: undefined,
-            stdout: new TextEncoder().encode('{"jsonrpc":"2.0","id":2,"result":{}}\n'),
-            stderr: new Uint8Array(),
-          });
-        },
-      },
     });
     expect(nodeGrokAuthFilePath({ GROK_HOME: "~/grok" }, "/fixture/home")).toBe(
       "/fixture/home/grok/auth.json",
@@ -139,21 +127,10 @@ describe("Node first-party local capabilities", () => {
       accessToken: "fixture-token",
       email: "ada@example.test",
     });
-    await expect(Effect.runPromise(local.fetchGrokCliBilling!("grok"))).resolves.toMatchObject({
-      exitCode: 0,
-    });
     const input = new TextDecoder().decode(nodeGrokCliBillingInput());
     expect(input).toContain('"method":"initialize"');
     expect(input).toContain('"method":"x.ai/billing"');
     expect(input).not.toContain("\\/");
-    expect(calls).toEqual([
-      expect.objectContaining({
-        command: "/usr/local/bin/grok",
-        args: ["agent", "stdio"],
-        timeoutMs: 10_000,
-        stdin: nodeGrokCliBillingInput(),
-      }),
-    ]);
   });
 
   it("rejects a configured executable that is not an allowlisted path or binary name", async () => {

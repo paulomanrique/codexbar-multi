@@ -5,5 +5,6 @@ export * from "./node-cost-jsonl.ts";
 export * from "./node-local-cost-scan.ts";
 export * from "./node-grok-local-session.ts";
 export * from "./node-grok-local-token-scan.ts";
+export * from "./node-grok-rpc.ts";
 export * from "./node-agent-sessions.ts";
 export * from "./claude-swap.ts";
