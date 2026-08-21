@@ -15,4 +15,5 @@ export * from "./spend-dashboard.ts";
 export * from "./testing.ts";
 export * from "./quota.ts";
 export * from "./reset.ts";
+export * from "./session-quota.ts";
 export * from "./usage-pace.ts";
