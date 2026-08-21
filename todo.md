@@ -43,6 +43,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Run native smoke tests on Windows, Linux, and macOS.
   - [x] Linux Electron and packaged-main smoke under isolated profiles.
   - [x] Windows x64 Node SEA build plus plugin install/approve/execute/remove smoke.
+  - [x] Windows x64 Electron/NSIS host-native build with asar, unpacked executable, and native keyring verification.
 
 ## Milestone 3 — core, persistence, CLI, and legacy import
 
