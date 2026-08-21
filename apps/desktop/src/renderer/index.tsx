@@ -7,6 +7,8 @@ import type {
   HistoryQueryResultDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
+  SpendDashboardDTO,
+  SpendOverviewDTO,
   UpdateProviderSettingsRequestDTO,
 } from "@codexbar/contracts";
 
@@ -20,13 +22,14 @@ import {
   safeDateFromTimestamp,
 } from "./view-model.ts";
 import { isAvailableProviderSource } from "./settings-view-model.ts";
+import { SpendDashboard } from "./spend-dashboard.tsx";
 import "./styles.css";
 
-type DashboardTab = "usage" | "history" | "costs" | "settings";
+type DashboardTab = "usage" | "history" | "costs" | "spend" | "settings";
 
 const HISTORY_DAYS = 30;
 const HISTORY_LIMIT = 100;
-const DASHBOARD_TABS = ["usage", "history", "costs", "settings"] as const;
+const DASHBOARD_TABS = ["usage", "history", "costs", "spend", "settings"] as const;
 
 const formatDate = (locale: string, value: string | undefined): string | undefined => {
   if (value === undefined) return undefined;
@@ -403,6 +406,10 @@ function App() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState<string>();
   const [activityVersion, setActivityVersion] = useState(0);
+  const [spendOverview, setSpendOverview] = useState<SpendOverviewDTO>();
+  const [spendDashboard, setSpendDashboard] = useState<SpendDashboardDTO>();
+  const [spendLoading, setSpendLoading] = useState(true);
+  const [spendError, setSpendError] = useState(false);
   const [t3Status, setT3Status] = useState<"idle" | "waiting" | "connected">("idle");
   const selectedProvider = snapshot?.providers.find(
     (provider) => provider.id === selectedProviderId,
@@ -435,6 +442,23 @@ function App() {
       setError(localization.upstream("Unavailable"));
     }
   };
+  const loadSpend = async (): Promise<void> => {
+    setSpendLoading(true);
+    setSpendError(false);
+    setSpendDashboard(undefined);
+    try {
+      // Overview refreshes the safe publication; dashboard then reads that
+      // same projection without asking the renderer for provider internals.
+      const nextOverview = await window.codexbar.getSpendOverview();
+      setSpendOverview(nextOverview);
+      const nextDashboard = await window.codexbar.getSpendDashboard();
+      setSpendDashboard(nextDashboard);
+    } catch {
+      setSpendError(true);
+    } finally {
+      setSpendLoading(false);
+    }
+  };
 
   useEffect(() => {
     document.documentElement.lang = localization.locale;
@@ -446,6 +470,9 @@ function App() {
   }, [localization]);
   useEffect(() => {
     void loadOverview();
+  }, []);
+  useEffect(() => {
+    void loadSpend();
   }, []);
   useEffect(() => {
     if (selectedProviderFirstPartyId === undefined) {
@@ -525,6 +552,24 @@ function App() {
     tokens: localization.upstream("tokens"),
     usageUsed: localization.upstream("Usage used"),
     usageRemaining: localization.upstream("Usage remaining"),
+    spend: localization.upstream("Spend"),
+    spendDescription: localization.upstream(
+      "Local estimated cost history across supported providers.",
+    ),
+    spendEmptyTitle: localization.upstream("No local cost history yet"),
+    spendEmptyDescription: localization.upstream(
+      "Turn on cost tracking or refresh after using a supported provider.",
+    ),
+    estimatedSpend: localization.upstream("Estimated spend"),
+    trackedTokens: localization.upstream("Tracked tokens"),
+    subscriptions: localization.upstream("Subscriptions"),
+    coverage: localization.upstream("Coverage"),
+    input: localization.upstream("Input"),
+    output: localization.upstream("Output"),
+    bySubscription: localization.upstream("By subscription"),
+    dailyEstimatedSpend: localization.upstream("Daily estimated spend"),
+    stale: localization.upstream("stale data"),
+    partial: localization.upstream("Partial estimate"),
   };
   const focusTab = (next: DashboardTab): void => {
     setTab(next);
@@ -604,7 +649,9 @@ function App() {
                 ? localization.upstream("Usage history (30 days)")
                 : id === "costs"
                   ? localization.upstream("Usage & Spend")
-                  : localization.upstream("Settings...");
+                  : id === "spend"
+                    ? copy.spend
+                    : localization.upstream("Settings...");
           return (
             <button
               className={tab === id ? "tab active" : "tab"}
@@ -709,6 +756,41 @@ function App() {
             onUpdate={updateProviderSettings}
           />
         )}
+      </section>
+      <section
+        className="detail-panel"
+        hidden={tab !== "spend"}
+        id="panel-spend"
+        role="tabpanel"
+        aria-labelledby="tab-spend"
+      >
+        <SpendDashboard
+          copy={{
+            title: copy.spend,
+            description: copy.spendDescription,
+            refresh: copy.refresh,
+            refreshing: copy.refreshing,
+            unavailable: copy.unavailable,
+            emptyTitle: copy.spendEmptyTitle,
+            emptyDescription: copy.spendEmptyDescription,
+            estimatedSpend: copy.estimatedSpend,
+            trackedTokens: copy.trackedTokens,
+            subscriptions: copy.subscriptions,
+            coverage: copy.coverage,
+            input: copy.input,
+            output: copy.output,
+            bySubscription: copy.bySubscription,
+            dailyEstimatedSpend: copy.dailyEstimatedSpend,
+            stale: copy.stale,
+            partial: copy.partial,
+          }}
+          dashboard={spendDashboard}
+          error={spendError}
+          loading={spendLoading}
+          locale={localization.locale}
+          overview={spendOverview}
+          onRefresh={loadSpend}
+        />
       </section>
       <section className="providers-panel" aria-label={localization.upstream("Providers")}>
         <label className="provider-search">
