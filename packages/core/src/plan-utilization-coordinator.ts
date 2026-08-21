@@ -162,16 +162,14 @@ export class PlanUtilizationHistoryCoordinator {
   }
 
   /**
-   * Records Claude only when the snapshot carries a provider-scoped identity
-   * with an email owner. OAuth file/keychain owner binding remains a separate
-   * host-mediated path; ownerless OAuth samples fail closed here.
+   * Records Claude under a scoped identity owner when present, otherwise
+   * continues the sticky scoped owner already established for this provider.
+   * OAuth file/keychain owner binding remains a separate host-mediated path.
    */
   recordClaudeIdentity(input: {
     readonly snapshot: UsageSnapshot;
     readonly capturedAt: Date;
   }): Effect.Effect<boolean, InfrastructureError> {
-    const accountKey = claudePlanUtilizationIdentityAccountKey(input.snapshot);
-    if (accountKey === undefined) return Effect.succeed(false);
     const samples = extractPlanUtilizationSeriesSamples({
       providerId: "claude",
       snapshot: input.snapshot,
@@ -188,17 +186,23 @@ export class PlanUtilizationHistoryCoordinator {
         const providers = cloneProviders(state.providers);
         const buckets = providers.claude ?? new PlanUtilizationHistoryBuckets();
         const originalBuckets = cloneBuckets(buckets);
+        const identityAccountKey = claudePlanUtilizationIdentityAccountKey(input.snapshot);
+        const accountKey = identityAccountKey ?? stickyPlanUtilizationAccountKey(buckets);
+        if (accountKey === undefined) return false;
         const canAdoptUnscoped =
+          identityAccountKey !== undefined &&
           buckets.preferredAccountKey !== PLAN_UTILIZATION_UNSCOPED_PREFERRED_KEY &&
           Object.keys(buckets.accounts).length === 0;
 
-        materializeLegacyClaudeHistory({
-          accountKey,
-          snapshot: input.snapshot,
-          buckets,
-        });
-        buckets.preferredAccountKey = accountKey;
-        if (canAdoptUnscoped) adoptUnscopedHistory(accountKey, buckets);
+        if (identityAccountKey !== undefined) {
+          materializeLegacyClaudeHistory({
+            accountKey,
+            snapshot: input.snapshot,
+            buckets,
+          });
+          buckets.preferredAccountKey = accountKey;
+          if (canAdoptUnscoped) adoptUnscopedHistory(accountKey, buckets);
+        }
 
         const existing = buckets.historiesFor(accountKey);
         const updated = updatePlanUtilizationHistories(existing, samples);

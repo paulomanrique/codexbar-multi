@@ -521,7 +521,7 @@ describe("plan-utilization history coordinator", () => {
     expect(saved?.claude?.accounts[existingKey]?.[0]?.entries[0]?.usedPercent).toBe(99);
   });
 
-  it("fails closed for missing, mismatched, or ownerless Claude identity", async () => {
+  it("fails closed for mismatched or ownerless Claude identity and does not persist when sticky ownership is unavailable", async () => {
     let loads = 0;
     let saves = 0;
     const coordinator = new PlanUtilizationHistoryCoordinator({
@@ -534,11 +534,7 @@ describe("plan-utilization history coordinator", () => {
           saves += 1;
         }),
     });
-    for (const identity of [
-      undefined,
-      { providerId: "codex" as const, accountEmail: "person@example.com" },
-      { providerId: "claude" as const },
-    ]) {
+    for (const identity of [{ providerId: "codex" as const, accountEmail: "person@example.com" }, { providerId: "claude" as const }]) {
       await expect(
         Effect.runPromise(
           coordinator.recordClaudeIdentity({
@@ -551,8 +547,58 @@ describe("plan-utilization history coordinator", () => {
         ),
       ).resolves.toBe(false);
     }
-    expect(loads).toBe(0);
+    await expect(
+      Effect.runPromise(
+        coordinator.recordClaudeIdentity({
+          capturedAt,
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 10, windowMinutes: 300 },
+          }),
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(loads).toBe(1);
     expect(saves).toBe(0);
+  });
+
+  it("falls back to the sticky Claude account when a later snapshot loses identity", async () => {
+    const accountKey = "existing";
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        claude: new PlanUtilizationHistoryBuckets({
+          preferredAccountKey: accountKey,
+          accounts: {
+            [accountKey]: [
+              new PlanUtilizationSeriesHistory({
+                name: "session",
+                windowMinutes: 300,
+                entries: [sample(10).entry],
+              }),
+            ],
+          },
+        }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordClaudeIdentity({
+          capturedAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 30, windowMinutes: 300 },
+            secondary: { usedPercent: 40, windowMinutes: 10_080 },
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(saved?.claude?.preferredAccountKey).toBe(accountKey);
+    expect(
+      saved?.claude?.accounts[accountKey]?.map((history) => history.entries.map((entry) => entry.usedPercent)),
+    ).toEqual([[10, 30], [40]]);
   });
 
   it("records Antigravity unscoped, then adopts it into an email owner", async () => {
