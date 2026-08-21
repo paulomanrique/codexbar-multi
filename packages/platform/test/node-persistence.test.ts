@@ -21,6 +21,118 @@ const expectOwnerOnlyFileMode = async (path: string): Promise<void> => {
 };
 
 describe("Node SQLite persistence", () => {
+  it("atomically replaces a vendor daily ledger by provider/day/source without duplicate refreshes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-daily-cost-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    const day = Date.parse("2026-08-20T00:00:00.000Z");
+    const replacement = (costUsd: number) => ({
+      providerId: "xai" as ProviderId,
+      sourceKey: "vendor-daily-spend",
+      since: day,
+      until: day,
+      availability: "available" as const,
+      coverage: "exact" as const,
+      records: [
+        {
+          providerId: "xai" as ProviderId,
+          recordedAt: day,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd,
+        },
+      ],
+    });
+    try {
+      await Effect.runPromise(persistence.costs.replaceDaily(replacement(0.5)));
+      await Effect.runPromise(persistence.costs.replaceDaily(replacement(1.25)));
+      await expect(Effect.runPromise(persistence.costs.list("xai", 0))).resolves.toEqual([
+        { providerId: "xai", recordedAt: day, inputTokens: 0, outputTokens: 0, costUsd: 1.25 },
+      ]);
+      await expect(
+        Effect.runPromise(persistence.costs.dailySourceState("xai", "vendor-daily-spend")),
+      ).resolves.toEqual({ availability: "available", coverage: "exact" });
+
+      await Effect.runPromise(
+        persistence.costs.replaceDaily({
+          ...replacement(0),
+          availability: "unavailable",
+          coverage: "estimated",
+          records: [],
+        }),
+      );
+      // Keeping the last complete transaction allows a later successful
+      // refresh to replace it, while the unavailable state prevents display.
+      await expect(Effect.runPromise(persistence.costs.list("xai", 0))).resolves.toHaveLength(1);
+      await expect(
+        Effect.runPromise(persistence.costs.dailySourceState("xai", "vendor-daily-spend")),
+      ).resolves.toEqual({ availability: "unavailable", coverage: "estimated" });
+
+      await Effect.runPromise(persistence.costs.replaceDaily({ ...replacement(0), records: [] }));
+      await expect(Effect.runPromise(persistence.costs.list("xai", 0))).resolves.toEqual([]);
+    } finally {
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent daily replacements and rolls back a failed replacement as one transaction", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-daily-cost-atomic-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    const day = Date.parse("2026-08-20T00:00:00.000Z");
+    const replacement = (costUsd: number) => ({
+      providerId: "xai" as ProviderId,
+      sourceKey: "vendor-daily-spend",
+      since: day,
+      until: day,
+      availability: "available" as const,
+      coverage: "exact" as const,
+      records: [
+        {
+          providerId: "xai" as ProviderId,
+          recordedAt: day,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd,
+        },
+      ],
+    });
+    try {
+      await Promise.all([
+        Effect.runPromise(persistence.costs.replaceDaily(replacement(0.5))),
+        Effect.runPromise(persistence.costs.replaceDaily(replacement(1.25))),
+      ]);
+      await expect(Effect.runPromise(persistence.costs.list("xai", 0))).resolves.toEqual([
+        { providerId: "xai", recordedAt: day, inputTokens: 0, outputTokens: 0, costUsd: 1.25 },
+      ]);
+
+      const inspection = new DatabaseSync(databasePath);
+      try {
+        inspection.exec(`
+          CREATE TRIGGER fixture_abort_daily_replace
+          BEFORE INSERT ON cost_usage_records
+          WHEN NEW.provider_id = 'xai' AND NEW.cost_usd = 2
+          BEGIN SELECT RAISE(ABORT, 'fixture daily replacement failure'); END;
+        `);
+      } finally {
+        inspection.close();
+      }
+      await expect(
+        Effect.runPromise(persistence.costs.replaceDaily(replacement(2))),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "replace daily cost usage records",
+      });
+      await expect(Effect.runPromise(persistence.costs.list("xai", 0))).resolves.toEqual([
+        { providerId: "xai", recordedAt: day, inputTokens: 0, outputTokens: 0, costUsd: 1.25 },
+      ]);
+    } finally {
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("prunes only records strictly before the inclusive retention edge and honors namespaces", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-retention-"));
     const databasePath = join(directory, "usage.sqlite");
@@ -219,7 +331,7 @@ describe("Node SQLite persistence", () => {
       expect(database.prepare("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
       expect(database.prepare("PRAGMA foreign_keys").get()?.foreign_keys).toBe(1);
       expect(database.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
-      expect(database.prepare("PRAGMA user_version").get()?.user_version).toBe(1);
+      expect(database.prepare("PRAGMA user_version").get()?.user_version).toBe(2);
     } finally {
       database.close();
       await rm(directory, { recursive: true, force: true });
@@ -238,7 +350,7 @@ describe("Node SQLite persistence", () => {
         migrations: [
           ...NODE_PERSISTENCE_MIGRATIONS,
           {
-            version: 2,
+            version: 3,
             destructive: true,
             sql: "CREATE TABLE migration_witness (id INTEGER PRIMARY KEY)",
           },
@@ -247,10 +359,10 @@ describe("Node SQLite persistence", () => {
     );
     try {
       expect(
-        (await readdir(directory)).some((name) => name.startsWith("usage.sqlite.backup-v2-")),
+        (await readdir(directory)).some((name) => name.startsWith("usage.sqlite.backup-v3-")),
       ).toBe(true);
       const backupName = (await readdir(directory)).find((name) =>
-        name.startsWith("usage.sqlite.backup-v2-"),
+        name.startsWith("usage.sqlite.backup-v3-"),
       );
       expect(backupName).toBeDefined();
       await expectOwnerOnlyFileMode(join(directory, backupName!));

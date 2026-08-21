@@ -11,6 +11,7 @@ import {
   visibleSpendPublicationInputs,
   SpendPublicationCoordinator,
   type CostUsageRecord,
+  type DailyCostUsageSourceState,
   type SpendDashboardRecord,
   type SpendPublication,
   type SpendPublicationInput,
@@ -45,6 +46,8 @@ export interface DesktopSpendSource {
   readonly providerId: ProviderId;
   readonly displayName: string;
   readonly role?: SpendSourceRole;
+  /** Internal ledger key; never included in DTOs or renderer state. */
+  readonly dailySpendSourceKey?: string;
 }
 
 export interface DesktopSpendConfiguration {
@@ -61,6 +64,10 @@ export interface DesktopSpendPersistence {
       since: number,
       limit?: number,
     ) => Effect.Effect<ReadonlyArray<CostUsageRecord>, unknown>;
+    readonly dailySourceState?: (
+      providerId: ProviderId,
+      sourceKey: string,
+    ) => Effect.Effect<DailyCostUsageSourceState | undefined, unknown>;
   };
 }
 
@@ -72,6 +79,7 @@ export interface DesktopSpendProjection {
 interface DesktopSpendInput extends SpendPublicationInput {
   readonly providerId: ProviderId;
   readonly role?: SpendSourceRole;
+  readonly coverage?: "exact" | "estimated";
 }
 
 interface ProviderLoad {
@@ -80,13 +88,18 @@ interface ProviderLoad {
   readonly confirmedEmpty: boolean;
   readonly failed: boolean;
   readonly truncated: boolean;
+  readonly coverage?: "exact" | "estimated";
 }
 
-const toInput = (source: DesktopSpendSource): DesktopSpendInput => ({
+const toInput = (
+  source: DesktopSpendSource,
+  coverage: "exact" | "estimated" | undefined,
+): DesktopSpendInput => ({
   id: source.id,
   providerId: source.providerId,
   displayName: source.displayName,
   ...(source.role === undefined ? {} : { role: source.role }),
+  ...(coverage === undefined ? {} : { coverage }),
 });
 
 const sinceFor = (now: Date, requestedDays: number): number => {
@@ -172,6 +185,34 @@ export class DesktopSpendPublisher {
           const source = sources[0];
           if (source === undefined) return [];
           try {
+            let state: DailyCostUsageSourceState | undefined;
+            if (source.dailySpendSourceKey !== undefined) {
+              state =
+                this.persistence.costs.dailySourceState === undefined
+                  ? undefined
+                  : await Effect.runPromise(
+                      this.persistence.costs.dailySourceState(
+                        providerId,
+                        source.dailySpendSourceKey,
+                      ),
+                      { signal: lease.signal },
+                    );
+              // An xAI prepaid balance without a usable analytics chart is
+              // unavailable, not a confirmed $0 day. Retained rows remain
+              // hidden until a successful chart replaces them.
+              if (state?.availability === "unavailable") {
+                return [
+                  {
+                    source,
+                    records: [],
+                    confirmedEmpty: false,
+                    failed: true,
+                    truncated: false,
+                    coverage: state.coverage,
+                  },
+                ];
+              }
+            }
             const fetched = await Effect.runPromise(
               this.persistence.costs.list(providerId, since, MAX_COST_RECORDS_PER_PROVIDER + 1),
               { signal: lease.signal },
@@ -186,7 +227,14 @@ export class DesktopSpendPublisher {
               costUsd: record.costUsd,
             }));
             return [
-              { source, records, confirmedEmpty: records.length === 0, failed: false, truncated },
+              {
+                source,
+                records,
+                confirmedEmpty: records.length === 0,
+                failed: false,
+                truncated,
+                ...(state === undefined ? {} : { coverage: state.coverage }),
+              },
             ];
           } catch {
             // Repository details stay in the main process. A failure only affects
@@ -207,7 +255,7 @@ export class DesktopSpendPublisher {
     );
     const inputs = flattened
       .filter((result) => !result.failed && !result.confirmedEmpty)
-      .map((result) => toInput(result.source));
+      .map((result) => toInput(result.source, result.coverage));
     // A transient read failure preserves only a same-owner prior input. The
     // publication marks it stale and excludes it from totals.
     for (const retained of retainedInputs) {

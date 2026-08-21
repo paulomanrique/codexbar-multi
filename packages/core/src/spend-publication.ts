@@ -28,6 +28,8 @@ export interface SpendPublicationInput {
   readonly providerId: ProviderInstanceId;
   readonly displayName: string;
   readonly role?: SpendSourceRole;
+  /** Safe confidence metadata for a provider's published spend snapshot. */
+  readonly coverage?: "exact" | "estimated";
 }
 
 export interface SpendSourcePublication {
@@ -36,6 +38,7 @@ export interface SpendSourcePublication {
   readonly displayName: string;
   readonly role: SpendSourceRole;
   readonly state: SpendSourceState;
+  readonly coverage?: "exact" | "estimated";
 }
 
 /**
@@ -170,6 +173,7 @@ export const createSpendPublication = <Input extends SpendPublicationInput>(
       // A loaded source can turn a configured subscription into enrichment
       // (OpenCodex does this upstream); ownership still fixes its provider.
       role: input?.role ?? owner?.role ?? "subscription",
+      ...(input?.coverage === undefined ? {} : { coverage: input.coverage }),
       state:
         input !== undefined
           ? failedSourceIds.has(id)

@@ -153,11 +153,16 @@ export type SpendSourceStateDTO = Schema.Schema.Type<typeof SpendSourceStateDTO>
 export const SpendSourceRoleDTO = Schema.Literals(["subscription", "enrichment"]);
 export type SpendSourceRoleDTO = Schema.Schema.Type<typeof SpendSourceRoleDTO>;
 
+/** Safe coverage metadata; internal ledger/source identities never cross IPC. */
+export const SpendSourceCoverageDTO = Schema.Literals(["exact", "estimated"]);
+export type SpendSourceCoverageDTO = Schema.Schema.Type<typeof SpendSourceCoverageDTO>;
+
 export const SpendSourceDTO = Schema.Struct({
   provider: ProviderInstanceId,
   displayName: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(160))),
   role: SpendSourceRoleDTO,
   state: SpendSourceStateDTO,
+  coverage: Schema.optional(SpendSourceCoverageDTO),
 });
 export type SpendSourceDTO = Schema.Schema.Type<typeof SpendSourceDTO>;
 

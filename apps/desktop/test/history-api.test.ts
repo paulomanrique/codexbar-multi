@@ -82,6 +82,8 @@ const makePersistence = (): Pick<NodeSqliteWorkerPersistence, "history" | "costs
         Effect.sync(() => {
           costs.push(record);
         }),
+      replaceDaily: () => Effect.void,
+      dailySourceState: () => Effect.succeed(undefined),
       list: (providerId, since, limit) =>
         Effect.sync(() => {
           if (limit !== undefined) costLimits.push(limit);

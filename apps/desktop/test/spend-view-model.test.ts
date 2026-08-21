@@ -22,6 +22,13 @@ const overview: SpendOverviewDTO = {
     { provider: "codex", displayName: "Codex", role: "subscription", state: "available" },
     { provider: "claude", displayName: "Claude", role: "subscription", state: "stale-last-known" },
     { provider: "openai", displayName: "OpenAI", role: "enrichment", state: "unavailable" },
+    {
+      provider: "xai",
+      displayName: "xAI",
+      role: "subscription",
+      state: "available",
+      coverage: "estimated",
+    },
   ],
   totals,
   providers: [{ provider: "codex", displayName: "Codex", totals }],
@@ -43,6 +50,7 @@ describe("spend renderer presentation", () => {
       state: "ready",
       staleSourceCount: 1,
       unavailableSourceCount: 1,
+      estimatedSourceCount: 1,
       dailySeries: [{ day: "2026-08-19", inputTokens: 10, outputTokens: 20, costUsd: 0.75 }],
     });
   });

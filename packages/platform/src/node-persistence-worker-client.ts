@@ -3,6 +3,8 @@ import { Effect } from "effect";
 import type {
   CostUsageRecord,
   CostUsageRepositoryService,
+  DailyCostUsageReplacement,
+  DailyCostUsageSourceState,
   HistoryRecord,
   HistoryRepositoryService,
   UsageRecordRetentionRequest,
@@ -46,6 +48,19 @@ type WorkerRequest =
       readonly id: string;
       readonly type: "append-cost";
       readonly record: CostUsageRecord;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "replace-daily-cost";
+      readonly replacement: DailyCostUsageReplacement;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "daily-cost-source-state";
+      readonly providerId: string;
+      readonly sourceKey: string;
     }
   | {
       readonly version: 1;
@@ -196,6 +211,18 @@ class NodeSqliteWorkerClient {
     };
     const costs: CostUsageRepositoryService = {
       append: (record) => this.effect("append-cost", { record }, "append cost usage record"),
+      replaceDaily: (replacement) =>
+        this.effect(
+          "replace-daily-cost",
+          { replacement },
+          "replace daily cost usage records",
+        ) as Effect.Effect<void, InfrastructureError>,
+      dailySourceState: (providerId, sourceKey) =>
+        this.effect(
+          "daily-cost-source-state",
+          { providerId, sourceKey },
+          "get daily cost usage source state",
+        ) as Effect.Effect<DailyCostUsageSourceState | undefined, InfrastructureError>,
       list: (providerId, since, limit) =>
         this.effect(
           "list-cost",
@@ -334,14 +361,18 @@ type RequestType =
   | "list-history"
   | "remove-provider-history"
   | "append-cost"
+  | "replace-daily-cost"
+  | "daily-cost-source-state"
   | "list-cost"
   | "prune-usage-records"
   | "close";
 type RequestPayload =
   | { readonly record: HistoryRecord }
   | { readonly record: CostUsageRecord }
+  | { readonly replacement: DailyCostUsageReplacement }
   | { readonly request: UsageRecordRetentionRequest }
   | { readonly providerId: string }
+  | { readonly providerId: string; readonly sourceKey: string }
   | { readonly providerId: string; readonly since: number; readonly limit?: number }
   | Record<never, never>;
 

@@ -1,6 +1,11 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { Effect } from "effect";
-import type { CostUsageRecord, HistoryRecord, UsageRecordRetentionRequest } from "@codexbar/core";
+import type {
+  CostUsageRecord,
+  DailyCostUsageReplacement,
+  HistoryRecord,
+  UsageRecordRetentionRequest,
+} from "@codexbar/core";
 import { InfrastructureError } from "@codexbar/core";
 import {
   makeNodeSqlitePersistence,
@@ -43,6 +48,19 @@ type WorkerRequest =
       readonly id: string;
       readonly type: "append-cost";
       readonly record: CostUsageRecord;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "replace-daily-cost";
+      readonly replacement: DailyCostUsageReplacement;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "daily-cost-source-state";
+      readonly providerId: string;
+      readonly sourceKey: string;
     }
   | {
       readonly version: 1;
@@ -124,6 +142,8 @@ const isRequest = (value: unknown): value is WorkerRequest => {
     message.type === "list-history" ||
     message.type === "remove-provider-history" ||
     message.type === "append-cost" ||
+    message.type === "replace-daily-cost" ||
+    message.type === "daily-cost-source-state" ||
     message.type === "list-cost" ||
     message.type === "prune-usage-records" ||
     message.type === "close" ||
@@ -170,6 +190,15 @@ const runRequest = async (request: WorkerRequest): Promise<unknown> => {
       );
     case "append-cost":
       return Effect.runPromise(persistence.costs.append(request.record));
+    case "replace-daily-cost":
+      return Effect.runPromise(persistence.costs.replaceDaily(request.replacement));
+    case "daily-cost-source-state":
+      return Effect.runPromise(
+        persistence.costs.dailySourceState(
+          request.providerId as CostUsageRecord["providerId"],
+          request.sourceKey,
+        ),
+      );
     case "list-cost":
       return Effect.runPromise(
         persistence.costs.list(

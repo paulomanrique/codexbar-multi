@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { Effect, Fiber } from "effect";
 import {
   Clock,
+  CostUsageRepository,
   HistoryRepository,
   InfrastructureError,
   type HttpRequest,
@@ -109,6 +110,12 @@ describe("first-party refresh runtime", () => {
           list: () => Effect.succeed([]),
           removeProvider: () => Effect.void,
         }),
+        Effect.provideService(CostUsageRepository, {
+          append: () => Effect.void,
+          replaceDaily: () => Effect.void,
+          dailySourceState: () => Effect.succeed(undefined),
+          list: () => Effect.succeed([]),
+        }),
       ),
     );
 
@@ -147,6 +154,12 @@ describe("first-party refresh runtime", () => {
             latest: () => Effect.succeed(undefined),
             list: () => Effect.succeed([]),
             removeProvider: () => Effect.void,
+          }),
+          Effect.provideService(CostUsageRepository, {
+            append: () => Effect.void,
+            replaceDaily: () => Effect.void,
+            dailySourceState: () => Effect.succeed(undefined),
+            list: () => Effect.succeed([]),
           }),
         ),
       ),

@@ -246,8 +246,40 @@ export interface CostUsageRecord {
   readonly costUsd: number;
 }
 
+/** Main-process-only identity for a replaceable vendor daily-spend feed. */
+export interface DailyCostUsageReplacement {
+  readonly providerId: ProviderId;
+  /** Never crosses IPC: it distinguishes independent vendor feeds for one provider. */
+  readonly sourceKey: string;
+  /** Inclusive UTC-day range covered by this vendor response. */
+  readonly since: number;
+  readonly until: number;
+  /** A missing chart is unavailable; an empty chart is an available zero-spend response. */
+  readonly availability: "available" | "unavailable";
+  readonly coverage: "exact" | "estimated";
+  readonly records: ReadonlyArray<CostUsageRecord>;
+}
+
+export interface DailyCostUsageSourceState {
+  readonly availability: "available" | "unavailable";
+  readonly coverage: "exact" | "estimated";
+}
+
 export interface CostUsageRepositoryService {
   readonly append: (record: CostUsageRecord) => Effect.Effect<void, InfrastructureError>;
+  /**
+   * Replaces one vendor's daily ledger atomically. This is deliberately
+   * separate from append-only local/session accounting, whose rows may share
+   * a day but are not cumulative vendor buckets.
+   */
+  readonly replaceDaily: (
+    replacement: DailyCostUsageReplacement,
+  ) => Effect.Effect<void, InfrastructureError>;
+  /** Main-process-only availability/coverage metadata for a daily ledger. */
+  readonly dailySourceState: (
+    providerId: ProviderId,
+    sourceKey: string,
+  ) => Effect.Effect<DailyCostUsageSourceState | undefined, InfrastructureError>;
   readonly list: (
     providerId: ProviderId,
     since: number,

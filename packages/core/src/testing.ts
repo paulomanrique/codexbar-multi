@@ -99,15 +99,46 @@ export const MemoryHistoryRepository = Layer.sync(HistoryRepository, () => {
 });
 
 export const MemoryCostUsageRepository = Layer.sync(CostUsageRepository, () => {
-  const records: Array<CostUsageRecord> = [];
+  const appendedRecords: Array<CostUsageRecord> = [];
+  const dailyRecords = new Map<string, Map<number, CostUsageRecord>>();
+  const dailyStates = new Map<
+    string,
+    { availability: "available" | "unavailable"; coverage: "exact" | "estimated" }
+  >();
+  const dailyKey = (providerId: CostUsageRecord["providerId"], sourceKey: string) =>
+    `${providerId}\u0000${sourceKey}`;
+  const allRecords = (): CostUsageRecord[] => [
+    ...appendedRecords,
+    ...[...dailyRecords.values()].flatMap((records) => [...records.values()]),
+  ];
   return {
     append: (record: CostUsageRecord) =>
       Effect.sync(() => {
-        records.push(record);
+        appendedRecords.push(record);
       }),
+    replaceDaily: (replacement) =>
+      Effect.sync(() => {
+        const key = dailyKey(replacement.providerId, replacement.sourceKey);
+        dailyStates.set(key, {
+          availability: replacement.availability,
+          coverage: replacement.coverage,
+        });
+        if (replacement.availability === "available") {
+          const records = dailyRecords.get(key) ?? new Map<number, CostUsageRecord>();
+          for (const [recordedAt] of records) {
+            if (recordedAt >= replacement.since && recordedAt <= replacement.until) {
+              records.delete(recordedAt);
+            }
+          }
+          for (const record of replacement.records) records.set(record.recordedAt, record);
+          dailyRecords.set(key, records);
+        }
+      }),
+    dailySourceState: (providerId, sourceKey) =>
+      Effect.succeed(dailyStates.get(dailyKey(providerId, sourceKey))),
     list: (providerId: CostUsageRecord["providerId"], since: number, limit?: number) =>
       Effect.sync(() => {
-        const matching = records.filter(
+        const matching = allRecords().filter(
           (record) => record.providerId === providerId && record.recordedAt >= since,
         );
         return limit === undefined ? matching : matching.slice(0, limit);
@@ -139,5 +170,10 @@ export const EmptyHostCapabilities = Layer.mergeAll(
     list: () => Effect.succeed([]),
     removeProvider: () => Effect.void,
   }),
-  Layer.succeed(CostUsageRepository, { append: () => Effect.void, list: () => Effect.succeed([]) }),
+  Layer.succeed(CostUsageRepository, {
+    append: () => Effect.void,
+    replaceDaily: () => Effect.void,
+    dailySourceState: () => Effect.succeed(undefined),
+    list: () => Effect.succeed([]),
+  }),
 );

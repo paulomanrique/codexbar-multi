@@ -48,9 +48,11 @@ import {
 } from "@codexbar/platform/node";
 import {
   Clock,
+  CostUsageRepository,
   HistoryRepository,
   makeDefaultCodexBarConfig,
   refreshProviderAndPersist,
+  XAI_DAILY_SPEND_SOURCE,
   type PersistedCodexBarConfig,
   type ProviderRuntimeService,
 } from "@codexbar/core";
@@ -157,6 +159,7 @@ const spendConfiguration = (): DesktopSpendConfiguration => {
       id: provider.id,
       providerId: provider.id,
       displayName: provider.name,
+      ...(provider.id === "xai" ? { dailySpendSourceKey: XAI_DAILY_SPEND_SOURCE } : {}),
     })),
     requestedDays: 30,
   };
@@ -428,6 +431,7 @@ void app
           }).pipe(
             Effect.provideService(Clock, providerClock),
             Effect.provideService(HistoryRepository, activePersistence().history),
+            Effect.provideService(CostUsageRepository, activePersistence().costs),
           ),
         );
         return decodeRefreshResult({

@@ -12,6 +12,43 @@ import { makeNodeSqliteWorkerPersistence } from "../src/node.ts";
 const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
 
 describe("Node SQLite worker persistence", () => {
+  it("routes replaceable vendor daily spend through the worker without exposing its source key in rows", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-daily-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    const day = Date.parse("2026-08-20T00:00:00.000Z");
+    const replacement = (costUsd: number) => ({
+      providerId: "xai" as ProviderId,
+      sourceKey: "vendor-daily-spend",
+      since: day,
+      until: day,
+      availability: "available" as const,
+      coverage: "estimated" as const,
+      records: [
+        {
+          providerId: "xai" as ProviderId,
+          recordedAt: day,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd,
+        },
+      ],
+    });
+    try {
+      await Effect.runPromise(persistence.costs.replaceDaily(replacement(0.5)));
+      await Effect.runPromise(persistence.costs.replaceDaily(replacement(1.5)));
+      await expect(Effect.runPromise(persistence.costs.list("xai", 0))).resolves.toEqual([
+        { providerId: "xai", recordedAt: day, inputTokens: 0, outputTokens: 0, costUsd: 1.5 },
+      ]);
+      await expect(
+        Effect.runPromise(persistence.costs.dailySourceState("xai", "vendor-daily-spend")),
+      ).resolves.toEqual({ availability: "available", coverage: "estimated" });
+    } finally {
+      await Effect.runPromise(persistence.close).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("runs history and cost repositories in a real worker and closes cleanly", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-"));
     const databasePath = join(directory, "usage.sqlite");

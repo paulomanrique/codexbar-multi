@@ -111,11 +111,12 @@ const requestedDays = (value: number): number => {
 const projectedSources = <Input extends SpendPublicationInput>(
   publication: SpendPublication<Input>,
 ): ReadonlyArray<SpendSourceDTO> =>
-  publication.sources.map(({ providerId, displayName, role, state }) => ({
+  publication.sources.map(({ providerId, displayName, role, state, coverage }) => ({
     provider: providerId,
     displayName,
     role,
     state,
+    ...(coverage === undefined ? {} : { coverage }),
   }));
 
 /**

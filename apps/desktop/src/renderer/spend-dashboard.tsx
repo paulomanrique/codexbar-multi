@@ -55,7 +55,10 @@ export function SpendDashboard({
 }) {
   const presentation = spendPresentation(overview, dashboard, loading, error);
   const maxDailyCost = Math.max(...presentation.dailySeries.map((point) => point.costUsd), 0);
-  const sourceIssueCount = presentation.unavailableSourceCount + presentation.loadingSourceCount;
+  const sourceIssueCount =
+    presentation.unavailableSourceCount +
+    presentation.loadingSourceCount +
+    presentation.estimatedSourceCount;
 
   return (
     <div className="spend-dashboard">

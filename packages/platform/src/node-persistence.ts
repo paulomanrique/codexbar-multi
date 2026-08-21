@@ -10,6 +10,8 @@ import {
   type ConfigRepositoryService,
   type CostUsageRecord,
   type CostUsageRepositoryService,
+  type DailyCostUsageReplacement,
+  type DailyCostUsageSourceState,
   type HistoryRecord,
   type HistoryRepositoryService,
   InfrastructureError,
@@ -61,6 +63,22 @@ export const NODE_PERSISTENCE_MIGRATIONS: readonly NodeSqliteMigration[] = [
       );
       CREATE INDEX cost_usage_records_provider_recorded_at
         ON cost_usage_records(provider_id, recorded_at, id);
+    `,
+  },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE cost_usage_records ADD COLUMN source_key TEXT NOT NULL DEFAULT 'append';
+      CREATE INDEX cost_usage_records_provider_source_recorded_at
+        ON cost_usage_records(provider_id, source_key, recorded_at, id);
+
+      CREATE TABLE cost_usage_sources (
+        provider_id TEXT NOT NULL REFERENCES providers(provider_id),
+        source_key TEXT NOT NULL,
+        availability TEXT NOT NULL CHECK (availability IN ('available', 'unavailable')),
+        coverage TEXT NOT NULL CHECK (coverage IN ('exact', 'estimated')),
+        PRIMARY KEY (provider_id, source_key)
+      );
     `,
   },
 ];
@@ -384,6 +402,65 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
             );
         });
       }),
+    replaceDaily: (replacement) =>
+      queuedSqlite(queue, "replace daily cost usage records", () => {
+        assertDailyCostUsageReplacement(replacement);
+        return inImmediateTransactionWithRetry(database, () => {
+          ensureProvider(database, replacement.providerId);
+          database
+            .prepare(
+              `INSERT INTO cost_usage_sources (provider_id, source_key, availability, coverage)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(provider_id, source_key) DO UPDATE SET
+                 availability = excluded.availability,
+                 coverage = excluded.coverage`,
+            )
+            .run(
+              replacement.providerId,
+              replacement.sourceKey,
+              replacement.availability,
+              replacement.coverage,
+            );
+          // An unavailable analytics response deliberately retains prior rows:
+          // source state hides them from publication until a fresh successful
+          // chart atomically replaces its covered range.
+          if (replacement.availability === "unavailable") return;
+          database
+            .prepare(
+              "DELETE FROM cost_usage_records WHERE provider_id = ? AND source_key = ? AND recorded_at >= ? AND recorded_at <= ?",
+            )
+            .run(
+              replacement.providerId,
+              replacement.sourceKey,
+              replacement.since,
+              replacement.until,
+            );
+          const insert = database.prepare(
+            "INSERT INTO cost_usage_records (provider_id, recorded_at, input_tokens, output_tokens, cost_usd, source_key) VALUES (?, ?, ?, ?, ?, ?)",
+          );
+          for (const record of replacement.records) {
+            insert.run(
+              record.providerId,
+              record.recordedAt,
+              record.inputTokens,
+              record.outputTokens,
+              record.costUsd,
+              replacement.sourceKey,
+            );
+          }
+        });
+      }),
+    dailySourceState: (providerId, sourceKey) =>
+      readSqlite("get daily cost usage source state", () => {
+        assertProviderId(providerId);
+        assertDailySourceKey(sourceKey);
+        const row = reader
+          .prepare(
+            "SELECT availability, coverage FROM cost_usage_sources WHERE provider_id = ? AND source_key = ?",
+          )
+          .get(providerId, sourceKey) as Record<string, unknown> | undefined;
+        return row === undefined ? undefined : decodeDailyCostUsageSourceState(row);
+      }),
     list: (providerId, since, limit) =>
       readSqlite("list cost usage records", () => {
         assertProviderId(providerId);
@@ -567,6 +644,20 @@ const decodeCostUsageRecord = (row: Record<string, unknown>): CostUsageRecord =>
   costUsd: readFiniteNumber(row, "cost_usd"),
 });
 
+const decodeDailyCostUsageSourceState = (
+  row: Record<string, unknown>,
+): DailyCostUsageSourceState => {
+  const availability = readString(row, "availability");
+  const coverage = readString(row, "coverage");
+  if (
+    (availability !== "available" && availability !== "unavailable") ||
+    (coverage !== "exact" && coverage !== "estimated")
+  ) {
+    throw new Error("Daily cost usage source state is invalid");
+  }
+  return { availability, coverage };
+};
+
 const assertCostUsageRecord = (record: CostUsageRecord): void => {
   assertProviderId(record.providerId);
   assertNatural(record.recordedAt, "recordedAt");
@@ -574,6 +665,41 @@ const assertCostUsageRecord = (record: CostUsageRecord): void => {
   assertNatural(record.outputTokens, "outputTokens");
   if (!Number.isFinite(record.costUsd) || record.costUsd < 0) {
     throw new Error("costUsd must be a non-negative finite number");
+  }
+};
+
+const assertDailyCostUsageReplacement = (replacement: DailyCostUsageReplacement): void => {
+  assertProviderId(replacement.providerId);
+  assertDailySourceKey(replacement.sourceKey);
+  assertNatural(replacement.since, "daily cost usage since");
+  assertNatural(replacement.until, "daily cost usage until");
+  if (replacement.since > replacement.until) throw new Error("daily cost usage range is invalid");
+  if (replacement.availability !== "available" && replacement.availability !== "unavailable") {
+    throw new Error("daily cost usage availability is invalid");
+  }
+  if (replacement.coverage !== "exact" && replacement.coverage !== "estimated") {
+    throw new Error("daily cost usage coverage is invalid");
+  }
+  if (replacement.availability === "unavailable" && replacement.records.length > 0) {
+    throw new Error("unavailable daily cost usage cannot contain records");
+  }
+  const days = new Set<number>();
+  for (const record of replacement.records) {
+    assertCostUsageRecord(record);
+    if (record.providerId !== replacement.providerId) {
+      throw new Error("daily cost usage record crosses provider ownership");
+    }
+    if (record.recordedAt < replacement.since || record.recordedAt > replacement.until) {
+      throw new Error("daily cost usage record is outside its replacement range");
+    }
+    if (days.has(record.recordedAt)) throw new Error("daily cost usage contains duplicate days");
+    days.add(record.recordedAt);
+  }
+};
+
+const assertDailySourceKey = (sourceKey: string): void => {
+  if (sourceKey.length === 0 || sourceKey.length > 120 || sourceKey.includes("\u0000")) {
+    throw new Error("daily cost usage source key is invalid");
   }
 };
 

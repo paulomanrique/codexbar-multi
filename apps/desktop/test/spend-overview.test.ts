@@ -15,6 +15,84 @@ const snapshot = {
 };
 
 describe("published desktop spend overview (Swift #3067 parity)", () => {
+  it("keeps xAI analytics unavailable rather than publishing retained prepaid-era rows as zero spend", async () => {
+    const persistence: DesktopSpendPersistence = {
+      costs: {
+        list: () =>
+          Effect.succeed([
+            {
+              providerId: "xai",
+              recordedAt: Date.parse("2026-08-20T00:00:00.000Z"),
+              inputTokens: 0,
+              outputTokens: 0,
+              costUsd: 4,
+            },
+          ]),
+        dailySourceState: () => Effect.succeed({ availability: "unavailable", coverage: "exact" }),
+      },
+    };
+    const publisher = new DesktopSpendPublisher(
+      persistence,
+      () => new Date("2026-08-20T12:00:00.000Z"),
+    );
+    const projection = await publisher.refresh({
+      ownershipFingerprint: "xai-owner",
+      requestedDays: 30,
+      roster: [
+        {
+          id: "xai",
+          providerId: "xai",
+          displayName: "xAI",
+          dailySpendSourceKey: "vendor-daily-spend",
+        },
+      ],
+    });
+    expect(projection.overview.sources).toEqual([
+      expect.objectContaining({ provider: "xai", state: "unavailable" }),
+    ]);
+    expect(projection.overview.totals.costUsd).toBe(0);
+  });
+
+  it("publishes estimated xAI chart coverage without its internal source key", async () => {
+    const persistence: DesktopSpendPersistence = {
+      costs: {
+        list: () =>
+          Effect.succeed([
+            {
+              providerId: "xai",
+              recordedAt: Date.parse("2026-08-20T00:00:00.000Z"),
+              inputTokens: 0,
+              outputTokens: 0,
+              costUsd: 4,
+            },
+          ]),
+        dailySourceState: () =>
+          Effect.succeed({ availability: "available", coverage: "estimated" }),
+      },
+    };
+    const publisher = new DesktopSpendPublisher(
+      persistence,
+      () => new Date("2026-08-20T12:00:00.000Z"),
+    );
+    const projection = await publisher.refresh({
+      ownershipFingerprint: "xai-owner",
+      requestedDays: 30,
+      roster: [
+        {
+          id: "xai-private-account",
+          providerId: "xai",
+          displayName: "xAI",
+          dailySpendSourceKey: "vendor-daily-spend",
+        },
+      ],
+    });
+    expect(projection.overview.sources).toEqual([
+      expect.objectContaining({ provider: "xai", state: "available", coverage: "estimated" }),
+    ]);
+    expect(JSON.stringify(projection)).not.toContain("vendor-daily-spend");
+    expect(JSON.stringify(projection)).not.toContain("xai-private-account");
+  });
+
   it("reuses only current, available sources in the requested provider silo", () => {
     const publication = createSpendPublication({
       revision: 1,

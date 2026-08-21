@@ -148,6 +148,7 @@ describe("desktop IPC boundary", () => {
           displayName: "Codex work",
           role: "subscription",
           state: "available",
+          coverage: "estimated",
           sourceId: "profile:/private/path",
           ownershipFingerprint: "must never cross IPC",
         },
@@ -177,6 +178,7 @@ describe("desktop IPC boundary", () => {
     });
     expect(JSON.stringify(overview)).not.toContain("profile:/private/path");
     expect(JSON.stringify(overview)).not.toContain("ownershipFingerprint");
+    expect(overview.sources[0]).toMatchObject({ coverage: "estimated" });
     expect(
       decodeDashboard({
         overview,

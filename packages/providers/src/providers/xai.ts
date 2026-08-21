@@ -55,6 +55,7 @@ const definition: ProviderDefinition = {
       `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}:${String(date.getUTCSeconds()).padStart(2, "0")}`;
     let daily: any = [];
     let partial: any = false;
+    let analyticsAvailable: any = false;
     try {
       const usage: any = await ctx.http.postJSON(`${root}/usage`, {
         body: {
@@ -96,15 +97,24 @@ const definition: ProviderDefinition = {
           .sort()
           .map((day: any) => ({ label: day, value: totals[day] }));
         partial = usage.json.limitReached === true;
+        analyticsAvailable = true;
       }
     } catch (error) {
+      // Refresh cancellation must propagate to the coordinator; only ordinary
+      // analytics failures are best-effort around an otherwise valid balance.
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || error.name === "CanceledError")
+      ) {
+        throw error;
+      }
       if (error instanceof Error && /rejected the Management API key/.test(error.message))
         throw error;
     }
     return {
       cost: { used: balance, currency: "USD", period: "Prepaid credits" },
       identity: { loginMethod: "Management API" },
-      dataConfidence: partial ? "estimated" : "exact",
+      dataConfidence: analyticsAvailable ? (partial ? "estimated" : "exact") : "unknown",
       details: [
         {
           title: "Billing summary",
@@ -115,7 +125,10 @@ const definition: ProviderDefinition = {
               value: `$${daily.reduce((sum: any, point: any) => sum + point.value, 0).toFixed(2)}`,
             },
           ],
-          chart: daily.length
+          // A parseable 2xx analytics response establishes known-zero spend
+          // when its series is empty. Best-effort failures intentionally leave
+          // the chart absent so downstream ingestion marks it unavailable.
+          chart: analyticsAvailable
             ? { kind: "bars", title: "Daily spend", unit: "USD", points: daily }
             : undefined,
         },

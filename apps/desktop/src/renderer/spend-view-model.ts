@@ -17,6 +17,7 @@ export interface SpendPresentation {
   readonly staleSourceCount: number;
   readonly unavailableSourceCount: number;
   readonly loadingSourceCount: number;
+  readonly estimatedSourceCount: number;
 }
 
 const zeroTotals = (overview: SpendOverviewDTO): boolean =>
@@ -24,6 +25,11 @@ const zeroTotals = (overview: SpendOverviewDTO): boolean =>
 
 const countSources = (overview: SpendOverviewDTO, state: SpendSourceStateDTO): number =>
   overview.sources.filter((source) => source.state === state).length;
+
+const estimatedSources = (overview: SpendOverviewDTO): number =>
+  overview.sources.filter(
+    (source) => source.state === "available" && source.coverage === "estimated",
+  ).length;
 
 /**
  * Turns the safe IPC projection into presentation-ready aggregates. Provider
@@ -50,6 +56,8 @@ export const spendPresentation = (
         publishedOverview === undefined ? 0 : countSources(publishedOverview, "unavailable"),
       loadingSourceCount:
         publishedOverview === undefined ? 0 : countSources(publishedOverview, "loading"),
+      estimatedSourceCount:
+        publishedOverview === undefined ? 0 : estimatedSources(publishedOverview),
     };
   }
   if (publishedOverview === undefined) {
@@ -60,6 +68,7 @@ export const spendPresentation = (
       staleSourceCount: 0,
       unavailableSourceCount: 0,
       loadingSourceCount: 0,
+      estimatedSourceCount: 0,
     };
   }
 
@@ -92,5 +101,6 @@ export const spendPresentation = (
     staleSourceCount: countSources(publishedOverview, "stale-last-known"),
     unavailableSourceCount: countSources(publishedOverview, "unavailable"),
     loadingSourceCount: countSources(publishedOverview, "loading"),
+    estimatedSourceCount: estimatedSources(publishedOverview),
   };
 };
