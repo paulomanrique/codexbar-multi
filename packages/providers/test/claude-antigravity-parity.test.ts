@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { antigravity, parseAntigravityQuotaSummary } from "../src/providers/antigravity.ts";
+import {
+  antigravity,
+  antigravityQuotaWindowMinutes,
+  parseAntigravityQuotaSummary,
+} from "../src/providers/antigravity.ts";
 import { claude, parseClaudeCLIUsage, parseClaudeUsage } from "../src/providers/claude.ts";
 import type { ProviderContext, ProviderResponse } from "../src/types.ts";
 
@@ -168,9 +172,40 @@ describe("Claude and Antigravity Swift-derived parity", () => {
                 displayName: "Gemini",
                 buckets: [
                   {
-                    bucketId: "gemini-3",
-                    displayName: "Gemini 3",
+                    bucketId: "gemini-other",
+                    displayName: "Other",
+                    remaining: { remainingFraction: 0.1 },
+                  },
+                  {
+                    bucketId: "gemini-weekly",
+                    displayName: "Weekly",
+                    remaining: { case: "remainingFraction", value: 0.4 },
+                  },
+                  {
+                    bucketId: "gemini-session",
+                    displayName: "5-hour limit",
                     remaining: { remainingFraction: 0.6 },
+                  },
+                  {
+                    bucketId: "gemini-disabled",
+                    displayName: "Disabled",
+                    remainingFraction: 0.01,
+                    disabled: true,
+                  },
+                  {
+                    bucketId: "gemini-unknown",
+                    displayName: "Unknown",
+                  },
+                ],
+              },
+              {
+                displayName: "Claude and GPT models",
+                buckets: [
+                  {
+                    bucketId: "third-party-weekly",
+                    displayName: "Weekly Limit",
+                    remainingFraction: 0.75,
+                    description: "resets later",
                   },
                 ],
               },
@@ -180,10 +215,36 @@ describe("Claude and Antigravity Swift-derived parity", () => {
         context(() => response({})),
       ),
     ).toMatchObject({
-      primary: { usedPercent: 40 },
-      extraRateWindows: [{ id: "antigravity-quota-summary-gemini-3", title: "Gemini: Gemini 3" }],
+      primary: { usedPercent: 90 },
+      secondary: { usedPercent: 25, windowMinutes: 10_080, resetDescription: "resets later" },
+      extraRateWindows: [
+        {
+          id: "antigravity-quota-summary-gemini-session",
+          title: "Gemini 5-hour",
+          window: { windowMinutes: 300 },
+        },
+        {
+          id: "antigravity-quota-summary-gemini-weekly",
+          title: "Gemini weekly",
+          window: { windowMinutes: 10_080 },
+        },
+        { id: "antigravity-quota-summary-gemini-other", title: "Gemini Other" },
+        { id: "antigravity-quota-summary-gemini-disabled", usageKnown: false },
+        { id: "antigravity-quota-summary-gemini-unknown", usageKnown: false },
+        {
+          id: "antigravity-quota-summary-third-party-weekly",
+          title: "Claude/GPT weekly",
+        },
+      ],
       identity: { providerId: "antigravity" },
     });
+  });
+
+  it("matches Swift quota cadence aliases and rejects unrelated model labels", () => {
+    expect(antigravityQuotaWindowMinutes("gemini_5h", "Gemini")).toBe(300);
+    expect(antigravityQuotaWindowMinutes("bucket", "Five-hour limit")).toBe(300);
+    expect(antigravityQuotaWindowMinutes("claude-weekly", "Claude")).toBe(10_080);
+    expect(antigravityQuotaWindowMinutes("gemini-3", "Gemini 3")).toBeUndefined();
   });
 
   it("keeps classified missing-credential and parse failures", async () => {

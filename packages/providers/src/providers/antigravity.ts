@@ -18,6 +18,69 @@ type Quota = {
   readonly reset?: string;
 };
 
+type QuotaSummaryBucket = {
+  readonly id: string;
+  readonly label: string;
+  readonly remaining?: number;
+  readonly reset?: string;
+  readonly resetDescription?: string;
+  readonly usageKnown: boolean;
+  readonly windowMinutes?: number;
+};
+
+const sessionCadenceAliases = new Set(["session", "5h", "5-hour", "five hour", "five-hour"]);
+
+export const antigravityQuotaWindowMinutes = (
+  bucketId: string,
+  displayName: string,
+): number | undefined => {
+  const candidates = new Set<string>();
+  for (const rawValue of [bucketId, displayName]) {
+    const normalized = rawValue.trim().toLowerCase().replaceAll("_", "-");
+    if (normalized === "") continue;
+    const normalizedCandidates = normalized.endsWith(" limit")
+      ? [normalized, normalized.slice(0, -" limit".length)]
+      : [normalized];
+    for (const candidate of normalizedCandidates) {
+      candidates.add(candidate);
+      for (const alias of [...sessionCadenceAliases, "weekly"])
+        if (candidate.endsWith(`-${alias}`)) candidates.add(alias);
+    }
+  }
+  if ([...sessionCadenceAliases].some((alias) => candidates.has(alias))) return 300;
+  return candidates.has("weekly") ? 10_080 : undefined;
+};
+
+const quotaGroupTitle = (displayName: string): string => {
+  const normalized = displayName.trim();
+  const lowercased = normalized.toLowerCase();
+  if (lowercased.includes("gemini")) return "Gemini";
+  if (lowercased.includes("claude") || lowercased.includes("gpt")) return "Claude/GPT";
+  return normalized || "Quota";
+};
+
+const quotaBucketTitle = (displayName: string, windowMinutes: number | undefined): string =>
+  windowMinutes === 300 ? "5-hour" : windowMinutes === 10_080 ? "weekly" : displayName;
+
+const quotaGroupSortRank = (displayName: string): number => {
+  const normalized = displayName.trim().toLowerCase();
+  if (normalized.includes("gemini")) return 0;
+  if (normalized.includes("claude") || normalized.includes("gpt")) return 1;
+  return 2;
+};
+
+const quotaBucketSortRank = (windowMinutes: number | undefined): number =>
+  windowMinutes === 300 ? 0 : windowMinutes === 10_080 ? 1 : 2;
+
+const quotaSummaryRemaining = (bucket: Record<string, unknown>): number | undefined => {
+  const remaining = object(bucket.remaining);
+  return (
+    number(bucket.remainingFraction) ??
+    number(remaining?.remainingFraction) ??
+    (string(remaining?.case) === "remainingFraction" ? number(remaining?.value) : undefined)
+  );
+};
+
 const quota = (id: string, value: unknown): Quota | undefined => {
   const model = object(value);
   const info = object(model?.quotaInfo) ?? model;
@@ -37,34 +100,85 @@ const quota = (id: string, value: unknown): Quota | undefined => {
 export const parseAntigravityQuotaSummary = (payload: unknown, ctx: ProviderContext) => {
   const root = object(payload);
   const summary = object(root?.response) ?? object(root?.summary) ?? root;
-  const groups = Array.isArray(summary?.groups) ? summary.groups.map(object).filter(Boolean) : [];
-  const quotas = groups.flatMap((group) => {
-    const groupName = string(group?.displayName) ?? "Quota";
-    const buckets = Array.isArray(group?.buckets) ? group.buckets.map(object).filter(Boolean) : [];
-    return buckets.flatMap((bucket) => {
-      if (bucket?.disabled === true) return [];
-      const id = string(bucket?.bucketId);
-      const remaining =
-        number(bucket?.remainingFraction) ?? number(object(bucket?.remaining)?.remainingFraction);
-      if (!id || remaining === undefined) return [];
-      const reset = string(bucket?.resetTime);
-      return [
-        {
-          id,
-          label: `${groupName}: ${string(bucket?.displayName) ?? id}`,
-          remaining: clamp(remaining),
-          ...(reset ? { reset } : {}),
-        },
-      ];
+  const groups = (Array.isArray(summary?.groups) ? summary.groups : [])
+    .map(object)
+    .filter((group): group is Record<string, unknown> => group !== undefined)
+    .map((group, index) => ({ group, index }))
+    .sort(
+      (left, right) =>
+        quotaGroupSortRank(string(left.group.displayName) ?? "") -
+          quotaGroupSortRank(string(right.group.displayName) ?? "") || left.index - right.index,
+    );
+  const quotas = groups.flatMap(({ group }) => {
+    const groupName = string(group.displayName)?.trim() || "Quota";
+    const buckets = (Array.isArray(group.buckets) ? group.buckets : [])
+      .map(object)
+      .filter((bucket): bucket is Record<string, unknown> => bucket !== undefined)
+      .flatMap((bucket, index) => {
+        const id = string(bucket.bucketId)?.trim();
+        if (!id) return [];
+        const displayName = string(bucket.displayName)?.trim() || id;
+        const windowMinutes = antigravityQuotaWindowMinutes(id, displayName);
+        return [{ bucket, displayName, id, index, windowMinutes }];
+      })
+      .sort(
+        (left, right) =>
+          quotaBucketSortRank(left.windowMinutes) - quotaBucketSortRank(right.windowMinutes) ||
+          left.index - right.index,
+      );
+    return buckets.map(({ bucket, displayName, id, windowMinutes }): QuotaSummaryBucket => {
+      const remaining = quotaSummaryRemaining(bucket);
+      const reset = string(bucket.resetTime);
+      const resetDescription = string(bucket.description);
+      const usageKnown = bucket.disabled !== true && remaining !== undefined;
+      return {
+        id,
+        label: `${quotaGroupTitle(groupName)} ${quotaBucketTitle(displayName, windowMinutes)}`,
+        ...(remaining === undefined ? {} : { remaining: clamp(remaining) }),
+        ...(reset ? { reset } : {}),
+        ...(resetDescription ? { resetDescription } : {}),
+        usageKnown,
+        ...(windowMinutes === undefined ? {} : { windowMinutes }),
+      };
     });
   });
   if (!quotas.length)
     throw ctx.fail.parseFailure("Antigravity local quota response has no usable buckets.");
-  return snapshot(quotas, ctx);
+  return quotaSummarySnapshot(quotas, ctx);
+};
+
+const quotaSummarySnapshot = (quotas: readonly QuotaSummaryBucket[], ctx: ProviderContext) => {
+  const windows = quotas.map((item) => ({
+    id: `antigravity-quota-summary-${item.id}`,
+    title: item.label,
+    window: {
+      usedPercent: item.remaining === undefined ? 0 : (1 - item.remaining) * 100,
+      ...(item.windowMinutes === undefined ? {} : { windowMinutes: item.windowMinutes }),
+      ...(item.reset ? { resetsAt: ctx.date.iso(item.reset) } : {}),
+      ...(item.resetDescription ? { resetDescription: item.resetDescription } : {}),
+    },
+    ...(item.usageKnown ? {} : { usageKnown: false }),
+  }));
+  const representative = (predicate: (title: string) => boolean) =>
+    windows
+      .filter((item) => item.usageKnown !== false && predicate(item.title.toLowerCase()))
+      .sort(
+        (left, right) =>
+          right.window.usedPercent - left.window.usedPercent ||
+          left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
+      )[0]?.window;
+  const primary = representative((title) => title.includes("gemini"));
+  const secondary = representative((title) => title.includes("claude") || title.includes("gpt"));
+  return {
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+    extraRateWindows: windows,
+    identity: { providerId: "antigravity" },
+  };
 };
 
 const snapshot = (
-  quotas: readonly Quota[],
+  quotas: readonly (Quota & { readonly windowMinutes?: number })[],
   ctx: ProviderContext,
   identity: Record<string, unknown> = {},
 ) => {
@@ -73,6 +187,7 @@ const snapshot = (
     title: item.label,
     window: {
       usedPercent: (1 - item.remaining) * 100,
+      ...(item.windowMinutes === undefined ? {} : { windowMinutes: item.windowMinutes }),
       ...(item.reset ? { resetsAt: ctx.date.iso(item.reset), resetDescription: item.reset } : {}),
     },
   }));
