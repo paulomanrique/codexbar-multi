@@ -1,12 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
+import { parseProviderMatrix, validateProviderMatrix } from "./provider-matrix.ts";
 
 interface Baseline {
   readonly codexBar: { readonly commit: string };
 }
-
-const matrixProviderIds = (source: string): readonly string[] =>
-  [...source.matchAll(/^\s+- id:\s*([a-z0-9-]+)\s*$/gm)].map((match) => match[1] ?? "");
 
 const canonicalProviderIds = (source: string): readonly string[] => {
   const roster = source.match(/PROVIDER_IDS\s*=\s*\[([\s\S]*?)\]\s+as const/);
@@ -14,61 +12,6 @@ const canonicalProviderIds = (source: string): readonly string[] => {
   const body = roster[1];
   if (body === undefined) throw new Error("PROVIDER_IDS declaration has no body");
   return [...body.matchAll(/"([a-z0-9-]+)"/g)].map((match) => match[1] ?? "");
-};
-
-const validateProviderMatrix = (
-  source: string,
-  canonical: readonly string[],
-  pluginResourceFiles: readonly string[],
-): void => {
-  const ids = matrixProviderIds(source);
-  if (ids.length !== 69) {
-    throw new Error(`upstream/providers.yml must contain exactly 69 entries (found ${ids.length})`);
-  }
-  if (new Set(ids).size !== ids.length) {
-    throw new Error("upstream/providers.yml contains duplicate provider IDs");
-  }
-  if (ids.join("\n") !== canonical.join("\n")) {
-    throw new Error("upstream/providers.yml provider order does not match contracts/provider.ts");
-  }
-
-  const entries = source.split(/\n(?=\s+- id:\s)/).filter((entry) => /^\s+- id:\s/m.test(entry));
-  for (const entry of entries) {
-    const id = /^\s+- id:\s*([a-z0-9-]+)/m.exec(entry)?.[1] ?? "unknown";
-    const status = /^\s+status:\s*(\w+)/m.exec(entry)?.[1];
-    const oracleStatus = /^\s+oracleStatus:\s*(\w+)/m.exec(entry)?.[1];
-    if (status !== "unported" && status !== "partial" && status !== "parity") {
-      throw new Error(`provider ${id} has invalid migration status '${status ?? "missing"}'`);
-    }
-    if (oracleStatus !== "pending" && oracleStatus !== "accepted") {
-      throw new Error(`provider ${id} must declare oracleStatus pending|accepted`);
-    }
-    if (status === "parity" && oracleStatus !== "accepted") {
-      throw new Error(
-        `provider ${id} cannot be parity without an accepted Swift oracle comparison`,
-      );
-    }
-    if (status === "partial") {
-      const realPaths = entry.match(/^\s+- packages\/providers\/src\/providers\/[^\n]+$/gm) ?? [];
-      const tsTests = entry.match(/^\s+- packages\/providers\/test\/[^\n]+$/gm) ?? [];
-      if (realPaths.length === 0 || tsTests.length === 0) {
-        throw new Error(`provider ${id} is partial without both a real TS path and TS tests`);
-      }
-    }
-  }
-
-  for (const file of pluginResourceFiles) {
-    const id = file.replace(/\.(?:js|ts)$/, "");
-    if (!canonical.includes(id)) continue;
-    const entry = entries.find((candidate) =>
-      new RegExp(`^\\s+- id:\\s*${id}$`, "m").test(candidate),
-    );
-    if (entry === undefined) throw new Error(`bundled plugin ${file} has no provider matrix entry`);
-    const expectedPath = `Sources/CodexBarCore/Resources/Plugins/${file}`;
-    if (!entry.includes(`- ${expectedPath}`)) {
-      throw new Error(`provider ${id} does not track its bundled upstream source ${expectedPath}`);
-    }
-  }
 };
 
 const escapeRegularExpression = (value: string): string =>
@@ -123,7 +66,25 @@ const canonical = canonicalProviderIds(
 const pluginResourceFiles = await readdir(
   new URL("../../Sources/CodexBarCore/Resources/Plugins/", import.meta.url),
 );
-validateProviderMatrix(providerMatrix, canonical, pluginResourceFiles);
+const trackedFiles = execFileSync("git", ["ls-files", "-z"], {
+  cwd: root,
+  encoding: "utf8",
+})
+  .split("\0")
+  .filter((path) => path.length > 0);
+const providerSources: Record<string, string> = {};
+for (const entry of parseProviderMatrix(providerMatrix)) {
+  for (const path of [...entry.expectedTsPaths, ...entry.realTsPaths]) {
+    providerSources[path] = await readFile(new URL(`../../${path}`, import.meta.url), "utf8");
+  }
+}
+validateProviderMatrix({
+  source: providerMatrix,
+  canonicalProviderIds: canonical,
+  pluginResourceFiles,
+  trackedFiles,
+  providerSources,
+});
 const providerMatchers = semanticPathMatchers(providerMatrix);
 const componentMatchers = semanticPathMatchers(componentMatrix);
 const target = process.argv[2] ?? "upstream/main";

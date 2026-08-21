@@ -23,7 +23,7 @@ providers:
         - packages/providers/test/codex.test.ts
         - apps/cli/test/codex-credential.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Codex/**/*
+      - packages/providers/test/codex.test.ts
       - Tests/CodexBarTests/Fixtures/codex-*
       - Tests/CodexBarTests/Fixtures/*session*
     tsPaths:
@@ -72,7 +72,7 @@ providers:
       tsGlobs:
         - packages/providers/test/cloud-parity-wave-a.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/AzureOpenAI/**/*
+      - packages/providers/test/cloud-parity-wave-a.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/azureopenai.ts]
       real:
@@ -118,7 +118,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/ClinePass/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/clinepass.ts]
       real:
@@ -139,7 +139,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-wave-a.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Cursor/**/*
+      - packages/providers/test/web-cookie-wave-a.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/cursor.ts]
       real:
@@ -182,7 +182,7 @@ providers:
         - packages/providers/test/web-cookie-wave-a.test.ts
         - packages/platform/test/opencodego-multistrategy.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/OpenCodeGo/**/*
+      - packages/providers/test/web-cookie-wave-a.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/opencodego.ts]
       real:
@@ -204,7 +204,7 @@ providers:
       tsGlobs:
         - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Alibaba/**/*
+      - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/alibaba.ts]
       real:
@@ -225,7 +225,7 @@ providers:
       tsGlobs:
         - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/AlibabaTokenPlan/**/*
+      - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/alibabatokenplan.ts]
       real:
@@ -246,7 +246,7 @@ providers:
       tsGlobs:
         - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/QwenCloud/**/*
+      - packages/providers/test/alibaba-qwen-provider-parity.test.ts
       - Tests/CodexBarTests/Fixtures/QwenCloud/**/*
     tsPaths:
       expected: [packages/providers/src/providers/qwencloud.ts]
@@ -268,7 +268,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-c.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Factory/**/*
+      - packages/providers/test/web-cookie-providers-c.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/factory.ts]
       real:
@@ -290,7 +290,7 @@ providers:
         - packages/providers/test/http-wave.test.ts
         - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Fireworks/**/*
+      - packages/providers/test/http-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/fireworks.ts]
       real:
@@ -312,7 +312,7 @@ providers:
       tsGlobs:
         - packages/providers/test/cloud-parity-wave-a.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Gemini/**/*
+      - packages/providers/test/cloud-parity-wave-a.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/gemini.ts]
       real:
@@ -333,7 +333,7 @@ providers:
       tsGlobs:
         - packages/providers/test/claude-antigravity-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Antigravity/**/*
+      - packages/providers/test/claude-antigravity-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/antigravity.ts]
       real:
@@ -353,7 +353,7 @@ providers:
       tsGlobs:
         - packages/providers/test/complex-cloud-wave-b.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Copilot/**/*
+      - packages/providers/test/complex-cloud-wave-b.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/copilot.ts]
       real:
@@ -374,7 +374,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-c.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Devin/**/*
+      - packages/providers/test/web-cookie-providers-c.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/devin.ts]
       real:
@@ -396,7 +396,7 @@ providers:
         - packages/providers/test/plugin-derived-descriptors.test.ts
         - packages/providers/test/upstream-provider-deltas.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Zai/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/zai.ts]
       real:
@@ -438,7 +438,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Manus/**/*
+      - packages/providers/test/provider-extension-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/manus.ts]
       real:
@@ -459,7 +459,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-c.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Kimi/**/*
+      - packages/providers/test/web-cookie-providers-c.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/kimi.ts]
       real:
@@ -480,7 +480,7 @@ providers:
       tsGlobs:
         - packages/providers/test/kilo-kiro-augment-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Kilo/**/*
+      - packages/providers/test/kilo-kiro-augment-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/kilo.ts]
       real:
@@ -502,7 +502,7 @@ providers:
         - packages/providers/test/kilo-kiro-augment-parity.test.ts
         - packages/providers/test/kiro-usage-limits.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Kiro/**/*
+      - packages/providers/test/kilo-kiro-augment-parity.test.ts
     tsPaths:
       expected:
         - packages/providers/src/providers/kiro.ts
@@ -548,7 +548,7 @@ providers:
       tsGlobs:
         - packages/providers/test/kilo-kiro-augment-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Augment/**/*
+      - packages/providers/test/kilo-kiro-augment-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/augment.ts]
       real:
@@ -569,7 +569,7 @@ providers:
       tsGlobs:
         - packages/providers/test/jetbrains-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/JetBrains/**/*
+      - packages/providers/test/jetbrains-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/jetbrains.ts]
       real:
@@ -590,7 +590,7 @@ providers:
         - packages/providers/test/http-wave.test.ts
         - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Moonshot/**/*
+      - packages/providers/test/http-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/moonshot.ts]
       real:
@@ -634,7 +634,7 @@ providers:
       tsGlobs:
         - packages/providers/test/vertical-slice-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/T3Chat/**/*
+      - packages/providers/test/vertical-slice-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/t3chat.ts]
       real:
@@ -655,7 +655,7 @@ providers:
       tsGlobs:
         - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Ollama/**/*
+      - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/ollama.ts]
       real:
@@ -677,7 +677,7 @@ providers:
         - packages/providers/test/plugin-derived-descriptors.test.ts
         - packages/providers/test/xai-daily-spend.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Synthetic/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/synthetic.ts]
       real:
@@ -699,7 +699,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/OpenRouter/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/openrouter.ts]
       real:
@@ -719,7 +719,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/ElevenLabs/**/*
+      - packages/providers/test/http-parity-wave-three.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/elevenlabs.ts]
       real:
@@ -739,7 +739,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Warp/**/*
+      - packages/providers/test/http-wave-b.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/warp.ts]
       real:
@@ -760,7 +760,7 @@ providers:
       tsGlobs:
         - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Windsurf/**/*
+      - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/windsurf.ts]
       real:
@@ -781,7 +781,7 @@ providers:
       tsGlobs:
         - packages/providers/test/local-cli-oauth-providers.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Zed/**/*
+      - packages/providers/test/local-cli-oauth-providers.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/zed.ts]
       real:
@@ -802,7 +802,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Perplexity/**/*
+      - packages/providers/test/provider-extension-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/perplexity.ts]
       real:
@@ -823,7 +823,7 @@ providers:
       tsGlobs:
         - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/MiMo/**/*
+      - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/mimo.ts]
       real:
@@ -843,7 +843,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Doubao/**/*
+      - packages/providers/test/http-wave-b.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/doubao.ts]
       real:
@@ -864,7 +864,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Sakana/**/*
+      - packages/providers/test/web-cookie-providers-d.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/sakana.ts]
       real:
@@ -885,7 +885,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Abacus/**/*
+      - packages/providers/test/web-cookie-providers-d.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/abacus.ts]
       real:
@@ -906,7 +906,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Mistral/**/*
+      - packages/providers/test/web-cookie-providers-d.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/mistral.ts]
       real:
@@ -926,7 +926,7 @@ providers:
       tsGlobs:
         - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/DeepSeek/**/*
+      - packages/providers/test/http-parity-wave-two.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/deepseek.ts]
       real:
@@ -946,7 +946,7 @@ providers:
       tsGlobs:
         - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/DeepInfra/**/*
+      - packages/providers/test/http-parity-wave-two.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/deepinfra.ts]
       real:
@@ -966,7 +966,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Codebuff/**/*
+      - packages/providers/test/http-parity-wave-three.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/codebuff.ts]
       real:
@@ -988,7 +988,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Crof/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/crof.ts]
       real:
@@ -1009,7 +1009,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Venice/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/venice.ts]
       real:
@@ -1051,7 +1051,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Qoder/**/*
+      - packages/providers/test/provider-extension-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/qoder.ts]
       real:
@@ -1072,7 +1072,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-e.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/StepFun/**/*
+      - packages/providers/test/web-cookie-providers-e.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/stepfun.ts]
       real:
@@ -1093,7 +1093,7 @@ providers:
       tsGlobs:
         - packages/providers/test/complex-cloud-wave-b.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Bedrock/**/*
+      - packages/providers/test/complex-cloud-wave-b.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/bedrock.ts]
       real:
@@ -1123,7 +1123,7 @@ providers:
         - packages/core/test/daily-spend-ingestion.test.ts
         - apps/desktop/test/spend-overview.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Grok/**/*
+      - packages/providers/test/local-cli-oauth-providers.test.ts
     tsPaths:
       expected:
         - packages/providers/src/providers/grok.ts
@@ -1169,7 +1169,7 @@ providers:
       tsGlobs:
         - packages/providers/test/http-parity-wave-two.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Groq/**/*
+      - packages/providers/test/http-parity-wave-two.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/groq.ts]
       real:
@@ -1189,7 +1189,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/LLMProxy/**/*
+      - packages/providers/test/http-parity-wave-three.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/llmproxy.ts]
       real:
@@ -1209,7 +1209,7 @@ providers:
       tsGlobs:
         - packages/providers/test/gateway-parity-wave.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/LiteLLM/**/*
+      - packages/providers/test/gateway-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/litellm.ts]
       real:
@@ -1230,7 +1230,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Deepgram/**/*
+      - packages/providers/test/provider-extension-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/deepgram.ts]
       real:
@@ -1251,7 +1251,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Poe/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/poe.ts]
       real:
@@ -1271,7 +1271,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Chutes/**/*
+      - packages/providers/test/http-wave-b.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/chutes.ts]
       real:
@@ -1291,7 +1291,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/NeuralWatt/**/*
+      - packages/providers/test/http-parity-wave-three.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/neuralwatt.ts]
       real:
@@ -1312,7 +1312,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/ClawRouter/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/clawrouter.ts]
       real:
@@ -1333,7 +1333,7 @@ providers:
       tsGlobs:
         - packages/providers/test/web-cookie-providers-e.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/LongCat/**/*
+      - packages/providers/test/web-cookie-providers-e.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/longcat.ts]
       real:
@@ -1354,7 +1354,7 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Sub2API/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/sub2api.ts]
       real:
@@ -1374,7 +1374,7 @@ providers:
       tsGlobs:
         - packages/providers/test/gateway-parity-wave.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/Wayfinder/**/*
+      - packages/providers/test/gateway-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/wayfinder.ts]
       real:
@@ -1394,7 +1394,7 @@ providers:
       tsGlobs:
         - packages/providers/test/gateway-parity-wave.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/ZenMux/**/*
+      - packages/providers/test/gateway-parity-wave.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/zenmux.ts]
       real:
@@ -1414,7 +1414,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/AiAnd/**/*
+      - packages/providers/test/http-parity-wave-three.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/aiand.ts]
       real:
@@ -1435,7 +1435,7 @@ providers:
       tsGlobs:
         - packages/providers/test/zoommate-notion-parity.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/ZoomMate/**/*
+      - packages/providers/test/zoommate-notion-parity.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/zoommate.ts]
       real:
@@ -1460,7 +1460,7 @@ providers:
         - packages/core/test/daily-spend-ingestion.test.ts
         - apps/desktop/test/spend-overview.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/XAI/**/*
+      - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
       expected:
         - packages/providers/src/providers/xai.ts
@@ -1509,7 +1509,7 @@ providers:
       tsGlobs:
         - packages/providers/test/**/*.test.ts
     fixtures:
-      - Tests/CodexBarTests/Fixtures/Providers/IBMBob/**/*
+      - packages/providers/test/http-wave-b.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/ibmbob.ts]
       real:

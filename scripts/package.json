@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsgo --build --pretty false",
-    "test": "node --test --experimental-strip-types *.test.ts"
+    "test": "node --test --experimental-strip-types *.test.ts upstream/*.test.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
