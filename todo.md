@@ -54,6 +54,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add the SQLite worker, migrations, concurrency, backup, lock, and failure tests.
 - [x] Keep WAL readers outside the serialized writer queue and retry contended writers cooperatively.
 - [ ] Complete retention/pruning policies and full crash/disk-full parity tests.
+  - [x] Prove transactional retention rollback and same-connection/worker recovery after a write failure and in read-only mode.
+  - [ ] Add a platform filesystem harness for a physical `SQLITE_FULL` failure.
 - [x] Complete atomic config persistence and migrations.
 - [ ] Complete history JSON compatibility where SQLite parity does not apply.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
@@ -93,7 +95,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.
   - [x] Port Grok's bounded local `signals.json` scanner and compose its aggregate only as non-quota diagnostics after successful billing.
   - [x] Port Grok auth.json ownership, OAuth proxy/gRPC, identity, and a bounded one-shot CLI billing probe.
-  - [ ] Replace the one-shot Grok CLI billing probe with a streaming ACP session and complete browser-session parity.
+  - [x] Replace the one-shot Grok CLI billing probe with a bounded streaming ACP session and deterministic teardown.
+  - [ ] Complete Grok browser-session parity.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate
