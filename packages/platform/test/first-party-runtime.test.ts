@@ -1062,4 +1062,56 @@ describe("first-party refresh runtime", () => {
       ),
     ).rejects.toMatchObject({ kind: "api-failure" });
   });
+
+  it("forwards bounded response metadata without exposing cookie material", async () => {
+    let observedHeaders: Readonly<Record<string, string>> | undefined;
+    const probe: FirstPartyProvider = {
+      id: "ibmbob",
+      kind: "api",
+      descriptor: {
+        id: "ibmbob",
+        name: "Response header probe",
+        status: "partial",
+        endpoints: ["https://headers.test"],
+        settings: [],
+      },
+      fetchUsage: async (context) => {
+        const result = await context.http.get("https://headers.test/usage");
+        observedHeaders = result.headers;
+        return { identity: { loginMethod: "probe" } };
+      },
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+      http: {
+        execute: () =>
+          Effect.succeed({
+            status: 200,
+            headers: {
+              "x-ratelimit-limit-requests": "100",
+              "x-ratelimit-remaining-requests": "42",
+              "set-cookie": "session=must-not-cross-the-provider-boundary",
+              oversized: "x".repeat(8_193),
+            },
+            body: new TextEncoder().encode("{}"),
+            url: "https://headers.test/usage",
+          }),
+      },
+    });
+
+    await Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "api", includeCredits: false }));
+
+    expect(observedHeaders).toEqual({
+      "x-ratelimit-limit-requests": "100",
+      "x-ratelimit-remaining-requests": "42",
+    });
+  });
 });

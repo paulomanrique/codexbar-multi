@@ -164,6 +164,7 @@ export interface ProviderContext {
 export interface ProviderResponse {
   readonly status: number;
   readonly bodyText: string;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export interface ProviderJSONResponse extends ProviderResponse {

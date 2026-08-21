@@ -405,7 +405,37 @@ const withoutHeader = (headers: Record<string, string>, name: string): void => {
 const asProviderResponse = (response: HttpResponse): ProviderResponse => ({
   status: response.status,
   bodyText: text(response.body),
+  headers: providerResponseHeaders(response.headers),
 });
+
+const maximumResponseHeaderCount = 256;
+const maximumResponseHeaderNameLength = 256;
+const maximumResponseHeaderValueLength = 8_192;
+
+const providerResponseHeaders = (
+  values: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> => {
+  const headers: Record<string, string> = {};
+  let count = 0;
+  for (const [name, value] of Object.entries(values)) {
+    const normalizedName = name.toLowerCase();
+    if (normalizedName === "set-cookie" || normalizedName === "set-cookie2") continue;
+    if (
+      count >= maximumResponseHeaderCount ||
+      name.length === 0 ||
+      name.length > maximumResponseHeaderNameLength ||
+      value.length > maximumResponseHeaderValueLength ||
+      /[\r\n]/u.test(name) ||
+      name.includes("\u0000") ||
+      value.includes("\u0000")
+    ) {
+      continue;
+    }
+    headers[name] = value;
+    count += 1;
+  }
+  return headers;
+};
 
 const asProviderBinaryResponse = (response: HttpResponse): ProviderBinaryResponse => {
   if (!(response.body instanceof Uint8Array) || response.body.byteLength > maximumResponseBytes) {

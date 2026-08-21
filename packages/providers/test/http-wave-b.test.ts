@@ -298,10 +298,7 @@ describe("Swift-derived HTTP provider wave B", () => {
       method: "POST",
       body: { model: "doubao-seed-2.0-code", max_tokens: 1 },
     });
-    expect(snapshot).toEqual({
-      identity: { loginMethod: "API key" },
-      details: [{ title: "Probe", rows: [{ label: "Total tokens", value: "1" }] }],
-    });
+    expect(snapshot).toEqual({ identity: {} });
     await expect(doubao.fetchUsage(context(() => response({}), {}))).rejects.toThrow(
       "missing-credential:",
     );

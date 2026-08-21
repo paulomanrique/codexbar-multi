@@ -857,12 +857,14 @@ providers:
         - packages/providers/test/**/*.test.ts
     fixtures:
       - packages/providers/test/http-wave-b.test.ts
+      - packages/providers/test/doubao-signed-api.test.ts
     tsPaths:
       expected: [packages/providers/src/providers/doubao.ts]
       real:
         - packages/providers/src/providers/doubao.ts
     tsTestGlobs:
       - packages/providers/test/http-wave-b.test.ts
+      - packages/providers/test/doubao-signed-api.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
