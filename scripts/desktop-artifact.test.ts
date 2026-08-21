@@ -37,6 +37,7 @@ test("selects only current-host electron-builder targets", () => {
   const windows = getHostDesktopTarget({ platform: "win32", arch: "x64" });
   assert.deepEqual(windows.electronBuilderArgs.slice(0, 4), ["--win", "nsis", "--x64", "--dir"]);
   assert.equal(expectedDesktopArtifactName("0.1.0", windows), "CodexBar Multi-0.1.0-win-x64.exe");
+  assert.deepEqual(windows.executableRelativePath, ["codexbar-multi.exe"]);
 });
 
 test("rejects unsupported architectures and synthetic cross-build hosts", () => {

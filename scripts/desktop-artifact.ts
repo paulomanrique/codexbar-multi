@@ -68,7 +68,9 @@ const targetForPlatform = (
         electronBuilderArgs: ["--win", "nsis", `--${arch}`, "--dir", "--publish", "never"],
         expectedExtension: ".exe",
         unpackedDirectory: unpackedDirectoryFor(platform, arch),
-        executableRelativePath: ["CodexBar Multi.exe"],
+        // electron-builder names the unpacked binary from win.executableName,
+        // while productName is used only for the installer/artifact label.
+        executableRelativePath: ["codexbar-multi.exe"],
       };
     case "darwin":
       return {
