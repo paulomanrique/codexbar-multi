@@ -49,6 +49,7 @@ export * from "./first-party-runtime.ts";
 export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
 export * from "./node-local-cost-scan.ts";
+export * from "./node-grok-local-session.ts";
 export * from "./node-private-path-security.ts";
 
 /** Node's explicit equivalent of Swift's `NSString.expandingTildeInPath`. */

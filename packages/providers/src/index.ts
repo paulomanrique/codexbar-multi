@@ -180,6 +180,7 @@ export { fireworks } from "./providers/fireworks.ts";
 export { gemini } from "./providers/gemini.ts";
 export { groq } from "./providers/groq.ts";
 export { grok } from "./providers/grok.ts";
+export * from "./providers/grok-local-session.ts";
 export { ibmbob } from "./providers/ibmbob.ts";
 export { jetbrains } from "./providers/jetbrains.ts";
 export { kimi } from "./providers/kimi.ts";
