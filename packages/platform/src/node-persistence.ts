@@ -1,4 +1,5 @@
 import { backup, DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { lstat, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, Schema } from "effect";
@@ -13,6 +14,7 @@ import {
   type DailyCostUsageReplacement,
   type DailyCostUsageSourceState,
   type LocalCostUsageScanCommit,
+  type LocalCostUsageScanFamilyCommit,
   type HistoryRecord,
   type HistoryRepositoryService,
   InfrastructureError,
@@ -466,6 +468,82 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
             .run(commit.providerId, commit.sourceKey, commit.checkpointJson);
         });
       }),
+    commitLocalScanFamily: (commit) =>
+      queuedSqlite(queue, "commit local cost usage scan family", () => {
+        assertLocalCostUsageScanFamilyCommit(commit);
+        return inImmediateTransactionWithRetry(database, () => {
+          const readCheckpoint = (sourceKey: string): string | undefined => {
+            const existing = database
+              .prepare(
+                "SELECT checkpoint_json FROM cost_usage_scan_checkpoints WHERE provider_id = ? AND source_key = ?",
+              )
+              .get(commit.providerId, sourceKey) as Record<string, unknown> | undefined;
+            return existing === undefined ? undefined : readString(existing, "checkpoint_json");
+          };
+          const assertExpected = (sourceKey: string, expected: string | undefined): void => {
+            if (readCheckpoint(sourceKey) !== expected) {
+              throw new CostUsageScanCheckpointConflictError(commit.providerId, sourceKey);
+            }
+          };
+
+          // Check every CAS before mutating any member. BEGIN IMMEDIATE makes
+          // this a single cross-process decision for desktop and CLI.
+          assertExpected(commit.familyKey, commit.expectedManifestJson);
+          for (const member of commit.members) {
+            assertExpected(member.sourceKey, member.expectedCheckpointJson);
+          }
+          const priorManifest = familyManifestSourceKeys(commit.expectedManifestJson);
+          for (const removal of commit.removals) {
+            const expectedHash =
+              removal.expectedCheckpointJson === undefined
+                ? undefined
+                : checkpointHash(removal.expectedCheckpointJson);
+            if (priorManifest?.get(removal.sourceKey) !== expectedHash) {
+              throw new CostUsageScanCheckpointConflictError(commit.providerId, removal.sourceKey);
+            }
+            assertExpected(removal.sourceKey, removal.expectedCheckpointJson);
+          }
+
+          ensureProvider(database, commit.providerId);
+          const deleteSource = database.prepare(
+            "DELETE FROM cost_usage_records WHERE provider_id = ? AND source_key = ?",
+          );
+          const deleteCheckpoint = database.prepare(
+            "DELETE FROM cost_usage_scan_checkpoints WHERE provider_id = ? AND source_key = ?",
+          );
+          for (const removal of commit.removals) {
+            deleteSource.run(commit.providerId, removal.sourceKey);
+            deleteCheckpoint.run(commit.providerId, removal.sourceKey);
+          }
+
+          const insert = database.prepare(
+            "INSERT INTO cost_usage_records (provider_id, recorded_at, input_tokens, output_tokens, cost_usd, source_key) VALUES (?, ?, ?, ?, ?, ?)",
+          );
+          const upsertCheckpoint = database.prepare(
+            `INSERT INTO cost_usage_scan_checkpoints (provider_id, source_key, checkpoint_json)
+             VALUES (?, ?, ?)
+             ON CONFLICT(provider_id, source_key) DO UPDATE SET
+               checkpoint_json = excluded.checkpoint_json`,
+          );
+          for (const member of commit.members) {
+            // Family scans are complete replacements; this prevents stale
+            // prefixes surviving a fork/replacement lineage change.
+            deleteSource.run(commit.providerId, member.sourceKey);
+            for (const record of member.records) {
+              insert.run(
+                record.providerId,
+                record.recordedAt,
+                record.inputTokens,
+                record.outputTokens,
+                record.costUsd,
+                member.sourceKey,
+              );
+            }
+            upsertCheckpoint.run(commit.providerId, member.sourceKey, member.checkpointJson);
+          }
+          upsertCheckpoint.run(commit.providerId, commit.familyKey, commit.manifestJson);
+        });
+      }),
     localScanCheckpoint: (providerId, sourceKey) =>
       readSqlite("get local cost usage scan checkpoint", () => {
         assertProviderId(providerId);
@@ -787,6 +865,116 @@ const assertLocalCostUsageScanCommit = (commit: LocalCostUsageScanCommit): void 
     }
   }
 };
+
+const assertLocalCostUsageScanFamilyCommit = (commit: LocalCostUsageScanFamilyCommit): void => {
+  assertProviderId(commit.providerId);
+  assertDailySourceKey(commit.familyKey);
+  if (!commit.familyKey.startsWith("family-v1:")) {
+    throw new Error("local cost usage scan family key is invalid");
+  }
+  assertLocalCostUsageScanCheckpointJson(commit.manifestJson);
+  if (commit.expectedManifestJson !== undefined) {
+    assertLocalCostUsageScanCheckpointJson(commit.expectedManifestJson);
+  }
+  if (commit.members.length > 4_096 || commit.removals.length > 4_096) {
+    throw new Error("local cost usage scan family has too many sources");
+  }
+  const sourceKeys = new Set<string>([commit.familyKey]);
+  let records = 0;
+  for (const member of commit.members) {
+    assertLocalCostUsageScanCommit(member);
+    if (member.providerId !== commit.providerId || member.reset !== true) {
+      throw new Error("local cost usage scan family member is invalid");
+    }
+    if (member.sourceKey.startsWith("family-v1:")) {
+      throw new Error("local cost usage scan family member is invalid");
+    }
+    if (sourceKeys.has(member.sourceKey)) {
+      throw new Error("local cost usage scan family has duplicate source keys");
+    }
+    sourceKeys.add(member.sourceKey);
+    records += member.records.length;
+    if (records > 50_000) throw new Error("local cost usage scan family has too many records");
+  }
+  for (const removal of commit.removals) {
+    assertDailySourceKey(removal.sourceKey);
+    if (removal.expectedCheckpointJson !== undefined) {
+      assertLocalCostUsageScanCheckpointJson(removal.expectedCheckpointJson);
+    }
+    if (sourceKeys.has(removal.sourceKey)) {
+      throw new Error("local cost usage scan family has duplicate source keys");
+    }
+    sourceKeys.add(removal.sourceKey);
+  }
+  // A caller may delete only sources that its CAS-read manifest previously
+  // owned. This turns the manifest into an ownership proof, rather than a
+  // generic provider-wide delete capability.
+  const previouslyOwned = familyManifestSourceKeys(commit.expectedManifestJson);
+  if (commit.removals.length > 0 && previouslyOwned === undefined) {
+    throw new Error("local cost usage scan family removals require a valid manifest");
+  }
+  if (commit.removals.some(({ sourceKey }) => !previouslyOwned?.has(sourceKey))) {
+    throw new Error("local cost usage scan family removal is not manifest-owned");
+  }
+  const currentManifest = familyManifestSourceKeys(commit.manifestJson);
+  if (currentManifest === undefined)
+    throw new Error("local cost usage scan family manifest is invalid");
+  if (
+    currentManifest.size !== commit.members.length ||
+    commit.members.some(
+      (member) => currentManifest.get(member.sourceKey) !== checkpointHash(member.checkpointJson),
+    )
+  ) {
+    throw new Error("local cost usage scan family manifest members are invalid");
+  }
+};
+
+const familyManifestSourceKeys = (
+  manifestJson: string | undefined,
+): Map<string, string> | undefined => {
+  if (manifestJson === undefined) return undefined;
+  try {
+    const decoded: unknown = JSON.parse(manifestJson);
+    if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) return undefined;
+    const manifest = decoded as Record<string, unknown>;
+    if (manifest.version !== 1 || manifest.scanner !== "codex-fork-family") return undefined;
+    if (!Array.isArray(manifest.sourceKeys) || manifest.sourceKeys.length > 4_096) return undefined;
+    if (
+      typeof manifest.checkpointHashes !== "object" ||
+      manifest.checkpointHashes === null ||
+      Array.isArray(manifest.checkpointHashes)
+    )
+      return undefined;
+    const sourceKeys = manifest.sourceKeys;
+    const checkpointHashes = manifest.checkpointHashes as Record<string, unknown>;
+    if (
+      sourceKeys.some(
+        (sourceKey) =>
+          typeof sourceKey !== "string" ||
+          !sourceKey.startsWith("jsonl-v1:codex:") ||
+          sourceKey.length === 0 ||
+          sourceKey.length > 120 ||
+          sourceKey.includes("\u0000"),
+      )
+    ) {
+      return undefined;
+    }
+    const keys = new Map<string, string>();
+    for (const sourceKey of sourceKeys) {
+      const hash = checkpointHashes[sourceKey];
+      if (typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash) || keys.has(sourceKey)) {
+        return undefined;
+      }
+      keys.set(sourceKey, hash);
+    }
+    return Object.keys(checkpointHashes).length === keys.size ? keys : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const checkpointHash = (checkpointJson: string): string =>
+  createHash("sha256").update(checkpointJson).digest("hex");
 
 const assertDailySourceKey = (sourceKey: string): void => {
   if (sourceKey.length === 0 || sourceKey.length > 120 || sourceKey.includes("\u0000")) {

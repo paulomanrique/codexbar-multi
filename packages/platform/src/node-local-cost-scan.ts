@@ -20,6 +20,7 @@ import {
   inventoryNodeCostJsonlFiles,
   scanNodeClaudeCostJsonl,
   scanNodeCodexCostJsonl,
+  scanNodeCodexForkFamily,
   type NodeClaudeCostJsonlState,
   type NodeCodexCostJsonlState,
 } from "./node-cost-jsonl.ts";
@@ -29,6 +30,13 @@ const maximumScanAttempts = 2;
 const maximumSourceBytes = 16 * 1024 * 1024;
 const maximumLineBytes = 512 * 1024;
 const maximumRowsPerSource = 50_000;
+const maximumRowsPerCodexFamily = 50_000;
+// Each family member is deliberately read twice (evidence + reconciled pass).
+// Keep the aggregate bounded before opening any selected source.
+const maximumCodexFamilyScanBytes = 64 * 1024 * 1024;
+// `family-v1:` is reserved by the persistence contract for manifests and is
+// deliberately disjoint from every physical local JSONL source key.
+const codexFamilyKey = "family-v1:codex:local-jsonl";
 
 export class LocalCostRefreshUnavailableError extends Error {
   constructor(providerId: ProviderId) {
@@ -75,12 +83,23 @@ export interface NodeLocalCostUsageScannerOptions {
   /** Test-only explicit roots; production uses the provider-owned locations below. */
   readonly roots?: Partial<Readonly<Record<"codex" | "claude", readonly string[]>>>;
   readonly maxSourceBytes?: number;
+  /** Optional stricter aggregate read budget for one Codex fork family. */
+  readonly maxCodexFamilyScanBytes?: number;
 }
 
 interface CheckpointEnvelope<State> {
   readonly version: 1;
   readonly scanner: "codex" | "claude";
   readonly state: State;
+}
+
+interface CodexFamilyManifest {
+  readonly version: 1;
+  readonly scanner: "codex-fork-family";
+  /** Source keys only: paths never enter persistence or CLI output. */
+  readonly sourceKeys: readonly string[];
+  /** Binds topology to the exact member checkpoints selected in this pass. */
+  readonly checkpointHashes: Readonly<Record<string, string>>;
 }
 
 /**
@@ -100,9 +119,15 @@ export const makeNodeLocalCostUsageScanner = (
     codex: options.roots?.codex ?? defaultRoots.codex,
     claude: options.roots?.claude ?? defaultRoots.claude,
   };
-  const maxSourceBytes = boundedPositiveInteger(
+  const maxSourceBytes = boundedPositiveIntegerAtMost(
     options.maxSourceBytes ?? maximumSourceBytes,
     "maxSourceBytes",
+    maximumSourceBytes,
+  );
+  const maxCodexFamilyBytes = boundedPositiveIntegerAtMost(
+    options.maxCodexFamilyScanBytes ?? maximumCodexFamilyScanBytes,
+    "maxCodexFamilyScanBytes",
+    maximumCodexFamilyScanBytes,
   );
 
   return {
@@ -118,6 +143,32 @@ export const makeNodeLocalCostUsageScanner = (
       let committedSources = 0;
       let retries = 0;
       let incomplete = inventory.truncated;
+      if (providerId === "codex") {
+        const familyByteBoundExceeded =
+          codexFamilyScanBytes(
+            inventory.files.map((file) => file.size),
+            maxSourceBytes,
+          ) > maxCodexFamilyBytes;
+        if (!inventory.truncated && !familyByteBoundExceeded) {
+          const committed = await refreshCodexFamily({
+            files: inventory.files.map((file) => file.path),
+            costs: options.costs,
+            maxSourceBytes,
+            signal,
+          });
+          committedSources = committed.committedSources;
+          retries = committed.retries;
+          incomplete ||= committed.incomplete;
+        }
+        return {
+          providerId,
+          scannedSources: inventory.files.length,
+          committedSources,
+          retries,
+          inventoryTruncated: inventory.truncated,
+          incomplete: incomplete || familyByteBoundExceeded,
+        };
+      }
       for (const file of inventory.files) {
         throwIfCancelled(signal);
         const sourceKey = localSourceKey(providerId, file.path);
@@ -143,6 +194,129 @@ export const makeNodeLocalCostUsageScanner = (
       };
     },
   };
+};
+
+/**
+ * Reconciles every discovered Codex rollout as one snapshot. This deliberately
+ * does not reuse per-file incremental cursors: a child can inherit a copied
+ * prefix from a parent in a different directory, so independent publication
+ * would make the ledger depend on refresh order.
+ */
+const refreshCodexFamily = async (options: {
+  readonly files: readonly string[];
+  readonly costs: CostUsageRepositoryService;
+  readonly maxSourceBytes: number;
+  readonly signal: AbortSignal | undefined;
+}): Promise<{
+  readonly committedSources: number;
+  readonly retries: number;
+  readonly incomplete: boolean;
+}> => {
+  let retries = 0;
+  for (let attempt = 0; attempt < maximumScanAttempts; attempt += 1) {
+    throwIfCancelled(options.signal);
+    const expectedManifestJson = await Effect.runPromise(
+      options.costs.localScanCheckpoint("codex", codexFamilyKey),
+      options.signal === undefined ? {} : { signal: options.signal },
+    );
+    const priorManifest = decodeCodexFamilyManifest(expectedManifestJson);
+    if (expectedManifestJson !== undefined && priorManifest === undefined) {
+      throw new Error("Local Codex cost family manifest is invalid");
+    }
+    const sourceKeys = options.files.map((path) => localSourceKey("codex", path));
+    try {
+      const expectedCheckpoints = new Map<string, string | undefined>();
+      for (const sourceKey of sourceKeys) {
+        throwIfCancelled(options.signal);
+        expectedCheckpoints.set(
+          sourceKey,
+          await Effect.runPromise(
+            options.costs.localScanCheckpoint("codex", sourceKey),
+            options.signal === undefined ? {} : { signal: options.signal },
+          ),
+        );
+      }
+      const family = await scanNodeCodexForkFamily({
+        sources: options.files.map((path) => ({ path })),
+        maxBytes: options.maxSourceBytes,
+        maxLineBytes: maximumLineBytes,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+      // An unresolved member means the graph is incomplete or ambiguous. No
+      // member checkpoint is advanced; keeping the old family is safer than
+      // publishing an order-dependent partial total.
+      if (family.hasUnresolvedLineage) {
+        return { committedSources: 0, retries, incomplete: true };
+      }
+      const members = family.members.map((member) => {
+        if (member.status !== "resolved" || member.scan === undefined) {
+          throw new Error("Resolved Codex family member is missing its scan");
+        }
+        const sourceKey = localSourceKey("codex", member.path);
+        if (member.scan.result.rows.length > maximumRowsPerSource) {
+          throw new Error("Local Codex cost family source produced too many records");
+        }
+        return {
+          providerId: "codex" as const,
+          sourceKey,
+          ...(expectedCheckpoints.get(sourceKey) === undefined
+            ? {}
+            : { expectedCheckpointJson: expectedCheckpoints.get(sourceKey)! }),
+          checkpointJson: encodeCheckpoint("codex", member.scan.state),
+          records: member.scan.result.rows.flatMap((row) => {
+            const record = costRecordFromJsonlRow("codex", row);
+            return record === undefined ? [] : [record];
+          }),
+          reset: true as const,
+        };
+      });
+      const totalRecords = members.reduce((total, member) => total + member.records.length, 0);
+      if (totalRecords > maximumRowsPerCodexFamily) {
+        throw new Error("Local Codex cost family produced too many records");
+      }
+      const memberKeys = new Set(members.map((member) => member.sourceKey));
+      const removals = [] as Array<{
+        readonly sourceKey: string;
+        readonly expectedCheckpointJson?: string;
+      }>;
+      for (const sourceKey of priorManifest?.sourceKeys ?? []) {
+        if (memberKeys.has(sourceKey)) continue;
+        throwIfCancelled(options.signal);
+        const expectedCheckpointJson = await Effect.runPromise(
+          options.costs.localScanCheckpoint("codex", sourceKey),
+          options.signal === undefined ? {} : { signal: options.signal },
+        );
+        removals.push({
+          sourceKey,
+          ...(expectedCheckpointJson === undefined ? {} : { expectedCheckpointJson }),
+        });
+      }
+      throwIfCancelled(options.signal);
+      await Effect.runPromise(
+        options.costs.commitLocalScanFamily({
+          providerId: "codex",
+          familyKey: codexFamilyKey,
+          ...(expectedManifestJson === undefined ? {} : { expectedManifestJson }),
+          manifestJson: encodeCodexFamilyManifest(members),
+          members,
+          removals,
+        }),
+        options.signal === undefined ? {} : { signal: options.signal },
+      );
+      return { committedSources: members.length, retries, incomplete: false };
+    } catch (error) {
+      if (isCancellation(error, options.signal)) throw new LocalCostRefreshCancelledError();
+      if (
+        attempt + 1 < maximumScanAttempts &&
+        (isCheckpointConflict(error) || error instanceof CostJsonlSourceChangedError)
+      ) {
+        retries += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Local Codex cost family refresh retry limit exceeded");
 };
 
 /** Matches the Swift provider roots without exposing them through CLI output. */
@@ -286,6 +460,61 @@ const encodeCheckpoint = (
   state: NodeCodexCostJsonlState | NodeClaudeCostJsonlState,
 ): string => JSON.stringify({ version: scannerCheckpointVersion, scanner, state });
 
+const encodeCodexFamilyManifest = (
+  members: readonly { readonly sourceKey: string; readonly checkpointJson: string }[],
+): string =>
+  JSON.stringify({
+    version: 1,
+    scanner: "codex-fork-family",
+    sourceKeys: members
+      .map((member) => member.sourceKey)
+      .sort((left, right) => left.localeCompare(right)),
+    checkpointHashes: Object.fromEntries(
+      members.map((member) => [
+        member.sourceKey,
+        createHash("sha256").update(member.checkpointJson).digest("hex"),
+      ]),
+    ),
+  } satisfies CodexFamilyManifest);
+
+const decodeCodexFamilyManifest = (value: string | undefined): CodexFamilyManifest | undefined => {
+  if (value === undefined) return undefined;
+  try {
+    const decoded: unknown = JSON.parse(value);
+    if (!isRecord(decoded) || decoded.version !== 1 || decoded.scanner !== "codex-fork-family") {
+      return undefined;
+    }
+    if (!Array.isArray(decoded.sourceKeys) || decoded.sourceKeys.length > 4_096) return undefined;
+    if (!isRecord(decoded.checkpointHashes)) return undefined;
+    const sourceKeys = decoded.sourceKeys;
+    const checkpointHashes = decoded.checkpointHashes;
+    if (
+      sourceKeys.some(
+        (sourceKey) =>
+          typeof sourceKey !== "string" ||
+          !sourceKey.startsWith("jsonl-v1:codex:") ||
+          sourceKey.length > 120,
+      ) ||
+      new Set(sourceKeys).size !== sourceKeys.length ||
+      Object.keys(checkpointHashes).length !== sourceKeys.length ||
+      sourceKeys.some((sourceKey) => {
+        const hash = checkpointHashes[sourceKey];
+        return typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash);
+      })
+    ) {
+      return undefined;
+    }
+    return {
+      version: 1,
+      scanner: "codex-fork-family",
+      sourceKeys,
+      checkpointHashes: checkpointHashes as Record<string, string>,
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 const decodeCheckpoint = <State extends NodeCodexCostJsonlState | NodeClaudeCostJsonlState>(
   value: string | undefined,
   scanner: "codex" | "claude",
@@ -340,10 +569,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const validNatural = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const boundedPositiveInteger = (value: number, name: string): number => {
-  if (!Number.isSafeInteger(value) || value <= 0)
-    throw new Error(`${name} must be a positive integer`);
+const boundedPositiveIntegerAtMost = (value: number, name: string, maximum: number): number => {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum)
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}`);
   return value;
+};
+
+const codexFamilyScanBytes = (sizes: readonly number[], maxSourceBytes: number): number => {
+  let total = 0;
+  for (const size of sizes) {
+    // The inventory already proves size is a safe natural. Saturate anyway so
+    // this guard itself cannot overflow if an adapter is replaced in tests.
+    total = Math.min(Number.MAX_SAFE_INTEGER, total + Math.min(size, maxSourceBytes) * 2);
+  }
+  return total;
 };
 
 const throwIfCancelled = (signal: AbortSignal | undefined): void => {

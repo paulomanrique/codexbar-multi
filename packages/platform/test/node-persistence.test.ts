@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -173,6 +174,193 @@ describe("Node SQLite persistence", () => {
     } finally {
       await Effect.runPromise(first.close);
       await Effect.runPromise(second.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("commits a fork family as one CAS-protected replacement and rolls it back on failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-local-cost-family-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    const familyKey = "family-v1:codex:fixture";
+    const parentKey = "jsonl-v1:codex:parent";
+    const childKey = "jsonl-v1:codex:child";
+    const manifest = (
+      entries: readonly { readonly sourceKey: string; readonly checkpointJson: string }[],
+    ) =>
+      JSON.stringify({
+        version: 1,
+        scanner: "codex-fork-family",
+        sourceKeys: entries.map(({ sourceKey }) => sourceKey),
+        checkpointHashes: Object.fromEntries(
+          entries.map(({ sourceKey, checkpointJson }) => [
+            sourceKey,
+            createHash("sha256").update(checkpointJson).digest("hex"),
+          ]),
+        ),
+      });
+    const record = (sourceKey: string, recordedAt: number, costUsd: number) => ({
+      providerId: "codex" as ProviderId,
+      recordedAt,
+      inputTokens: recordedAt,
+      outputTokens: 1,
+      costUsd,
+      sourceKey,
+    });
+    try {
+      const parentCheckpoint = JSON.stringify({ cursor: 10 });
+      const childCheckpoint = JSON.stringify({ cursor: 20 });
+      await Effect.runPromise(
+        persistence.costs.commitLocalScanFamily({
+          providerId: "codex",
+          familyKey,
+          manifestJson: manifest([
+            { sourceKey: parentKey, checkpointJson: parentCheckpoint },
+            { sourceKey: childKey, checkpointJson: childCheckpoint },
+          ]),
+          members: [
+            {
+              providerId: "codex",
+              sourceKey: parentKey,
+              checkpointJson: parentCheckpoint,
+              records: [record(parentKey, 10, 0.01)],
+              reset: true,
+            },
+            {
+              providerId: "codex",
+              sourceKey: childKey,
+              checkpointJson: childCheckpoint,
+              records: [record(childKey, 20, 0.02)],
+              reset: true,
+            },
+          ],
+          removals: [],
+        }),
+      );
+      const firstManifest = manifest([
+        { sourceKey: parentKey, checkpointJson: parentCheckpoint },
+        { sourceKey: childKey, checkpointJson: childCheckpoint },
+      ]);
+      const inspection = new DatabaseSync(databasePath);
+      try {
+        inspection.exec(`
+          CREATE TRIGGER fixture_abort_local_cost_family
+          BEFORE INSERT ON cost_usage_records
+          WHEN NEW.provider_id = 'codex' AND NEW.cost_usd = 0.03
+          BEGIN SELECT RAISE(ABORT, 'fixture local family failure'); END;
+        `);
+      } finally {
+        inspection.close();
+      }
+      await expect(
+        Effect.runPromise(
+          persistence.costs.commitLocalScanFamily({
+            providerId: "codex",
+            familyKey,
+            expectedManifestJson: firstManifest,
+            manifestJson: manifest([
+              { sourceKey: parentKey, checkpointJson: JSON.stringify({ cursor: 30 }) },
+            ]),
+            members: [
+              {
+                providerId: "codex",
+                sourceKey: parentKey,
+                expectedCheckpointJson: JSON.stringify({ cursor: 10 }),
+                checkpointJson: JSON.stringify({ cursor: 30 }),
+                records: [record(parentKey, 30, 0.03)],
+                reset: true,
+              },
+            ],
+            removals: [{ sourceKey: childKey, expectedCheckpointJson: childCheckpoint }],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "commit local cost usage scan family",
+      });
+      // The rejected transaction restores both former members and the
+      // manifest; no partial removal/checkpoint publication is observable.
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toHaveLength(2);
+      await expect(
+        Effect.runPromise(persistence.costs.localScanCheckpoint("codex", familyKey)),
+      ).resolves.toBe(firstManifest);
+
+      await expect(
+        Effect.runPromise(
+          persistence.costs.commitLocalScanFamily({
+            providerId: "codex",
+            familyKey,
+            expectedManifestJson: firstManifest,
+            manifestJson: manifest([
+              { sourceKey: parentKey, checkpointJson: JSON.stringify({ cursor: 31 }) },
+            ]),
+            members: [
+              {
+                providerId: "codex",
+                sourceKey: parentKey,
+                expectedCheckpointJson: JSON.stringify({ cursor: 10 }),
+                checkpointJson: JSON.stringify({ cursor: 31 }),
+                records: [record(parentKey, 31, 0.031)],
+                reset: true,
+              },
+            ],
+            removals: [{ sourceKey: "jsonl-v1:codex:not-owned" }],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "commit local cost usage scan family",
+      });
+
+      // A stale inventory must not erase an archived member that a legacy
+      // single-source refresh advanced after this family pass began.
+      const advancedChildCheckpoint = JSON.stringify({ cursor: 21 });
+      await Effect.runPromise(
+        persistence.costs.commitLocalScan({
+          providerId: "codex",
+          sourceKey: childKey,
+          expectedCheckpointJson: childCheckpoint,
+          checkpointJson: advancedChildCheckpoint,
+          records: [record(childKey, 21, 0.021)],
+          reset: true,
+        }),
+      );
+      await expect(
+        Effect.runPromise(
+          persistence.costs.commitLocalScanFamily({
+            providerId: "codex",
+            familyKey,
+            expectedManifestJson: firstManifest,
+            manifestJson: manifest([
+              { sourceKey: parentKey, checkpointJson: JSON.stringify({ cursor: 32 }) },
+            ]),
+            members: [
+              {
+                providerId: "codex",
+                sourceKey: parentKey,
+                expectedCheckpointJson: parentCheckpoint,
+                checkpointJson: JSON.stringify({ cursor: 32 }),
+                records: [record(parentKey, 32, 0.032)],
+                reset: true,
+              },
+            ],
+            // The source read was refreshed after the family manifest was
+            // observed. Even though this checkpoint now matches the table,
+            // it is not the checkpoint bound into that manifest and cannot
+            // authorize removal under the stale topology.
+            removals: [{ sourceKey: childKey, expectedCheckpointJson: advancedChildCheckpoint }],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "commit local cost usage scan family",
+        causeValue: { name: "CostUsageScanCheckpointConflictError" },
+      });
+      await expect(
+        Effect.runPromise(persistence.costs.localScanCheckpoint("codex", childKey)),
+      ).resolves.toBe(advancedChildCheckpoint);
+    } finally {
+      await Effect.runPromise(persistence.close);
       await rm(directory, { recursive: true, force: true });
     }
   });

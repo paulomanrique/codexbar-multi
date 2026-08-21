@@ -6,6 +6,7 @@ import type {
   DailyCostUsageReplacement,
   DailyCostUsageSourceState,
   LocalCostUsageScanCommit,
+  LocalCostUsageScanFamilyCommit,
   HistoryRecord,
   HistoryRepositoryService,
   UsageRecordRetentionRequest,
@@ -55,6 +56,12 @@ type WorkerRequest =
       readonly id: string;
       readonly type: "commit-local-cost-scan";
       readonly commit: LocalCostUsageScanCommit;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "commit-local-cost-scan-family";
+      readonly commit: LocalCostUsageScanFamilyCommit;
     }
   | {
       readonly version: 1;
@@ -231,6 +238,12 @@ class NodeSqliteWorkerClient {
           { commit },
           "commit local cost usage scan",
         ) as Effect.Effect<void, InfrastructureError>,
+      commitLocalScanFamily: (commit) =>
+        this.effect(
+          "commit-local-cost-scan-family",
+          { commit },
+          "commit local cost usage scan family",
+        ) as Effect.Effect<void, InfrastructureError>,
       localScanCheckpoint: (providerId, sourceKey) =>
         this.effect(
           "local-cost-scan-checkpoint",
@@ -388,6 +401,7 @@ type RequestType =
   | "remove-provider-history"
   | "append-cost"
   | "commit-local-cost-scan"
+  | "commit-local-cost-scan-family"
   | "local-cost-scan-checkpoint"
   | "replace-daily-cost"
   | "daily-cost-source-state"
@@ -398,6 +412,7 @@ type RequestPayload =
   | { readonly record: HistoryRecord }
   | { readonly record: CostUsageRecord }
   | { readonly commit: LocalCostUsageScanCommit }
+  | { readonly commit: LocalCostUsageScanFamilyCommit }
   | { readonly replacement: DailyCostUsageReplacement }
   | { readonly request: UsageRecordRetentionRequest }
   | { readonly providerId: string }

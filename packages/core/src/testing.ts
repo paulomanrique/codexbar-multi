@@ -5,6 +5,7 @@ import {
   Clock,
   ConfigRepository,
   type CostUsageRecord,
+  type LocalCostUsageScanFamilyCommit,
   type LocalCostUsageScanCommit,
   CostUsageRepository,
   CredentialStore,
@@ -143,6 +144,49 @@ export const MemoryCostUsageRepository = Layer.sync(CostUsageRepository, () => {
             error,
           ),
       }),
+    commitLocalScanFamily: (commit: LocalCostUsageScanFamilyCommit) =>
+      Effect.try({
+        try: () => {
+          assertLocalCostUsageScanCheckpointJson(commit.manifestJson);
+          if (commit.expectedManifestJson !== undefined) {
+            assertLocalCostUsageScanCheckpointJson(commit.expectedManifestJson);
+          }
+          const familyKey = dailyKey(commit.providerId, commit.familyKey);
+          if (localScanCheckpoints.get(familyKey) !== commit.expectedManifestJson) {
+            throw new Error("Local cost usage scan family checkpoint changed");
+          }
+          for (const member of commit.members) {
+            assertLocalCostUsageScanCheckpointJson(member.checkpointJson);
+            if (member.expectedCheckpointJson !== undefined) {
+              assertLocalCostUsageScanCheckpointJson(member.expectedCheckpointJson);
+            }
+            const key = dailyKey(commit.providerId, member.sourceKey);
+            if (localScanCheckpoints.get(key) !== member.expectedCheckpointJson) {
+              throw new Error("Local cost usage scan checkpoint changed");
+            }
+          }
+          for (const removal of commit.removals) {
+            const key = dailyKey(commit.providerId, removal.sourceKey);
+            if (localScanCheckpoints.get(key) !== removal.expectedCheckpointJson) {
+              throw new Error("Local cost usage scan checkpoint changed");
+            }
+            localScanRecords.delete(key);
+            localScanCheckpoints.delete(key);
+          }
+          for (const member of commit.members) {
+            const key = dailyKey(commit.providerId, member.sourceKey);
+            localScanRecords.set(key, [...member.records]);
+            localScanCheckpoints.set(key, member.checkpointJson);
+          }
+          localScanCheckpoints.set(familyKey, commit.manifestJson);
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "commit local cost usage scan family",
+            "Memory cost scan family commit failed",
+            error,
+          ),
+      }),
     localScanCheckpoint: (providerId, sourceKey) =>
       Effect.succeed(localScanCheckpoints.get(dailyKey(providerId, sourceKey))),
     replaceDaily: (replacement) =>
@@ -202,6 +246,7 @@ export const EmptyHostCapabilities = Layer.mergeAll(
   Layer.succeed(CostUsageRepository, {
     append: () => Effect.void,
     commitLocalScan: () => Effect.void,
+    commitLocalScanFamily: () => Effect.void,
     localScanCheckpoint: () => Effect.succeed(undefined),
     replaceDaily: () => Effect.void,
     dailySourceState: () => Effect.succeed(undefined),

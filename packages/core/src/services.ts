@@ -289,6 +289,34 @@ export interface LocalCostUsageScanCommit {
   readonly reset?: boolean;
 }
 
+/**
+ * A complete replacement of a related set of local log sources.
+ *
+ * A single source cursor is sufficient for append-only logs. Forked Codex
+ * rollouts are different: every member's billable totals depend on the
+ * family graph, so publishing any member independently can double-count a
+ * copied prefix. The opaque manifest is the CAS owner for the selected
+ * family; its contents remain platform-owned and must not cross IPC.
+ */
+export interface LocalCostUsageScanFamilyCommit {
+  readonly providerId: ProviderId;
+  readonly familyKey: string;
+  /** Absence creates the family only when it has not been published before. */
+  readonly expectedManifestJson?: string;
+  readonly manifestJson: string;
+  /** Every current member is a full replacement, never an incremental append. */
+  readonly members: ReadonlyArray<LocalCostUsageScanCommit>;
+  /**
+   * Former manifest members to remove with the new family snapshot. Each
+   * carries the checkpoint observed while scanning, so a stale inventory
+   * cannot erase a concurrently refreshed source.
+   */
+  readonly removals: ReadonlyArray<{
+    readonly sourceKey: string;
+    readonly expectedCheckpointJson?: string;
+  }>;
+}
+
 /** Bound durable scanner state before it reaches a platform persistence layer. */
 export const LOCAL_COST_USAGE_SCAN_CHECKPOINT_MAX_BYTES = 1_048_576;
 
@@ -318,6 +346,14 @@ export interface CostUsageRepositoryService {
    */
   readonly commitLocalScan: (
     commit: LocalCostUsageScanCommit,
+  ) => Effect.Effect<void, InfrastructureError>;
+  /**
+   * Atomically replaces all members of one local source family. It is the
+   * only valid publication path for a scanner whose rows depend on sibling
+   * sources (for example, a Codex active/archive fork lineage).
+   */
+  readonly commitLocalScanFamily: (
+    commit: LocalCostUsageScanFamilyCommit,
   ) => Effect.Effect<void, InfrastructureError>;
   /** Main-process-only checkpoint; it never crosses the renderer bridge. */
   readonly localScanCheckpoint: (

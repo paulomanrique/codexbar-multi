@@ -5,6 +5,7 @@ import type {
   DailyCostUsageReplacement,
   HistoryRecord,
   LocalCostUsageScanCommit,
+  LocalCostUsageScanFamilyCommit,
   UsageRecordRetentionRequest,
 } from "@codexbar/core";
 import { InfrastructureError } from "@codexbar/core";
@@ -55,6 +56,12 @@ type WorkerRequest =
       readonly id: string;
       readonly type: "commit-local-cost-scan";
       readonly commit: LocalCostUsageScanCommit;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "commit-local-cost-scan-family";
+      readonly commit: LocalCostUsageScanFamilyCommit;
     }
   | {
       readonly version: 1;
@@ -157,6 +164,7 @@ const isRequest = (value: unknown): value is WorkerRequest => {
     message.type === "remove-provider-history" ||
     message.type === "append-cost" ||
     message.type === "commit-local-cost-scan" ||
+    message.type === "commit-local-cost-scan-family" ||
     message.type === "local-cost-scan-checkpoint" ||
     message.type === "replace-daily-cost" ||
     message.type === "daily-cost-source-state" ||
@@ -208,6 +216,8 @@ const runRequest = async (request: WorkerRequest): Promise<unknown> => {
       return Effect.runPromise(persistence.costs.append(request.record));
     case "commit-local-cost-scan":
       return Effect.runPromise(persistence.costs.commitLocalScan(request.commit));
+    case "commit-local-cost-scan-family":
+      return Effect.runPromise(persistence.costs.commitLocalScanFamily(request.commit));
     case "local-cost-scan-checkpoint":
       return Effect.runPromise(
         persistence.costs.localScanCheckpoint(

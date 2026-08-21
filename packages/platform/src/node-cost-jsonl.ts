@@ -413,13 +413,12 @@ export const scanNodeCodexForkFamily = async (options: {
       return unresolved;
     }
     if (session?.id === undefined) {
-      const unresolved = {
-        path,
-        status: "unresolved" as const,
-        reason: "missing-session-metadata" as const,
-      };
-      results.set(path, unresolved);
-      return unresolved;
+      // A rollout without fork metadata cannot participate in a lineage or
+      // be selected as a parent. It is nevertheless an independent, complete
+      // local log and may be safely billed as its own one-member family.
+      const resolved = { path, status: "resolved" as const, scan: initial };
+      results.set(path, resolved);
+      return resolved;
     }
     if (duplicatePaths.has(path)) {
       const unresolved = {
