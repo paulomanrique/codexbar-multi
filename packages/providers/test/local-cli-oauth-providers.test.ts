@@ -48,21 +48,30 @@ const ctx = (json: unknown = {}) =>
   }) as unknown as ProviderContext;
 describe("Swift-derived local/CLI provider domains", () => {
   it("parses Amp CLI quota text", () =>
-    expect(parseAmpUsage("Plan: Pro\nUsage: 25%\nBalance: $12.50", ctx())).toMatchObject({
-      primary: { usedPercent: 25 },
-      identity: { loginMethod: "Pro" },
+    expect(
+      parseAmpUsage(
+        "Signed in as user@example.com (team)\nAmp Free: $6/$10 remaining (replenishes +$0.5/hour)",
+        ctx(),
+      ),
+    ).toMatchObject({
+      primary: { usedPercent: 40 },
+      identity: {
+        accountEmail: "user@example.com",
+        accountOrganization: "team",
+        loginMethod: "Amp Free",
+      },
     }));
   it("runs Amp through the named local broker instead of a settings fixture", async () => {
     const run = vi.fn(async () => ({
       exitCode: 0,
       signal: undefined,
-      stdout: "Plan: Pro\nUsage: 25%\nBalance: $12.50",
+      stdout: "Signed in as user@example.com\nAmp Free: $6/$10 remaining (replenishes +$0.5/hour)",
       stderr: "",
     }));
     const context = ctx() as ProviderContext;
     await expect(
       amp.fetchUsage({ ...context, local: { run, readData: async () => undefined } }),
-    ).resolves.toMatchObject({ primary: { usedPercent: 25 } });
+    ).resolves.toMatchObject({ primary: { usedPercent: 40 } });
     expect(run).toHaveBeenCalledWith("amp", { args: ["usage"], timeoutMs: 15_000 });
   });
   it("classifies a Kiro login prompt from the named local broker", async () => {

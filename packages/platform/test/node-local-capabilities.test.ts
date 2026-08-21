@@ -118,7 +118,7 @@ describe("Node first-party local capabilities", () => {
       },
     });
     await Effect.runPromise(local.run("amp", "amp", { args: ["usage"], timeoutMs: 15_000 }));
-    expect(calls).toMatchObject([{ command: "amp", args: ["usage"] }]);
+    expect(calls).toMatchObject([{ command: "amp", args: ["usage"], env: { NO_COLOR: "1" } }]);
     await expect(
       Effect.runPromise(local.run("amp", "kiro-cli", { args: [], timeoutMs: 1_000 })),
     ).rejects.toMatchObject({ operation: "local command" });

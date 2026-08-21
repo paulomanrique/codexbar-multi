@@ -632,6 +632,7 @@ export const makeNodeFirstPartyLocalCapabilities = (
         .run({
           command: configured || command,
           args: request.args,
+          ...(command === "amp" ? { env: { NO_COLOR: "1" } } : {}),
           ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
         })
         .pipe(

@@ -499,7 +499,8 @@ describe("first-party refresh runtime", () => {
           Effect.succeed({
             exitCode: 0,
             signal: undefined,
-            stdout: "Usage: 42%\nReset: 2026-08-21T00:00:00Z",
+            stdout:
+              "Signed in as fixture@example.com\nAmp Free: 58% remaining today (resets daily)",
             stderr: "",
           }),
         readData: () => Effect.succeed(undefined),
