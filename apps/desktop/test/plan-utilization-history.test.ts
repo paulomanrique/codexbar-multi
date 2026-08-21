@@ -18,6 +18,7 @@ describe("desktop plan-utilization history", () => {
     await expect(
       recordDesktopPlanUtilization({
         coordinator: {
+          recordCodex: () => Effect.succeed(false),
           recordGenericSessionEquivalent: (input) =>
             Effect.sync(() => {
               calls.push(input);
@@ -32,27 +33,55 @@ describe("desktop plan-utilization history", () => {
     expect(calls).toEqual([{ providerId: "opencodego", snapshot, capturedAt }]);
   });
 
-  it("does not admit opt-in or dedicated-history providers", async () => {
-    let calls = 0;
+  it("records Codex through canonical ownership", async () => {
+    const calls: Array<{ snapshot: UsageSnapshot; capturedAt: Date }> = [];
+    await expect(
+      recordDesktopPlanUtilization({
+        coordinator: {
+          recordCodex: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return true;
+            }),
+          recordGenericSessionEquivalent: () => Effect.succeed(false),
+        },
+        providerId: "codex",
+        snapshot,
+        capturedAt,
+      }),
+    ).resolves.toBe(true);
+    expect(calls).toEqual([{ snapshot, capturedAt }]);
+  });
+
+  it("does not admit opt-in or still-unported dedicated-history providers", async () => {
+    let codexCalls = 0;
+    let genericCalls = 0;
     const coordinator = {
+      recordCodex: () =>
+        Effect.sync(() => {
+          codexCalls += 1;
+          return true;
+        }),
       recordGenericSessionEquivalent: () =>
         Effect.sync(() => {
-          calls += 1;
+          genericCalls += 1;
           return true;
         }),
     };
-    for (const providerId of ["zai", "codex", "claude", "antigravity"] as const) {
+    for (const providerId of ["zai", "claude", "antigravity"] as const) {
       await expect(
         recordDesktopPlanUtilization({ coordinator, providerId, snapshot, capturedAt }),
       ).resolves.toBe(false);
     }
-    expect(calls).toBe(0);
+    expect(codexCalls).toBe(0);
+    expect(genericCalls).toBe(0);
   });
 
   it("contains storage failures after a successful provider refresh", async () => {
     await expect(
       recordDesktopPlanUtilization({
         coordinator: {
+          recordCodex: () => Effect.succeed(false),
           recordGenericSessionEquivalent: () =>
             Effect.fail(new InfrastructureError("save plan history", "failed")),
         },

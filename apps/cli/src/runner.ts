@@ -8,6 +8,7 @@ import {
   type ProviderFetchContext,
   type ProviderFetchOutcome,
   type ProviderRuntimeService,
+  recordFirstPartyPlanUtilization,
 } from "@codexbar/core";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import { serializeUsageSnapshot } from "@codexbar/contracts";
@@ -817,9 +818,9 @@ export const makeNodeCLIProviderRuntime = (
     fetch: (providerId, context, signal) =>
       Effect.runPromise(runtime.fetch(providerId, context), signal === undefined ? {} : { signal }),
     recordPlanUtilization: async (providerId, snapshot, signal) => {
-      if (providerId !== "opencodego") return;
       await Effect.runPromise(
-        planUtilizationHistory.recordGenericSessionEquivalent({
+        recordFirstPartyPlanUtilization({
+          coordinator: planUtilizationHistory,
           providerId,
           snapshot,
           capturedAt: new Date(),
