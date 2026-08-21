@@ -193,7 +193,7 @@ describe("plan-utilization history coordinator", () => {
         }),
       ],
       sessionEquivalentWindowPairIdentities: {
-        __unscoped__: "16#standard:primary18#standard:secondary",
+        __codexbar_unscoped__: "16#standard:primary18#standard:secondary",
       },
     });
     let saved: PlanUtilizationHistoryProviders | undefined;
@@ -273,6 +273,98 @@ describe("plan-utilization history coordinator", () => {
             providerId: dedicated,
             snapshot,
             capturedAt,
+          }),
+        ),
+      ).resolves.toBe(false);
+    }
+    expect(loads).toBe(0);
+    expect(saves).toBe(0);
+  });
+
+  it("records Codex under provider-account ownership and prefers it over email", async () => {
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({}),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordCodex({
+          capturedAt,
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 10, windowMinutes: 300 },
+            secondary: { usedPercent: 20, windowMinutes: 10_080 },
+            identity: {
+              providerId: "codex",
+              accountId: " acct-123 ",
+              accountEmail: "owner@example.com",
+            },
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    const key = "codex:v1:provider-account:acct-123";
+    expect(saved?.codex?.preferredAccountKey).toBe(key);
+    expect(saved?.codex?.accounts[key]?.map((history) => history.name.rawValue)).toEqual([
+      "session",
+      "weekly",
+    ]);
+    expect(saved?.codex?.unscoped).toEqual([]);
+  });
+
+  it("uses canonical email ownership for partial Codex identity", async () => {
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({}),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordCodex({
+        capturedAt,
+        snapshot: usageSnapshot({
+          primary: { usedPercent: 10, windowMinutes: 300 },
+          identity: { providerId: "codex", accountEmail: " USER@EXAMPLE.COM " },
+        }),
+      }),
+    );
+    expect(saved?.codex?.preferredAccountKey).toBe(
+      "codex:v1:email-hash:b4c9a289323b21a01c3e940f150eb9b8c542587f1abfd8f0e1cc1ffc5e475514",
+    );
+  });
+
+  it("fails closed for missing, mismatched, or ownerless Codex identity", async () => {
+    let loads = 0;
+    let saves = 0;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.sync(() => {
+        loads += 1;
+        return {};
+      }),
+      save: () =>
+        Effect.sync(() => {
+          saves += 1;
+        }),
+    });
+    for (const identity of [
+      undefined,
+      { providerId: "claude" as const },
+      { providerId: "codex" as const },
+    ]) {
+      await expect(
+        Effect.runPromise(
+          coordinator.recordCodex({
+            capturedAt,
+            snapshot: usageSnapshot({
+              primary: { usedPercent: 10, windowMinutes: 300 },
+              ...(identity === undefined ? {} : { identity }),
+            }),
           }),
         ),
       ).resolves.toBe(false);

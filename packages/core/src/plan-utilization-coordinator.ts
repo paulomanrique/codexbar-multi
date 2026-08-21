@@ -15,6 +15,10 @@ import {
   extractPlanUtilizationSeriesSamples,
   reconcileGenericSessionEquivalentHistory,
 } from "./plan-utilization-samples.ts";
+import {
+  codexHistoryCanonicalKey,
+  resolveCodexHistoryIdentity,
+} from "./codex-history-ownership.ts";
 import type { InfrastructureError } from "./services.ts";
 
 export interface PlanUtilizationHistoryRepository {
@@ -34,6 +38,7 @@ export interface RecordPlanUtilizationSamplesInput {
   readonly providerId: ProviderInstanceId;
   readonly accountKey?: string | null;
   readonly samples: readonly PlanUtilizationSeriesSample[];
+  readonly updatePreferredAccountKey?: boolean;
 }
 
 /**
@@ -92,11 +97,18 @@ export class PlanUtilizationHistoryCoordinator {
         const state = yield* ensureLoaded;
         const providers = cloneProviders(state.providers);
         const buckets = providers[input.providerId] ?? new PlanUtilizationHistoryBuckets();
+        const originalBuckets = cloneBuckets(buckets);
         const existing = buckets.historiesFor(input.accountKey);
         const updated = updatePlanUtilizationHistories(existing, samples);
-        if (updated === undefined) return false;
-
-        buckets.setHistories(updated, input.accountKey);
+        if (updated !== undefined) buckets.setHistories(updated, input.accountKey);
+        if (
+          input.updatePreferredAccountKey === true &&
+          input.accountKey !== undefined &&
+          input.accountKey !== null &&
+          input.accountKey.length > 0
+        )
+          buckets.preferredAccountKey = input.accountKey;
+        if (bucketsEqual(buckets, originalBuckets)) return false;
         const nextProviders = { ...providers, [input.providerId]: buckets };
         const nextState: CoordinatorState = {
           loaded: true,
@@ -108,6 +120,37 @@ export class PlanUtilizationHistoryCoordinator {
         return true;
       }),
     );
+  }
+
+  /**
+   * Records Codex only when the provider snapshot carries a canonical account
+   * ID or email owner. Legacy/unscoped adoption remains a separate migration:
+   * an unresolved refresh must never borrow a previous account's history.
+   */
+  recordCodex(input: {
+    readonly snapshot: UsageSnapshot;
+    readonly capturedAt: Date;
+  }): Effect.Effect<boolean, InfrastructureError> {
+    const identity = input.snapshot.identity;
+    if (identity?.providerId !== "codex") return Effect.succeed(false);
+    const accountKey = codexHistoryCanonicalKey(
+      resolveCodexHistoryIdentity({
+        ...(identity.accountId === undefined ? {} : { accountId: identity.accountId }),
+        ...(identity.accountEmail === undefined ? {} : { email: identity.accountEmail }),
+      }),
+    );
+    if (accountKey === undefined) return Effect.succeed(false);
+    const samples = extractPlanUtilizationSeriesSamples({
+      providerId: "codex",
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+    return this.record({
+      providerId: "codex",
+      accountKey,
+      samples,
+      updatePreferredAccountKey: true,
+    });
   }
 
   /**
