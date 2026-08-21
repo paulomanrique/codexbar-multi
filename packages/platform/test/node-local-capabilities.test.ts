@@ -1,11 +1,85 @@
 import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { makeNodeFirstPartyLocalCapabilities, makeNodeProcessRunner } from "../src/node.ts";
+import {
+  kiroStateDatabasePath,
+  makeNodeFirstPartyLocalCapabilities,
+  makeNodeProcessRunner,
+} from "../src/node.ts";
 
 describe("Node first-party local capabilities", () => {
+  it("resolves Kiro CLI state per platform without accepting a provider path", () => {
+    const environment = {};
+    expect(kiroStateDatabasePath(environment, "/fixture/home", "darwin")).toBe(
+      "/fixture/home/Library/Application Support/kiro-cli/data.sqlite3",
+    );
+    expect(kiroStateDatabasePath(environment, "/fixture/home", "linux")).toBe(
+      "/fixture/home/.local/share/kiro-cli/data.sqlite3",
+    );
+    expect(kiroStateDatabasePath({ XDG_DATA_HOME: "/fixture/xdg" }, "/fixture/home", "linux")).toBe(
+      "/fixture/xdg/kiro-cli/data.sqlite3",
+    );
+    expect(
+      kiroStateDatabasePath({ KIRO_DATA_DIR: " /fixture/kiro " }, "/fixture/home", "darwin"),
+    ).toBe("/fixture/kiro/data.sqlite3");
+    expect(kiroStateDatabasePath({}, "C:\\Users\\fixture", "win32")).toBe(
+      "C:\\Users\\fixture\\AppData\\Local\\Kiro-Cli\\data.sqlite3",
+    );
+    expect(
+      kiroStateDatabasePath({ LOCALAPPDATA: "D:\\Kiro State" }, "C:\\Users\\fixture", "win32"),
+    ).toBe("D:\\Kiro State\\Kiro-Cli\\data.sqlite3");
+    expect(
+      kiroStateDatabasePath({ KIRO_DATA_DIR: "E:\\override" }, "C:\\Users\\fixture", "win32"),
+    ).toBe("E:\\override\\data.sqlite3");
+  });
+
+  it("reads Kiro's private state read-only and sends its token only to the fixed endpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-kiro-state-"));
+    const databasePath = join(root, "data.sqlite3");
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(
+        "CREATE TABLE auth_kv (key TEXT, value TEXT); CREATE TABLE state (key TEXT, value TEXT);",
+      );
+      database
+        .prepare("INSERT INTO auth_kv VALUES (?, ?)")
+        .run("kirocli:odic:token", JSON.stringify({ access_token: "fixture-secret" }));
+      database
+        .prepare("INSERT INTO state VALUES (?, ?)")
+        .run("api.codewhisperer.profile", JSON.stringify({ arn: "arn:fixture" }));
+      database.close();
+      const calls: Array<{ readonly url: string; readonly init: RequestInit | undefined }> = [];
+      const local = makeNodeFirstPartyLocalCapabilities({
+        environment: { KIRO_DATA_DIR: root },
+        homeDirectory: "/not-used",
+        fetchImpl: async (url, init) => {
+          calls.push({ url: String(url), init });
+          return new Response('{"usageBreakdownList":[]}', { status: 200 });
+        },
+      });
+      const result = await Effect.runPromise(local.fetchKiroUsageLimits!("kiro"));
+      expect(result).toEqual({ status: 200, bodyText: '{"usageBreakdownList":[]}' });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({
+        url: "https://codewhisperer.us-east-1.amazonaws.com/",
+        init: {
+          method: "POST",
+          headers: {
+            "X-Amz-Target": "AmazonCodeWhispererService.GetUsageLimits",
+            Authorization: "Bearer fixture-secret",
+          },
+          body: JSON.stringify({ profileArn: "arn:fixture" }),
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("fixture-secret");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("allows only the named provider command and keeps arguments separate from a shell", async () => {
     const calls: unknown[] = [];
     const local = makeNodeFirstPartyLocalCapabilities({

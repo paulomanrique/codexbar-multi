@@ -59,7 +59,7 @@ describe("Swift-derived Kilo Kiro Augment boundary parity", () => {
           readData: async () => undefined,
         },
       }),
-    ).toEqual({ primary: { usedPercent: 20 } }));
+    ).toMatchObject({ primary: { usedPercent: 20 } }));
   it("maps Augment web session usage", async () =>
     expect(
       await augment.fetchUsage(

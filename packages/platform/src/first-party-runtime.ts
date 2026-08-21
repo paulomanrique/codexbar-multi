@@ -20,6 +20,7 @@ import type {
   ProviderBinaryResponse,
   ProviderContext,
   ProviderDescriptor,
+  ProviderKiroUsageLimitsResponse,
   ProviderJSONResponse,
   ProviderLocalCapabilities,
   ProviderLocalCommand,
@@ -70,6 +71,10 @@ export interface FirstPartyLocalCapabilities {
     source: ProviderLocalData,
     request?: { readonly basePath?: string },
   ) => Effect.Effect<ProviderLocalDataResult | undefined, unknown>;
+  /** Kiro-only, token-owning platform operation. It never exposes CLI credentials to a provider. */
+  readonly fetchKiroUsageLimits?: (
+    providerId: ProviderId,
+  ) => Effect.Effect<ProviderKiroUsageLimitsResponse, unknown>;
 }
 
 export interface FirstPartyProviderRuntimeOptions {
@@ -392,6 +397,28 @@ const localFor = (
       (result.text.length > maximumResponseBytes || result.text.includes("\u0000"))
     )
       throw failure("api-failure", "Local data response is invalid or exceeds 1 MiB.");
+    return result;
+  },
+  fetchKiroUsageLimits: async () => {
+    if (local === undefined || local.fetchKiroUsageLimits === undefined)
+      throw failure(
+        "provider-unavailable",
+        "Kiro usage-limit enrichment is not configured by this host.",
+      );
+    if (providerId !== "kiro")
+      throw failure(
+        "permission-denied",
+        "Kiro usage-limit enrichment is not declared for this provider.",
+      );
+    const result = await Effect.runPromise(local.fetchKiroUsageLimits(providerId), { signal });
+    if (
+      !Number.isInteger(result.status) ||
+      result.status < 100 ||
+      result.status > 599 ||
+      result.bodyText.length > maximumResponseBytes ||
+      result.bodyText.includes("\u0000")
+    )
+      throw failure("api-failure", "Kiro usage-limit response is invalid or exceeds 1 MiB.");
     return result;
   },
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import {
   link,
   lstat,
@@ -12,7 +13,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { Entry } from "@napi-rs/keyring";
 import { Effect } from "effect";
 import type { AppPaths } from "@codexbar/core";
@@ -481,6 +482,10 @@ export interface NodeFirstPartyLocalCapabilitiesOptions {
   readonly processRunner?: ProcessRunnerService;
   /** Optional injected private reader; raw IDE configuration never reaches providers. */
   readonly privateFiles?: Pick<PrivateFileStoreService, "read">;
+  /** Injectable transport for the fixed Kiro endpoint; tests never need live network access. */
+  readonly fetchImpl?: typeof fetch;
+  /** Injectable for deterministic cross-platform Kiro state-path tests. */
+  readonly platform?: NodeJS.Platform;
 }
 
 /**
@@ -550,8 +555,122 @@ export const makeNodeFirstPartyLocalCapabilities = (
           ),
       });
     },
+    fetchKiroUsageLimits: (providerId) => {
+      if (providerId !== "kiro")
+        return Effect.fail(
+          new InfrastructureError("Kiro usage limits", "Kiro usage limits are not allowlisted."),
+        );
+      return Effect.tryPromise({
+        try: async (signal) => {
+          const identity = readKiroCLIIdentity(
+            kiroStateDatabasePath(
+              environment,
+              options.homeDirectory ?? homedir(),
+              options.platform ?? process.platform,
+            ),
+          );
+          const timeout = AbortSignal.timeout(10_000);
+          const response = await (options.fetchImpl ?? globalThis.fetch)(
+            "https://codewhisperer.us-east-1.amazonaws.com/",
+            {
+              method: "POST",
+              redirect: "error",
+              signal: AbortSignal.any([signal, timeout]),
+              headers: {
+                "Content-Type": "application/x-amz-json-1.0",
+                "X-Amz-Target": "AmazonCodeWhispererService.GetUsageLimits",
+                Authorization: `Bearer ${identity.accessToken}`,
+              },
+              body: JSON.stringify({ profileArn: identity.profileArn }),
+            },
+          );
+          return {
+            status: response.status,
+            bodyText: new TextDecoder("utf-8", { fatal: true }).decode(await boundedBody(response)),
+          };
+        },
+        catch: (error) =>
+          isAbort(error)
+            ? error
+            : new InfrastructureError(
+                "Kiro usage limits",
+                "Unable to read Kiro usage-limit data.",
+                error,
+              ),
+      });
+    },
   };
 };
+
+type KiroCLIIdentity = { readonly accessToken: string; readonly profileArn: string };
+
+/** Resolves only Kiro's documented CLI state location; no caller-controlled paths are accepted. */
+export const kiroStateDatabasePath = (
+  environment: Readonly<Record<string, string | undefined>>,
+  home: string,
+  platform: NodeJS.Platform,
+): string => {
+  const paths = platform === "win32" ? win32 : { join };
+  const directory = (value: string | undefined): string | undefined => {
+    const trimmed = value?.trim();
+    if (trimmed === undefined || trimmed === "") return undefined;
+    return trimmed === "~"
+      ? home
+      : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
+        ? paths.join(home, trimmed.slice(2))
+        : trimmed;
+  };
+  const override = directory(environment.KIRO_DATA_DIR);
+  if (override !== undefined) return paths.join(override, "data.sqlite3");
+  if (platform === "darwin")
+    return paths.join(home, "Library", "Application Support", "kiro-cli", "data.sqlite3");
+  if (platform === "win32")
+    return paths.join(
+      directory(environment.LOCALAPPDATA) ?? paths.join(home, "AppData", "Local"),
+      "Kiro-Cli",
+      "data.sqlite3",
+    );
+  return paths.join(
+    directory(environment.XDG_DATA_HOME) ?? paths.join(home, ".local", "share"),
+    "kiro-cli",
+    "data.sqlite3",
+  );
+};
+
+/** Reads the CLI's state database read-only and keeps both credential fields inside platform code. */
+const readKiroCLIIdentity = (databasePath: string): KiroCLIIdentity => {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    // Match the CLI-side probe's short contention budget without ever taking a write lock.
+    database.exec("PRAGMA busy_timeout = 250");
+    const read = (sql: string, field: string): string => {
+      const row = database.prepare(sql).get() as { readonly value?: unknown } | undefined;
+      if (
+        typeof row?.value !== "string" ||
+        row.value.length === 0 ||
+        row.value.length > maximumLocalOutputBytes
+      )
+        throw new Error(`Kiro CLI ${field} is unavailable.`);
+      return row.value;
+    };
+    const token = JSON.parse(
+      read("SELECT value FROM auth_kv WHERE key = 'kirocli:odic:token'", "token"),
+    ) as { readonly access_token?: unknown };
+    const profile = JSON.parse(
+      read("SELECT value FROM state WHERE key = 'api.codewhisperer.profile'", "profile"),
+    ) as { readonly arn?: unknown };
+    if (typeof token.access_token !== "string" || token.access_token.length === 0)
+      throw new Error("Kiro CLI token has no access token.");
+    if (typeof profile.arn !== "string" || profile.arn.length === 0)
+      throw new Error("Kiro CLI profile has no ARN.");
+    return { accessToken: token.access_token, profileArn: profile.arn };
+  } finally {
+    database.close();
+  }
+};
+
+const isAbort = (error: unknown): boolean =>
+  error instanceof Error && (error.name === "AbortError" || error.name === "CanceledError");
 
 const isSafeExecutable = (value: string): boolean =>
   !value.includes("\u0000") && (isAbsolute(value) || /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u.test(value));

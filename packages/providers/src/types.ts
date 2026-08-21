@@ -18,6 +18,16 @@ export interface ProviderLocalDataResult {
 }
 
 /**
+ * Sanitized result of Kiro's fixed GetUsageLimits endpoint. The platform owns
+ * the CLI SQLite token and request headers; providers receive only its bounded
+ * response body and status.
+ */
+export interface ProviderKiroUsageLimitsResponse {
+  readonly status: number;
+  readonly bodyText: string;
+}
+
+/**
  * Deliberately narrow local capability broker. It is not a process or
  * filesystem API: every command and data source is an allowlisted symbolic
  * identifier, validated again by the platform host.
@@ -31,6 +41,8 @@ export interface ProviderLocalCapabilities {
     source: ProviderLocalData,
     request?: { readonly basePath?: string },
   ) => Promise<ProviderLocalDataResult | undefined>;
+  /** Optional because a host may support the Kiro CLI without its private state store. */
+  readonly fetchKiroUsageLimits?: () => Promise<ProviderKiroUsageLimitsResponse>;
 }
 
 /** Small, platform-neutral host surface used by first-party providers. */
