@@ -146,6 +146,8 @@ const apiKey = (raw: string | undefined): string | undefined => {
 };
 const apiKeyFrom = (ctx: ProviderContext): string | undefined =>
   apiKey(ctx.settings.getSecret("OPENCODE_API_KEY") ?? ctx.settings.get("OPENCODE_API_KEY"));
+const cancelled = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
 const snapshot = (ctx: ProviderContext, usage: ReturnType<typeof allWindows>) => {
   const at = (candidate: Window | undefined) =>
     candidate ? ctx.date.unixMillis(ctx.date.nowMillis() + candidate.seconds * 1000) : undefined;
@@ -198,6 +200,58 @@ const cookie = async (ctx: ProviderContext) => {
   return result;
 };
 
+/**
+ * The public API is preferred in Auto mode, but its failure must not make a
+ * still-valid browser session unusable.  Swift keeps the pre-existing web
+ * path as the compatibility fallback for this exact case.
+ */
+const fetchWebUsage = async (ctx: ProviderContext) => {
+  const session = await cookie(ctx);
+  let workspace = ctx.settings.get("OPENCODEGO_WORKSPACE_ID")?.trim();
+  if (!workspace) {
+    const response = await ctx.http.get(`${BASE}/_server?id=${encodeURIComponent(WORKSPACES)}`, {
+      headers: header(WORKSPACES, session, BASE),
+    });
+    workspace = workspaceFrom(text(ctx, response));
+  }
+  if (!workspace) throw ctx.fail.parseFailure("OpenCode Go response is missing a workspace ID.");
+  const page = await ctx.http.get(`${BASE}/workspace/${encodeURIComponent(workspace)}/go`, {
+    headers: {
+      Cookie: session,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+  const usage = allWindows(parse(text(ctx, page)), ctx.date.nowMillis());
+  const args = encodeURIComponent(JSON.stringify([workspace]));
+  let balance: number | undefined;
+  try {
+    const response = await ctx.http.get(
+      `${BASE}/_server?id=${encodeURIComponent(BILLING)}&args=${args}`,
+      {
+        headers: header(BILLING, session, `${BASE}/workspace/${encodeURIComponent(workspace)}/go`),
+      },
+    );
+    balance = numberDeep(parse(text(ctx, response)), [
+      "zenBalanceUSD",
+      "zen_balance_usd",
+      "balanceUSD",
+      "balance_usd",
+      "balance",
+    ]);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("authentication-expired")) throw error;
+    // The upstream balance request is optional and must not hide valid quota data.
+  }
+  return {
+    ...(usage.rolling ? snapshot(ctx, usage) : {}),
+    ...(balance === undefined
+      ? {}
+      : {
+          providerCost: { used: balance, limit: 0, currencyCode: "USD", period: "Zen balance" },
+        }),
+  };
+};
+
 const definition: ProviderDefinition = {
   id: "opencodego",
   name: "OpenCode Go",
@@ -217,57 +271,17 @@ const definition: ProviderDefinition = {
     const token = apiKeyFrom(ctx);
     const apiMode =
       ctx.sourceMode === undefined || ctx.sourceMode === "auto" || ctx.sourceMode === "api";
-    if (token && apiMode) return fetchAPI(ctx, token);
+    if (token && apiMode) {
+      try {
+        return await fetchAPI(ctx, token);
+      } catch (error) {
+        if (ctx.sourceMode !== "auto" || cancelled(error)) throw error;
+        return fetchWebUsage(ctx);
+      }
+    }
     if (ctx.sourceMode === "api")
       throw ctx.fail.missingCredential("No OpenCode Go API key is configured.");
-    const session = await cookie(ctx);
-    let workspace = ctx.settings.get("OPENCODEGO_WORKSPACE_ID")?.trim();
-    if (!workspace) {
-      const response = await ctx.http.get(`${BASE}/_server?id=${encodeURIComponent(WORKSPACES)}`, {
-        headers: header(WORKSPACES, session, BASE),
-      });
-      workspace = workspaceFrom(text(ctx, response));
-    }
-    if (!workspace) throw ctx.fail.parseFailure("OpenCode Go response is missing a workspace ID.");
-    const page = await ctx.http.get(`${BASE}/workspace/${encodeURIComponent(workspace)}/go`, {
-      headers: {
-        Cookie: session,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-    });
-    const usage = allWindows(parse(text(ctx, page)), ctx.date.nowMillis());
-    const args = encodeURIComponent(JSON.stringify([workspace]));
-    let balance: number | undefined;
-    try {
-      const response = await ctx.http.get(
-        `${BASE}/_server?id=${encodeURIComponent(BILLING)}&args=${args}`,
-        {
-          headers: header(
-            BILLING,
-            session,
-            `${BASE}/workspace/${encodeURIComponent(workspace)}/go`,
-          ),
-        },
-      );
-      balance = numberDeep(parse(text(ctx, response)), [
-        "zenBalanceUSD",
-        "zen_balance_usd",
-        "balanceUSD",
-        "balance_usd",
-        "balance",
-      ]);
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("authentication-expired")) throw error;
-      // The upstream balance request is optional and must not hide valid quota data.
-    }
-    return {
-      ...(usage.rolling ? snapshot(ctx, usage) : {}),
-      ...(balance === undefined
-        ? {}
-        : {
-            providerCost: { used: balance, limit: 0, currencyCode: "USD", period: "Zen balance" },
-          }),
-    };
+    return fetchWebUsage(ctx);
   },
 };
 const strategy: ProviderStrategy = {

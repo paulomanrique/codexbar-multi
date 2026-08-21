@@ -221,4 +221,54 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
       ),
     ).rejects.toThrow("authentication-expired");
   });
+
+  it("falls back from a failed Auto API request to the existing cookie session", async () => {
+    const calls: URL[] = [];
+    const snapshot = await opencodego.fetchUsage({
+      ...context(
+        (request) => {
+          calls.push(request.url);
+          if (request.url.pathname === "/zen/go/v1/usage") return response("unavailable", 503);
+          if (request.url.pathname.endsWith("/go"))
+            return json({ rollingUsage: { usagePercent: 15, resetInSec: 600 } });
+          if (request.url.searchParams.get("id")?.startsWith("c83"))
+            return json({ zenBalanceUSD: 7 });
+          throw new Error(`unexpected request ${request.url}`);
+        },
+        {
+          OPENCODE_API_KEY: "go-fixture",
+          OPENCODEGO_WORKSPACE_ID: "wrk_fixture",
+        },
+      ),
+      sourceMode: "auto",
+    });
+
+    expect(calls.map((call) => call.pathname)).toEqual([
+      "/zen/go/v1/usage",
+      "/workspace/wrk_fixture/go",
+      "/_server",
+    ]);
+    expect(snapshot).toEqual({
+      primary: { usedPercent: 15, windowMinutes: 300, resetsAt: "2026-08-20T12:10:00.000Z" },
+      providerCost: { used: 7, limit: 0, currencyCode: "USD", period: "Zen balance" },
+    });
+  });
+
+  it("does not turn an aborted Auto API request into a cookie request", async () => {
+    const cancelled = Object.assign(new Error("cancelled"), { name: "AbortError" });
+    let calls = 0;
+    await expect(
+      opencodego.fetchUsage({
+        ...context(
+          () => {
+            calls += 1;
+            throw cancelled;
+          },
+          { OPENCODE_API_KEY: "go-fixture" },
+        ),
+        sourceMode: "auto",
+      }),
+    ).rejects.toBe(cancelled);
+    expect(calls).toBe(1);
+  });
 });
