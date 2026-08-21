@@ -92,17 +92,20 @@ providers:
         - TestsLinux/*Claude*Tests.swift
       tsGlobs:
         - packages/providers/test/claude-antigravity-parity.test.ts
+        - packages/providers/test/claude-swap-retention.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Claude/**/*
     tsPaths:
       expected: [packages/providers/src/providers/claude.ts]
       real:
         - packages/providers/src/providers/claude.ts
+        - packages/providers/src/providers/claude-swap-retention.ts
     tsTestGlobs:
       - packages/providers/test/claude-antigravity-parity.test.ts
+      - packages/providers/test/claude-swap-retention.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 63bf039cc076d9cd91ab5b96774c5c990320107e
   - id: clinepass
     swiftGlobs:
       - Sources/CodexBar/Providers/ClinePass/**/*.swift
@@ -231,7 +234,7 @@ providers:
       - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 4933e2301
   - id: qwencloud
     swiftGlobs:
       - Sources/CodexBar/Providers/QwenCloud/**/*.swift
@@ -391,6 +394,7 @@ providers:
         - TestsLinux/*Zai*Tests.swift
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
+        - packages/providers/test/upstream-provider-deltas.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Zai/**/*
     tsPaths:
@@ -399,9 +403,10 @@ providers:
         - packages/providers/src/providers/zai.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/upstream-provider-deltas.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: cdc456ae0
   - id: minimax
     swiftGlobs:
       - Sources/CodexBar/Providers/MiniMax/**/*.swift
