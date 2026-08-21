@@ -21,4 +21,6 @@ export * from "./usage-pace.ts";
 export * from "./plan-utilization-history.ts";
 export * from "./plan-utilization-recorder.ts";
 export * from "./plan-utilization-coordinator.ts";
+export * from "./codex-history-ownership.ts";
+export * from "./sha256.ts";
 export * from "./plan-utilization-samples.ts";
