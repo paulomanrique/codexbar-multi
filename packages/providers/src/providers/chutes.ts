@@ -119,6 +119,17 @@ function parseWindow(
       "availableAmount",
     ]),
   );
+  // Chutes' Swift parser derives the missing side of a quota window before
+  // calculating utilization. Some responses only provide `used` and
+  // `remaining` (or `limit` and `remaining`), so do the same here instead of
+  // silently dropping an otherwise usable window.
+  const effectiveLimit =
+    limit ?? (used !== undefined && remaining !== undefined ? used + remaining : undefined);
+  const effectiveUsed =
+    used ??
+    (effectiveLimit !== undefined && remaining !== undefined
+      ? Math.max(0, effectiveLimit - remaining)
+      : undefined);
   let percent = boundedPercent(
     value(source, [
       "percent_used",
@@ -141,8 +152,13 @@ function parseWindow(
     ]),
   );
   if (percent === undefined && remainingPercent !== undefined) percent = 100 - remainingPercent;
-  if (percent === undefined && used !== undefined && limit !== undefined && limit > 0)
-    percent = (used / limit) * 100;
+  if (
+    percent === undefined &&
+    effectiveUsed !== undefined &&
+    effectiveLimit !== undefined &&
+    effectiveLimit > 0
+  )
+    percent = (effectiveUsed / effectiveLimit) * 100;
   if (percent === undefined) return undefined;
   const rawWindow = number(
     value(source, [
@@ -263,15 +279,25 @@ function parseDurationMinutes(raw: string): number | undefined {
   if (["day", "d"].includes(unit)) return Math.round(amount * 1440);
   return Math.round(amount * 30 * 1440);
 }
+function appendEndpointPath(base: string, path: string): string {
+  const url = new URL(base);
+  url.pathname = `${url.pathname.replace(/\/+$/u, "")}/${path.replace(/^\/+/, "")}`;
+  return url.href;
+}
 function usageDescription(window: Quota): string | undefined {
-  if (window.limit === undefined || window.limit <= 0) return undefined;
+  const limit =
+    window.limit ??
+    (window.used !== undefined && window.remaining !== undefined
+      ? window.used + window.remaining
+      : undefined);
+  if (limit === undefined || limit <= 0) return undefined;
   const used =
     window.used ??
-    (window.remaining === undefined ? undefined : Math.max(0, window.limit - window.remaining));
+    (window.remaining === undefined ? undefined : Math.max(0, limit - window.remaining));
   if (used === undefined) return undefined;
   const amount = (n: number): string =>
     Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-  return `${amount(used)}/${amount(window.limit)} ${window.unit || "credits"}`;
+  return `${amount(used)}/${amount(limit)} ${window.unit || "credits"}`;
 }
 function kind(window: Quota): "rolling" | "monthly" | undefined {
   const text = `${window.label || ""} ${window.unit || ""}`.toLowerCase();
@@ -587,24 +613,33 @@ const definition: ProviderDefinition = {
     let rootURL = "https://api.chutes.ai";
     if (configured) {
       try {
-        const url = new URL(configured);
-        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
+        // Match ProviderEndpointOverrideValidator.normalizedHTTPSURL: a bare
+        // host is accepted and normalized to HTTPS, while credentials are
+        // never allowed. Paths/query/fragment remain part of the configured
+        // endpoint and are preserved for local gateways.
+        const withScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(configured)
+          ? configured
+          : `https://${configured}`;
+        const url = new URL(withScheme);
+        if (url.protocol !== "https:" || !url.hostname || url.username || url.password)
           throw new Error("invalid");
-        rootURL = configured.replace(/\/+$/, "");
+        rootURL = url.href.replace(/\/+$/u, "");
       } catch {
         throw ctx.fail.apiFailure(
-          "CHUTES_API_URL must be an HTTPS URL without credentials or query parameters.",
+          "CHUTES_API_URL must be an HTTPS URL or bare host without credentials.",
         );
       }
     }
     const headers = { Authorization: `Bearer ${key.trim()}`, Accept: "application/json" };
-    const first = await get(ctx, `${rootURL}/users/me/subscription_usage`, { headers });
+    const first = await get(ctx, appendEndpointPath(rootURL, "/users/me/subscription_usage"), {
+      headers,
+    });
     status(ctx, "Chutes", first);
     const subscription = parseSnapshot(json(ctx, "Chutes", first), ctx);
     if (subscription.rolling && subscription.monthly) return snapshotResult(subscription);
     let quotasResponse: ProviderResponse;
     try {
-      quotasResponse = await get(ctx, `${rootURL}/users/me/quotas`, { headers });
+      quotasResponse = await get(ctx, appendEndpointPath(rootURL, "/users/me/quotas"), { headers });
       status(ctx, "Chutes", quotasResponse);
     } catch (error) {
       if (error instanceof Error && /authentication-expired|permission-denied/.test(error.message))
@@ -627,9 +662,11 @@ const definition: ProviderDefinition = {
         continue;
       }
       try {
-        const usage = await get(ctx, `${rootURL}/users/me/quota_usage/${encodeURIComponent(id)}`, {
-          headers,
-        });
+        const usage = await get(
+          ctx,
+          appendEndpointPath(rootURL, `/users/me/quota_usage/${encodeURIComponent(id)}`),
+          { headers },
+        );
         status(ctx, "Chutes", usage);
         const usageBody = object(json(ctx, "Chutes", usage));
         enriched.push(

@@ -185,6 +185,33 @@ describe("Swift-derived HTTP provider wave B", () => {
     ).rejects.toThrow("api-failure:");
   });
 
+  it("accepts a bare HTTPS host and derives utilization from used plus remaining", async () => {
+    const requests: Array<{ method: string; url: URL; options?: Record<string, unknown> }> = [];
+    const snapshot = await chutes.fetchUsage(
+      context(
+        (_method, url) => {
+          if (url.pathname.endsWith("subscription_usage"))
+            return response({ subscription: { used: 25, remaining: 75 } });
+          return response({});
+        },
+        { CHUTES_API_KEY: "key", CHUTES_API_URL: "chutes.test/gateway?tenant=fixture#usage" },
+        requests,
+      ),
+    );
+    expect(requests[0]?.url.href).toBe(
+      "https://chutes.test/gateway/users/me/subscription_usage?tenant=fixture#usage",
+    );
+    expect(snapshot.primary).toBeUndefined();
+    expect(snapshot).toMatchObject({
+      secondary: {
+        usedPercent: 25,
+        windowMinutes: 30 * 24 * 60,
+        resetDescription: "25/100 credits",
+      },
+      identity: {},
+    });
+  });
+
   it("fetches every IBM Bob team, formats Bobcoins and rejects untrusted regions", async () => {
     const requests: Array<{ method: string; url: URL; options?: Record<string, unknown> }> = [];
     const profile = {
