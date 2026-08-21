@@ -213,6 +213,14 @@ export interface CodexJsonlForkBaseline {
   readonly totals: CostJsonlTokens;
 }
 
+/** One raw cumulative observation used only by the platform fork resolver. */
+export interface CodexJsonlTotalSnapshot {
+  readonly timestamp: number;
+  readonly totals: CostJsonlTokens;
+}
+
+const maximumCodexForkBaselineSnapshots = 50_000;
+
 export interface CodexJsonlParseOptions {
   readonly state?: Partial<CodexJsonlState>;
   /**
@@ -222,12 +230,21 @@ export interface CodexJsonlParseOptions {
   readonly forkBaseline?: CodexJsonlForkBaseline;
   readonly catalog?: PricingCatalog;
   readonly pricingDate?: (timestamp: number) => Date;
+  /**
+   * Collect bounded raw cumulative snapshots for a host-owned parent-at-fork
+   * resolver. They are never stored in the incremental parser state.
+   */
+  readonly collectTotalsForForkBaseline?: boolean;
   readonly scan: Omit<CostJsonlChunkScanOptions, "onLine">;
 }
 
 export interface CodexJsonlParseResult extends CostJsonlScanResult {
   readonly rows: readonly CostJsonlUsageRow[];
   readonly state: CodexJsonlState;
+  /** Present only when the caller explicitly asks for parent-fork evidence. */
+  readonly totalSnapshots?: readonly CodexJsonlTotalSnapshot[];
+  /** False means a host must not infer a parent baseline from this parse. */
+  readonly totalSnapshotsComplete?: boolean;
 }
 
 export async function parseCodexCostJsonl(
@@ -245,6 +262,8 @@ export async function parseCodexCostJsonl(
   let cumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
   const lastEventKeys = boundedSet(options.state?.lastEventKeys, 1024);
   const rows: CostJsonlUsageRow[] = [];
+  const totalSnapshots: CodexJsonlTotalSnapshot[] = [];
+  let totalSnapshotsComplete = true;
   const scan = await scanCostJsonlChunks(chunks, {
     ...options.scan,
     onLine: (line) => {
@@ -294,6 +313,13 @@ export async function parseCodexCostJsonl(
         return;
       const total = totalsFrom(info?.total_token_usage);
       const last = totalsFrom(info?.last_token_usage);
+      if (options.collectTotalsForForkBaseline === true && total !== undefined) {
+        if (totalSnapshots.length >= maximumCodexForkBaselineSnapshots) {
+          totalSnapshotsComplete = false;
+        } else {
+          totalSnapshots.push({ timestamp, totals: total });
+        }
+      }
       let delta: CostJsonlTokens | undefined;
       if (total !== undefined) {
         if (awaitingForkBaseline !== undefined) {
@@ -360,6 +386,12 @@ export async function parseCodexCostJsonl(
       ...(cumulativeCounterUnsafe ? { cumulativeCounterUnsafe: true } : {}),
       lastEventKeys: [...lastEventKeys],
     },
+    ...(options.collectTotalsForForkBaseline === true
+      ? {
+          totalSnapshots,
+          totalSnapshotsComplete,
+        }
+      : {}),
   };
 }
 

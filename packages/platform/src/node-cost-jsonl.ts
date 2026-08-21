@@ -8,8 +8,10 @@ import {
   type ClaudeJsonlParseResult,
   type ClaudeJsonlState,
   type CodexJsonlParseResult,
+  type CodexJsonlForkBaseline,
   type CodexJsonlState,
   type CostJsonlCursor,
+  type CostJsonlTokens,
   type PricingCatalog,
 } from "@codexbar/core";
 
@@ -17,6 +19,11 @@ const streamChunkBytes = 64 * 1024;
 const defaultInventoryMaxDepth = 32;
 const defaultInventoryMaxEntries = 32 * 1024;
 const defaultInventoryMaxFiles = 4_096;
+// A family pass reads every selected file twice (evidence then attribution),
+// so it must be bounded even when its caller did not come from inventory.
+const defaultForkFamilyMaxSources = defaultInventoryMaxFiles;
+const defaultForkFamilyMaxBytes = 16 * 1024 * 1024;
+const defaultForkFamilyMaxLineBytes = 512 * 1024;
 
 /** Stable filesystem identity used to deduplicate hard-linked log sources. */
 export interface NodeCostJsonlSourceIdentity {
@@ -90,7 +97,10 @@ interface NodeCostJsonlOptions<ParserState> {
   readonly beforeSourceRevalidation?: () => void | Promise<void>;
 }
 
-export interface NodeCodexCostJsonlOptions extends NodeCostJsonlOptions<CodexJsonlState> {}
+export interface NodeCodexCostJsonlOptions extends NodeCostJsonlOptions<CodexJsonlState> {
+  readonly forkBaseline?: CodexJsonlForkBaseline;
+  readonly collectTotalsForForkBaseline?: boolean;
+}
 export interface NodeClaudeCostJsonlOptions extends NodeCostJsonlOptions<ClaudeJsonlState> {}
 
 export interface NodeCostJsonlResult<Result, State> {
@@ -98,6 +108,43 @@ export interface NodeCostJsonlResult<Result, State> {
   /** Persist this only after the caller persists all rows atomically. */
   readonly state: State;
   readonly resumed: boolean;
+}
+
+/** One explicitly selected Codex rollout in a family-level reconciliation pass. */
+export interface NodeCodexForkFamilySource {
+  readonly path: string;
+}
+
+export type NodeCodexForkFamilyUnresolvedReason =
+  | "missing-session-metadata"
+  | "duplicate-session-id"
+  | "missing-parent"
+  | "invalid-fork-timestamp"
+  | "source-incomplete"
+  | "unsafe-cumulative-counter"
+  | "parent-incomplete"
+  | "no-parent-snapshot"
+  | "cycle";
+
+export interface NodeCodexForkFamilyMemberResult {
+  readonly path: string;
+  /** A resolved member includes only rows after its inherited parent baseline. */
+  readonly status: "resolved" | "unresolved";
+  readonly scan?: NodeCostJsonlResult<CodexJsonlParseResult, NodeCodexCostJsonlState>;
+  readonly reason?: NodeCodexForkFamilyUnresolvedReason;
+}
+
+export interface NodeCodexForkFamilyResult {
+  readonly members: readonly NodeCodexForkFamilyMemberResult[];
+  readonly hasUnresolvedLineage: boolean;
+}
+
+/** The explicit family plan exceeds a host-enforced reconciliation bound. */
+export class CodexForkFamilyLimitError extends Error {
+  constructor(limit: "maxSources" | "maxBytes" | "maxLineBytes", maximum: number) {
+    super(`Codex fork family ${limit} must be a positive safe integer no greater than ${maximum}`);
+    this.name = "CodexForkFamilyLimitError";
+  }
 }
 
 /** The file changed while being read, so callers must discard rows and retry from a fresh stat. */
@@ -199,6 +246,10 @@ export const scanNodeCodexCostJsonl = async (
       {
         ...(initial.parser === undefined ? {} : { state: initial.parser }),
         ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+        ...(options.forkBaseline === undefined ? {} : { forkBaseline: options.forkBaseline }),
+        ...(options.collectTotalsForForkBaseline === true
+          ? { collectTotalsForForkBaseline: true }
+          : {}),
         scan: scanOptions(initial.cursor, options),
       },
     );
@@ -247,6 +298,260 @@ export const scanNodeClaudeCostJsonl = async (
   } finally {
     await initial.handle.close();
   }
+};
+
+/**
+ * Resolves the bounded, parent-present portion of issue #2037 without using
+ * token-vector equality as cross-file identity. Every child must name one
+ * unique parent, provide a parseable fork timestamp, and find a complete
+ * parent cumulative snapshot at or before that boundary. Any ambiguous graph
+ * member is returned without billable rows rather than being guessed.
+ *
+ * This is intentionally a fresh family pass: the per-file incremental
+ * checkpoint API does not yet contain an atomic family manifest, ownership
+ * ledger, or parent-removal migration. Callers must not combine its result
+ * with independently scanned rows for the same sources.
+ */
+export const scanNodeCodexForkFamily = async (options: {
+  readonly sources: readonly NodeCodexForkFamilySource[];
+  readonly signal?: AbortSignal;
+  /** Defaults to 4,096 and can only make a reconciliation pass more restrictive. */
+  readonly maxSources?: number;
+  /** Defaults to 16 MiB per source and can only make a pass more restrictive. */
+  readonly maxBytes?: number;
+  /** Defaults to 512 KiB and can only make a pass more restrictive. */
+  readonly maxLineBytes?: number;
+  readonly catalog?: PricingCatalog;
+}): Promise<NodeCodexForkFamilyResult> => {
+  const maxSources = boundedForkFamilyOption(
+    options.maxSources ?? defaultForkFamilyMaxSources,
+    "maxSources",
+    defaultForkFamilyMaxSources,
+  );
+  const maxBytes = boundedForkFamilyOption(
+    options.maxBytes ?? defaultForkFamilyMaxBytes,
+    "maxBytes",
+    defaultForkFamilyMaxBytes,
+  );
+  const maxLineBytes = boundedForkFamilyOption(
+    options.maxLineBytes ?? defaultForkFamilyMaxLineBytes,
+    "maxLineBytes",
+    defaultForkFamilyMaxLineBytes,
+  );
+  // Every map key and every externally observable member path is canonical.
+  // Retaining a caller spelling after using `resolve` as the key lets aliases
+  // bypass lookup and makes family output depend on input ordering.
+  const sources = [...new Set(options.sources.map((source) => resolve(source.path)))]
+    .sort((left, right) => left.localeCompare(right))
+    .map((path) => ({ path }));
+  if (sources.length > maxSources) {
+    throw new CodexForkFamilyLimitError("maxSources", maxSources);
+  }
+  const preliminary = new Map<
+    string,
+    NodeCostJsonlResult<CodexJsonlParseResult, NodeCodexCostJsonlState>
+  >();
+  for (const source of sources) {
+    throwIfAborted(options.signal);
+    preliminary.set(
+      source.path,
+      await scanNodeCodexCostJsonl({
+        path: source.path,
+        maxBytes,
+        maxLineBytes,
+        ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+        collectTotalsForForkBaseline: true,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }),
+    );
+  }
+
+  const pathsBySession = new Map<string, string[]>();
+  for (const source of sources) {
+    const sessionId = preliminary.get(source.path)?.result.state.session?.id;
+    if (sessionId === undefined) continue;
+    const paths = pathsBySession.get(sessionId) ?? [];
+    paths.push(source.path);
+    pathsBySession.set(sessionId, paths);
+  }
+  const duplicatePaths = new Set(
+    [...pathsBySession.values()].flatMap((paths) => (paths.length > 1 ? paths : [])),
+  );
+  const pathBySession = new Map<string, string>();
+  for (const [sessionId, paths] of pathsBySession) {
+    if (paths.length === 1 && paths[0] !== undefined) pathBySession.set(sessionId, paths[0]);
+  }
+
+  const results = new Map<string, NodeCodexForkFamilyMemberResult>();
+  const visiting = new Set<string>();
+  const resolveMember = async (path: string): Promise<NodeCodexForkFamilyMemberResult> => {
+    const cached = results.get(path);
+    if (cached !== undefined) return cached;
+    if (visiting.has(path)) {
+      const cycle = { path, status: "unresolved" as const, reason: "cycle" as const };
+      results.set(path, cycle);
+      return cycle;
+    }
+    const initial = preliminary.get(path);
+    const session = initial?.result.state.session;
+    if (initial === undefined || !isCompleteCodexScan(initial)) {
+      const unresolved = {
+        path,
+        status: "unresolved" as const,
+        reason: "source-incomplete" as const,
+      };
+      results.set(path, unresolved);
+      return unresolved;
+    }
+    if (initial.result.state.cumulativeCounterUnsafe === true) {
+      const unresolved = {
+        path,
+        status: "unresolved" as const,
+        reason: "unsafe-cumulative-counter" as const,
+      };
+      results.set(path, unresolved);
+      return unresolved;
+    }
+    if (session?.id === undefined) {
+      const unresolved = {
+        path,
+        status: "unresolved" as const,
+        reason: "missing-session-metadata" as const,
+      };
+      results.set(path, unresolved);
+      return unresolved;
+    }
+    if (duplicatePaths.has(path)) {
+      const unresolved = {
+        path,
+        status: "unresolved" as const,
+        reason: "duplicate-session-id" as const,
+      };
+      results.set(path, unresolved);
+      return unresolved;
+    }
+    visiting.add(path);
+    try {
+      let forkBaseline: CodexJsonlForkBaseline | undefined;
+      if (session.forkedFromId !== undefined) {
+        if (session.forkTimestamp === undefined || !Number.isFinite(session.forkTimestamp)) {
+          const unresolved = {
+            path,
+            status: "unresolved" as const,
+            reason: "invalid-fork-timestamp" as const,
+          };
+          results.set(path, unresolved);
+          return unresolved;
+        }
+        const parentPath = pathBySession.get(session.forkedFromId);
+        if (parentPath === undefined) {
+          const unresolved = {
+            path,
+            status: "unresolved" as const,
+            reason: "missing-parent" as const,
+          };
+          results.set(path, unresolved);
+          return unresolved;
+        }
+        const parent = await resolveMember(parentPath);
+        if (parent.status !== "resolved") {
+          const unresolved = {
+            path,
+            status: "unresolved" as const,
+            reason: parent.reason === "cycle" ? ("cycle" as const) : ("parent-incomplete" as const),
+          };
+          results.set(path, unresolved);
+          return unresolved;
+        }
+        const parentEvidence = preliminary.get(parentPath)?.result;
+        if (parentEvidence?.totalSnapshotsComplete !== true) {
+          const unresolved = {
+            path,
+            status: "unresolved" as const,
+            reason: "parent-incomplete" as const,
+          };
+          results.set(path, unresolved);
+          return unresolved;
+        }
+        const totals = latestTotalsAtOrBefore(
+          parentEvidence.totalSnapshots ?? [],
+          session.forkTimestamp,
+        );
+        if (totals === undefined) {
+          const unresolved = {
+            path,
+            status: "unresolved" as const,
+            reason: "no-parent-snapshot" as const,
+          };
+          results.set(path, unresolved);
+          return unresolved;
+        }
+        forkBaseline = { parentSessionId: session.forkedFromId, totals };
+      }
+      throwIfAborted(options.signal);
+      const scan = await scanNodeCodexCostJsonl({
+        path,
+        ...(forkBaseline === undefined ? {} : { forkBaseline }),
+        maxBytes,
+        maxLineBytes,
+        ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+      if (!isCompleteCodexScan(scan)) {
+        const unresolved = {
+          path,
+          status: "unresolved" as const,
+          reason: "source-incomplete" as const,
+        };
+        results.set(path, unresolved);
+        return unresolved;
+      }
+      const resolved = { path, status: "resolved" as const, scan };
+      results.set(path, resolved);
+      return resolved;
+    } finally {
+      visiting.delete(path);
+    }
+  };
+
+  for (const source of sources) await resolveMember(source.path);
+  const members = sources.map((source) => results.get(source.path)!);
+  return {
+    members,
+    hasUnresolvedLineage: members.some((member) => member.status === "unresolved"),
+  };
+};
+
+const latestTotalsAtOrBefore = (
+  snapshots: readonly { readonly timestamp: number; readonly totals: CostJsonlTokens }[],
+  cutoff: number,
+): CostJsonlTokens | undefined => {
+  let selected: CostJsonlTokens | undefined;
+  let selectedTimestamp = Number.NEGATIVE_INFINITY;
+  for (const snapshot of snapshots) {
+    if (snapshot.timestamp <= cutoff && snapshot.timestamp >= selectedTimestamp) {
+      selected = snapshot.totals;
+      selectedTimestamp = snapshot.timestamp;
+    }
+  }
+  return selected;
+};
+
+const isCompleteCodexScan = (
+  scan: NodeCostJsonlResult<CodexJsonlParseResult, NodeCodexCostJsonlState>,
+): boolean =>
+  scan.state.cursor.discardOffset === undefined &&
+  scan.state.cursor.committedOffset >= scan.state.fingerprint.size;
+
+const boundedForkFamilyOption = (
+  value: number,
+  limit: "maxSources" | "maxBytes" | "maxLineBytes",
+  maximum: number,
+): number => {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new CodexForkFamilyLimitError(limit, maximum);
+  }
+  return value;
 };
 
 async function openSource<ParserState>(options: NodeCostJsonlOptions<ParserState>): Promise<{

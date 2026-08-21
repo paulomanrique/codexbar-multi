@@ -203,6 +203,29 @@ describe("Codex cost JSONL parser (Swift parity)", () => {
       output: 5,
     });
   });
+
+  it("collects bounded raw cumulative snapshots only when a host resolves a fork family", async () => {
+    const result = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2030-01-01T12:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":1}}}}\n',
+        '{"type":"event_msg","timestamp":"2030-01-01T12:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15,"output_tokens":3}}}}\n',
+      ),
+      { collectTotalsForForkBaseline: true, scan: {} },
+    );
+    expect(result.totalSnapshotsComplete).toBe(true);
+    expect(result.totalSnapshots).toEqual([
+      { timestamp: Date.parse("2030-01-01T12:00:00Z"), totals: tokens(10, 0, 0, 1) },
+      { timestamp: Date.parse("2030-01-01T12:00:02Z"), totals: tokens(15, 0, 0, 3) },
+    ]);
+
+    const ordinary = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2030-01-01T12:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10}}}}\n',
+      ),
+      { scan: {} },
+    );
+    expect(ordinary.totalSnapshots).toBeUndefined();
+  });
 });
 
 describe("Claude cost JSONL parser (Swift parity)", () => {
