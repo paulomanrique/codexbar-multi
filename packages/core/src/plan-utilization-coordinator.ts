@@ -1,4 +1,4 @@
-import type { ProviderInstanceId } from "@codexbar/contracts";
+import type { ProviderId, ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { Effect, Ref, Semaphore } from "effect";
 import {
   PlanUtilizationHistoryBuckets,
@@ -11,6 +11,10 @@ import {
   updatePlanUtilizationHistories,
   type PlanUtilizationSeriesSample,
 } from "./plan-utilization-recorder.ts";
+import {
+  extractPlanUtilizationSeriesSamples,
+  reconcileGenericSessionEquivalentHistory,
+} from "./plan-utilization-samples.ts";
 import type { InfrastructureError } from "./services.ts";
 
 export interface PlanUtilizationHistoryRepository {
@@ -100,6 +104,65 @@ export class PlanUtilizationHistoryCoordinator {
           providers: nextProviders,
         };
         yield* Ref.set(stateRef, nextState);
+        yield* repository.save(cloneProviders(nextProviders));
+        return true;
+      }),
+    );
+  }
+
+  /**
+   * Records generic-provider 5h/weekly lanes only after source-identity
+   * reconciliation. Codex, Claude, and Antigravity have dedicated ownership
+   * rules and are rejected here rather than merged into a generic bucket.
+   */
+  recordGenericSessionEquivalent(input: {
+    readonly providerId: ProviderId;
+    readonly snapshot: UsageSnapshot;
+    readonly capturedAt: Date;
+    readonly accountKey?: string | null;
+  }): Effect.Effect<boolean, InfrastructureError> {
+    if (["codex", "claude", "antigravity"].includes(input.providerId)) return Effect.succeed(false);
+    const samples = extractPlanUtilizationSeriesSamples({
+      providerId: input.providerId,
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+    if (samples.length === 0) return Effect.succeed(false);
+
+    const ensureLoaded = this.#ensureLoaded;
+    const stateRef = this.#state;
+    const repository = this.#repository;
+    return this.#semaphore.withPermit(
+      Effect.gen(function* () {
+        const state = yield* ensureLoaded;
+        const providers = cloneProviders(state.providers);
+        const buckets = providers[input.providerId] ?? new PlanUtilizationHistoryBuckets();
+        const originalBuckets = cloneBuckets(buckets);
+        const previousIdentity = buckets.sessionEquivalentWindowPairIdentityFor(input.accountKey);
+        const reconciled = reconcileGenericSessionEquivalentHistory({
+          ...(previousIdentity === undefined ? {} : { previousIdentity }),
+          snapshot: input.snapshot,
+          histories: buckets.historiesFor(input.accountKey),
+          samples,
+        });
+        const updated =
+          updatePlanUtilizationHistories(reconciled.histories, reconciled.samples) ??
+          reconciled.histories;
+        buckets.setHistories(updated, input.accountKey);
+        if (reconciled.historyIdentity !== undefined) {
+          buckets.setSessionEquivalentWindowPairIdentity(
+            reconciled.historyIdentity,
+            input.accountKey,
+          );
+        }
+        if (bucketsEqual(buckets, originalBuckets)) return false;
+
+        const nextProviders = { ...providers, [input.providerId]: buckets };
+        yield* Ref.set(stateRef, {
+          loaded: true,
+          revision: state.revision + 1,
+          providers: nextProviders,
+        });
         yield* repository.save(cloneProviders(nextProviders));
         return true;
       }),
@@ -216,3 +279,57 @@ const cloneHistories = (
         ),
       }),
   );
+
+const bucketsEqual = (
+  left: PlanUtilizationHistoryBuckets,
+  right: PlanUtilizationHistoryBuckets,
+): boolean =>
+  left.preferredAccountKey === right.preferredAccountKey &&
+  historiesEqual(left.unscoped, right.unscoped) &&
+  stringMapsEqual(
+    left.sessionEquivalentWindowPairIdentities,
+    right.sessionEquivalentWindowPairIdentities,
+  ) &&
+  stringMapsEqual(
+    Object.fromEntries(Object.keys(left.accounts).map((key) => [key, key])),
+    Object.fromEntries(Object.keys(right.accounts).map((key) => [key, key])),
+  ) &&
+  Object.keys(left.accounts).every((key) =>
+    historiesEqual(left.accounts[key] ?? [], right.accounts[key] ?? []),
+  );
+
+const historiesEqual = (
+  left: readonly PlanUtilizationSeriesHistory[],
+  right: readonly PlanUtilizationSeriesHistory[],
+): boolean =>
+  left.length === right.length &&
+  left.every((history, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      history.name.rawValue === candidate.name.rawValue &&
+      history.windowMinutes === candidate.windowMinutes &&
+      history.entries.length === candidate.entries.length &&
+      history.entries.every((entry, entryIndex) => {
+        const other = candidate.entries[entryIndex];
+        return (
+          other !== undefined &&
+          entry.capturedAt.getTime() === other.capturedAt.getTime() &&
+          entry.usedPercent === other.usedPercent &&
+          entry.resetsAt?.getTime() === other.resetsAt?.getTime()
+        );
+      })
+    );
+  });
+
+const stringMapsEqual = (
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+): boolean => {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
+  );
+};

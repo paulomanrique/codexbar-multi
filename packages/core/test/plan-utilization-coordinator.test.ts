@@ -1,4 +1,4 @@
-import type { ProviderInstanceId } from "@codexbar/contracts";
+import type { ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -34,6 +34,12 @@ const providersWith = (usedPercent: number): PlanUtilizationHistoryProviders => 
       ],
     },
   }),
+});
+
+const usageSnapshot = (overrides: Partial<UsageSnapshot> = {}): UsageSnapshot => ({
+  details: [],
+  updatedAt: capturedAt.toISOString(),
+  ...overrides,
 });
 
 describe("plan-utilization history coordinator", () => {
@@ -136,6 +142,142 @@ describe("plan-utilization history coordinator", () => {
         coordinator.record({ providerId, accountKey: "work", samples: [sample(10)] }),
       ),
     ).resolves.toBe(false);
+    expect(saves).toBe(0);
+  });
+
+  it("reconciles and records an OpenCode Go session-equivalent pair atomically", async () => {
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({}),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordGenericSessionEquivalent({
+          providerId: "opencodego",
+          capturedAt,
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 15, windowMinutes: 300 },
+            secondary: { usedPercent: 45, windowMinutes: 10_080 },
+            tertiary: { usedPercent: 75, windowMinutes: 43_200 },
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(saved?.opencodego?.unscoped.map((history) => history.name.rawValue)).toEqual([
+      "session",
+      "weekly",
+      "monthly",
+    ]);
+    expect(saved?.opencodego?.sessionEquivalentWindowPairIdentities).toEqual({
+      __codexbar_unscoped__: "16#standard:primary18#standard:secondary",
+    });
+  });
+
+  it("removes only the generic lane whose source identity changed", async () => {
+    const initial = new PlanUtilizationHistoryBuckets({
+      unscoped: [
+        new PlanUtilizationSeriesHistory({
+          name: "session",
+          windowMinutes: 300,
+          entries: [sample(10).entry],
+        }),
+        new PlanUtilizationSeriesHistory({
+          name: "weekly",
+          windowMinutes: 10_080,
+          entries: [sample(20).entry],
+        }),
+      ],
+      sessionEquivalentWindowPairIdentities: {
+        __unscoped__: "16#standard:primary18#standard:secondary",
+      },
+    });
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({ zai: initial }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordGenericSessionEquivalent({
+        providerId: "zai",
+        capturedAt: new Date("2026-08-21T13:05:00Z"),
+        snapshot: usageSnapshot({
+          secondary: { usedPercent: 25, windowMinutes: 10_080 },
+          tertiary: { usedPercent: 35, windowMinutes: 300 },
+        }),
+      }),
+    );
+
+    expect(saved?.zai?.unscoped.map((history) => history.name.rawValue)).toEqual([
+      "session",
+      "weekly",
+    ]);
+    expect(saved?.zai?.unscoped[0]?.entries).toHaveLength(1);
+    expect(saved?.zai?.unscoped[0]?.entries[0]?.usedPercent).toBe(35);
+    expect(saved?.zai?.unscoped[1]?.entries.at(-1)?.usedPercent).toBe(25);
+  });
+
+  it("persists the stable weekly lane while a generic pair is incomplete", async () => {
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({}),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordGenericSessionEquivalent({
+        providerId: "zai",
+        capturedAt,
+        snapshot: usageSnapshot({
+          secondary: { usedPercent: 25, windowMinutes: 10_080 },
+        }),
+      }),
+    );
+
+    expect(saved?.zai?.unscoped.map((history) => history.name.rawValue)).toEqual(["weekly"]);
+    expect(saved?.zai?.sessionEquivalentWindowPairIdentities).toEqual({
+      __codexbar_unscoped__: "14#__unresolved__18#standard:secondary",
+    });
+  });
+
+  it("rejects providers with dedicated ownership rules without loading or saving", async () => {
+    let loads = 0;
+    let saves = 0;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.sync(() => {
+        loads += 1;
+        return {};
+      }),
+      save: () =>
+        Effect.sync(() => {
+          saves += 1;
+        }),
+    });
+    const snapshot = usageSnapshot({
+      primary: { usedPercent: 10, windowMinutes: 300 },
+      secondary: { usedPercent: 20, windowMinutes: 10_080 },
+    });
+    for (const dedicated of ["codex", "claude", "antigravity"] as const) {
+      await expect(
+        Effect.runPromise(
+          coordinator.recordGenericSessionEquivalent({
+            providerId: dedicated,
+            snapshot,
+            capturedAt,
+          }),
+        ),
+      ).resolves.toBe(false);
+    }
+    expect(loads).toBe(0);
     expect(saves).toBe(0);
   });
 
