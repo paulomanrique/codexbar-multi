@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 export const cliSeaAssetName = "codexbar-multi/sea/keyring.node";
 export const cliSeaManifestAssetName = "codexbar-multi/sea/manifest.json";
+export const cliSeaPluginChildAssetName = "codexbar-multi/sea/plugin-sandbox-child.mjs";
 export const cliSeaSentinelFuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 export const cliSeaNodeVersion = "24.13.1";
 
@@ -124,6 +125,7 @@ export const makeSeaConfig = (options: {
   readonly output: string;
   readonly nativeAddon: string;
   readonly manifest: string;
+  readonly pluginChild: string;
 }) => ({
   main: options.main,
   output: options.output,
@@ -133,6 +135,7 @@ export const makeSeaConfig = (options: {
   assets: {
     [cliSeaAssetName]: options.nativeAddon,
     [cliSeaManifestAssetName]: options.manifest,
+    [cliSeaPluginChildAssetName]: options.pluginChild,
   },
 });
 

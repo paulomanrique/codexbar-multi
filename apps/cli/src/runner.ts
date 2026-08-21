@@ -675,32 +675,27 @@ export const makeNodeCLIProviderRuntime = (
       },
     },
   });
-  // SEA embeds the main CLI but not a disposable plugin child.  Until the SEA
-  // packager extracts that audited asset, user plugins fail closed rather than
-  // falling back to in-process or unrestricted execution.
-  const plugins =
-    process.versions.sea === undefined
-      ? new NodeCLIPluginStore({
-          storageRoot: dirname(configPath),
-          reservedIds: new Set(PROVIDERS.map(({ id }) => id)),
-          readSecret: (pluginId, key) =>
-            Effect.runPromise(credentials.read(pluginSecretKey(pluginId, key))),
-          writeSecret: (pluginId, key, value) =>
-            Effect.runPromise(credentials.write(pluginSecretKey(pluginId, key), value)),
-          removeSecret: (pluginId, key) =>
-            Effect.runPromise(credentials.remove(pluginSecretKey(pluginId, key))),
-          readBrowserCookie: async (pluginId, domain) => {
-            const raw = await Effect.runPromise(
-              credentials.read(pluginBrowserCredentialKey(pluginId, domain)),
-            );
-            return raw === undefined
-              ? undefined
-              : decodePluginBrowserCredential(raw, pluginId, domain);
-          },
-          removeBrowserCookie: (pluginId, domain) =>
-            Effect.runPromise(credentials.remove(pluginBrowserCredentialKey(pluginId, domain))),
-        })
-      : undefined;
+  // Both the normal Node CLI and SEA use the same disposable QuickJS child.
+  // The SEA bootstrap extracts a digest-bound ESM child asset before forking
+  // the executable back into its private sandbox mode.
+  const plugins = new NodeCLIPluginStore({
+    storageRoot: dirname(configPath),
+    reservedIds: new Set(PROVIDERS.map(({ id }) => id)),
+    readSecret: (pluginId, key) =>
+      Effect.runPromise(credentials.read(pluginSecretKey(pluginId, key))),
+    writeSecret: (pluginId, key, value) =>
+      Effect.runPromise(credentials.write(pluginSecretKey(pluginId, key), value)),
+    removeSecret: (pluginId, key) =>
+      Effect.runPromise(credentials.remove(pluginSecretKey(pluginId, key))),
+    readBrowserCookie: async (pluginId, domain) => {
+      const raw = await Effect.runPromise(
+        credentials.read(pluginBrowserCredentialKey(pluginId, domain)),
+      );
+      return raw === undefined ? undefined : decodePluginBrowserCredential(raw, pluginId, domain);
+    },
+    removeBrowserCookie: (pluginId, domain) =>
+      Effect.runPromise(credentials.remove(pluginBrowserCredentialKey(pluginId, domain))),
+  });
   return {
     providers: PROVIDERS.map(({ id, name, status, isPrimaryProvider }) => ({
       id,

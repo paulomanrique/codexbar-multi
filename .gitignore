@@ -11,6 +11,7 @@ DerivedData
 node_modules/
 dist/
 dist-sea/
+dist-sea-child/
 dist-electron/
 .vite-plus/
 .codexbar-multi/

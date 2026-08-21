@@ -9,6 +9,7 @@ import {
   assertSeaNodeVersion,
   cliSeaAssetName,
   cliSeaManifestAssetName,
+  cliSeaPluginChildAssetName,
   detectMusl,
   getHostSeaTarget,
   makePostjectArguments,
@@ -40,8 +41,13 @@ const npmExecPath = process.env.npm_execpath;
 if (npmExecPath === undefined || npmExecPath.length === 0)
   throw new Error("build-cli-artifact must be launched through pnpm.");
 
-const run = (program: string, arguments_: readonly string[], cwd = root) => {
-  execFileSync(program, arguments_, { cwd, stdio: "inherit" });
+const run = (
+  program: string,
+  arguments_: readonly string[],
+  cwd = root,
+  environment: NodeJS.ProcessEnv = process.env,
+) => {
+  execFileSync(program, arguments_, { cwd, env: environment, stdio: "inherit" });
 };
 
 const sha256 = (contents: Uint8Array) => createHash("sha256").update(contents).digest("hex");
@@ -73,9 +79,22 @@ run(process.execPath, [
   "--config",
   "vite.sea.config.ts",
 ]);
+run(process.execPath, [
+  npmExecPath,
+  "--filter",
+  "@codexbar/cli",
+  "exec",
+  "vite",
+  "build",
+  "--config",
+  "vite.plugin-child.config.ts",
+]);
 
 const seaBundle = assertSeaBundlePath(join(cliRoot, "dist-sea", "sea.cjs"));
 await ensureRegularFile(seaBundle, "SEA CommonJS bundle");
+const pluginChild = join(cliRoot, "dist-sea-child", "plugin-sandbox-child.mjs");
+await ensureRegularFile(pluginChild, "SEA plugin sandbox child bundle");
+const pluginChildContents = await readFile(pluginChild);
 const nativeAddon = resolveKeyringNativeAsset(root, host);
 await ensureRegularFile(nativeAddon.path, "host-native keyring addon");
 const nativeContents = await readFile(nativeAddon.path);
@@ -86,6 +105,7 @@ await writeFile(
     {
       asset: cliSeaAssetName,
       sha256: sha256(nativeContents),
+      pluginChildSha256: sha256(pluginChildContents),
       platform: host.platform,
       arch: host.arch,
       package: nativeAddon.asset.packageName,
@@ -106,6 +126,7 @@ await writeFile(
       output: seaBlob,
       nativeAddon: nativeAddon.path,
       manifest: manifestPath,
+      pluginChild,
     }),
     undefined,
     2,
@@ -138,6 +159,11 @@ const outputManifest = {
     sha256: sha256(nativeContents),
   },
   seaManifestAsset: cliSeaManifestAssetName,
+  pluginSandbox: "embedded-quickjs-child",
+  pluginSandboxAsset: {
+    asset: cliSeaPluginChildAssetName,
+    sha256: sha256(pluginChildContents),
+  },
   crossCompiled: false,
 };
 await writeFile(
@@ -152,5 +178,14 @@ await writeFile(
 // credential or execute a provider request. Keep them deliberately narrow.
 run(executable, ["--help"]);
 run(executable, ["providers", "--format", "json"]);
+const pluginSmokeEnvironment = {
+  ...process.env,
+  CODEXBAR_CONFIG: join(intermediateDirectory, "plugin-smoke", "config.json"),
+};
+const pluginFixture = join(cliRoot, "test", "fixtures", "cli-plugin-fixture.js");
+run(executable, ["plugins", "install", pluginFixture, "--json"], root, pluginSmokeEnvironment);
+run(executable, ["plugins", "approve", "cli-fixture", "--json"], root, pluginSmokeEnvironment);
+run(executable, ["plugins", "test", "cli-fixture", "--json"], root, pluginSmokeEnvironment);
+run(executable, ["plugins", "remove", "cli-fixture", "--json"], root, pluginSmokeEnvironment);
 
 console.log(`Built host-native Node SEA CLI artifact: ${resolve(executable)}`);

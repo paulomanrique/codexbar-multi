@@ -13,9 +13,12 @@ const {
 const { homedir } = require("node:os");
 const { isAbsolute, join } = require("node:path");
 const { getAsset, isSea } = require("node:sea");
+const { pathToFileURL } = require("node:url");
 
 const assetName = "codexbar-multi/sea/keyring.node";
 const manifestName = "codexbar-multi/sea/manifest.json";
+const pluginChildAssetName = "codexbar-multi/sea/plugin-sandbox-child.mjs";
+const pluginChildEnvironmentKey = "CODEXBAR_MULTI_SEA_PLUGIN_CHILD";
 
 const readAsset = (name: string): Buffer => {
   const asset = getAsset(name);
@@ -65,38 +68,56 @@ const syncDirectory = (directory: string) => {
   }
 };
 
-const extractAddon = (): string => {
+const readManifest = (): { readonly sha256: string; readonly pluginChildSha256: string } => {
   const manifest = JSON.parse(readAsset(manifestName).toString("utf8")) as {
     readonly sha256?: unknown;
+    readonly pluginChildSha256?: unknown;
   };
-  if (typeof manifest.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.sha256))
-    throw new Error("The standalone CLI keyring manifest is invalid.");
-  const addon = readAsset(assetName);
-  if (digest(addon) !== manifest.sha256)
-    throw new Error("The standalone CLI keyring asset failed verification.");
+  if (
+    typeof manifest.sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(manifest.sha256) ||
+    typeof manifest.pluginChildSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(manifest.pluginChildSha256)
+  )
+    throw new Error("The standalone CLI asset manifest is invalid.");
+  return { sha256: manifest.sha256, pluginChildSha256: manifest.pluginChildSha256 };
+};
 
-  const directory = join(cacheRoot(), "codexbar-multi", "sea", "keyring");
+const extractVerifiedAsset = (options: {
+  readonly asset: string;
+  readonly expectedDigest: string;
+  readonly namespace: string;
+  readonly extension: string;
+  readonly description: string;
+}): string => {
+  const contents = readAsset(options.asset);
+  if (digest(contents) !== options.expectedDigest)
+    throw new Error(`The standalone CLI ${options.description} asset failed verification.`);
+
+  const directory = join(cacheRoot(), "codexbar-multi", "sea", options.namespace);
   ensurePrivateDirectory(directory);
-  const target = join(directory, `${manifest.sha256}.node`);
+  const target = join(directory, `${options.expectedDigest}${options.extension}`);
   try {
     const existing = lstatSync(target);
     if (
       !existing.isFile() ||
       existing.isSymbolicLink() ||
-      digest(readFileSync(target)) !== manifest.sha256
+      digest(readFileSync(target)) !== options.expectedDigest
     )
-      throw new Error(`Refusing unsafe standalone CLI keyring cache entry: ${target}`);
+      throw new Error(
+        `Refusing unsafe standalone CLI ${options.description} cache entry: ${target}`,
+      );
     return target;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 
-  const staged = join(directory, `.${manifest.sha256}.${process.pid}.${Date.now()}.tmp`);
+  const staged = join(directory, `.${options.expectedDigest}.${process.pid}.${Date.now()}.tmp`);
   let published = false;
   try {
     const descriptor = openSync(staged, "wx", 0o600);
     try {
-      writeFileSync(descriptor, addon);
+      writeFileSync(descriptor, contents);
       fsyncSync(descriptor);
     } finally {
       closeSync(descriptor);
@@ -110,7 +131,7 @@ const extractAddon = (): string => {
         if (
           existing.isFile() &&
           !existing.isSymbolicLink() &&
-          digest(readFileSync(target)) === manifest.sha256
+          digest(readFileSync(target)) === options.expectedDigest
         )
           return target;
       } catch {
@@ -131,10 +152,40 @@ const extractAddon = (): string => {
   return target;
 };
 
+const extractAddon = (): string => {
+  const manifest = readManifest();
+  return extractVerifiedAsset({
+    asset: assetName,
+    expectedDigest: manifest.sha256,
+    namespace: "keyring",
+    extension: ".node",
+    description: "keyring",
+  });
+};
+
+const extractPluginChild = (): string => {
+  const manifest = readManifest();
+  return extractVerifiedAsset({
+    asset: pluginChildAssetName,
+    expectedDigest: manifest.pluginChildSha256,
+    namespace: "plugin-sandbox",
+    extension: ".mjs",
+    description: "plugin sandbox child",
+  });
+};
+
 if (!isSea())
   throw new Error(
     "This CommonJS bundle is only valid inside a Node SEA executable. Use pnpm build:cli for normal development.",
   );
 
-process.env.NAPI_RS_NATIVE_LIBRARY_PATH = extractAddon();
-void require("./sea-main.ts").runSeaCLI();
+if (process.env[pluginChildEnvironmentKey] === "1") {
+  delete process.env[pluginChildEnvironmentKey];
+  const child = extractPluginChild();
+  void import(pathToFileURL(child).href).catch(() => {
+    process.exitCode = 1;
+  });
+} else {
+  process.env.NAPI_RS_NATIVE_LIBRARY_PATH = extractAddon();
+  void require("./sea-main.ts").runSeaCLI();
+}

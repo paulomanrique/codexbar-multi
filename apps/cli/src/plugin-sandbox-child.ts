@@ -10,6 +10,7 @@ import {
   type PluginSandboxInspectSuccess,
   type PluginSandboxRequest,
 } from "@codexbar/plugin-runtime";
+import { seaPluginSandboxChildEnvironmentKey } from "./plugin-sandbox-sea.ts";
 
 /**
  * Node CLI counterpart to Electron's utility-process guest.  It deliberately
@@ -17,9 +18,6 @@ import {
  * filesystem, keyring, HTTP client, or environment values are passed to the
  * QuickJS guest.
  */
-const activeExecutions = new Map<string, QuickJsPluginExecution>();
-const executionCache = new PluginExecutionCache();
-
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -55,75 +53,81 @@ const isRequest = (value: unknown): value is PluginSandboxRequest => {
   );
 };
 
-const post = (message: unknown): void => {
-  process.send?.(message);
+export const runPluginSandboxChild = (): void => {
+  const activeExecutions = new Map<string, QuickJsPluginExecution>();
+  const executionCache = new PluginExecutionCache();
+  const post = (message: unknown): void => {
+    process.send?.(message);
+  };
+  const execute = async (request: PluginSandboxExecuteRequest): Promise<void> => {
+    try {
+      // Re-inspect in the disposable process: a source swapped after host-side
+      // approval cannot borrow a different manifest's capability binding.
+      const inspected = await inspectPlugin(request.source, { allowsDynamicId: true });
+      if (JSON.stringify(inspected.manifest) !== JSON.stringify(request.manifest))
+        throw new Error("plugin source no longer matches its approved manifest");
+      const execution = new QuickJsPluginExecution(
+        request.id,
+        (message) => {
+          if (message.type === "capability-request") post(message);
+          else
+            post({
+              version: PluginSandboxProtocolVersion,
+              type: "broker-request",
+              executionId: request.id,
+              message,
+            });
+        },
+        { pluginId: request.manifest.id, cache: executionCache },
+      );
+      activeExecutions.set(request.id, execution);
+      const value = await execution.execute(request.source, {
+        ...request.context,
+        settings: request.settings,
+        settingKinds: Object.fromEntries(
+          request.manifest.settings.map((setting) => [setting.key, setting.type]),
+        ),
+      });
+      post({
+        version: PluginSandboxProtocolVersion,
+        type: "execute-result",
+        id: request.id,
+        ok: true,
+        value,
+      });
+    } catch (cause) {
+      post(pluginSandboxFailure(request.id, cause, "execute-result"));
+    } finally {
+      activeExecutions.delete(request.id);
+    }
+  };
+  process.on("message", (message: unknown) => {
+    if (!isRequest(message)) return;
+    if (message.type === "broker-response" || message.type === "capability-response") {
+      activeExecutions
+        .get(message.executionId)
+        ?.receive(message as PluginSandboxBrokerResponse | PluginSandboxCapabilityResponse);
+      return;
+    }
+    if (message.type === "inspect") {
+      void inspectPlugin(message.source, message.options)
+        .then((plugin) => {
+          const response: PluginSandboxInspectSuccess = {
+            version: PluginSandboxProtocolVersion,
+            type: "inspect-result",
+            id: message.id,
+            ok: true,
+            plugin,
+          };
+          post(response);
+        })
+        .catch((cause: unknown) => post(pluginSandboxFailure(message.id, cause)));
+      return;
+    }
+    void execute(message);
+  });
 };
 
-process.on("message", (message: unknown) => {
-  if (!isRequest(message)) return;
-  if (message.type === "broker-response" || message.type === "capability-response") {
-    activeExecutions
-      .get(message.executionId)
-      ?.receive(message as PluginSandboxBrokerResponse | PluginSandboxCapabilityResponse);
-    return;
-  }
-  if (message.type === "inspect") {
-    void inspectPlugin(message.source, message.options)
-      .then((plugin) => {
-        const response: PluginSandboxInspectSuccess = {
-          version: PluginSandboxProtocolVersion,
-          type: "inspect-result",
-          id: message.id,
-          ok: true,
-          plugin,
-        };
-        post(response);
-      })
-      .catch((cause: unknown) => post(pluginSandboxFailure(message.id, cause)));
-    return;
-  }
-  void execute(message);
-});
-
-async function execute(request: PluginSandboxExecuteRequest): Promise<void> {
-  try {
-    // Re-inspect in the disposable process: a source swapped after host-side
-    // approval cannot borrow a different manifest's capability binding.
-    const inspected = await inspectPlugin(request.source, { allowsDynamicId: true });
-    if (JSON.stringify(inspected.manifest) !== JSON.stringify(request.manifest))
-      throw new Error("plugin source no longer matches its approved manifest");
-    const execution = new QuickJsPluginExecution(
-      request.id,
-      (message) => {
-        if (message.type === "capability-request") post(message);
-        else
-          post({
-            version: PluginSandboxProtocolVersion,
-            type: "broker-request",
-            executionId: request.id,
-            message,
-          });
-      },
-      { pluginId: request.manifest.id, cache: executionCache },
-    );
-    activeExecutions.set(request.id, execution);
-    const value = await execution.execute(request.source, {
-      ...request.context,
-      settings: request.settings,
-      settingKinds: Object.fromEntries(
-        request.manifest.settings.map((setting) => [setting.key, setting.type]),
-      ),
-    });
-    post({
-      version: PluginSandboxProtocolVersion,
-      type: "execute-result",
-      id: request.id,
-      ok: true,
-      value,
-    });
-  } catch (cause) {
-    post(pluginSandboxFailure(request.id, cause, "execute-result"));
-  } finally {
-    activeExecutions.delete(request.id);
-  }
-}
+// The normal Vite child entry executes directly. The SEA bundle imports this
+// module and starts it explicitly only in the scrubbed child process.
+if (process.env[seaPluginSandboxChildEnvironmentKey] !== "1") runPluginSandboxChild();

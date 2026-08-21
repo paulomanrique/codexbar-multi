@@ -5,6 +5,7 @@ import {
   assertSeaNodeVersion,
   cliSeaAssetName,
   cliSeaManifestAssetName,
+  cliSeaPluginChildAssetName,
   detectMusl,
   makeSeaConfig,
   makePostjectArguments,
@@ -80,6 +81,7 @@ test("writes a CommonJS-only SEA config with the native assets", () => {
       output: "/tmp/cli.blob",
       nativeAddon: "/tmp/keyring.node",
       manifest: "/tmp/manifest.json",
+      pluginChild: "/tmp/plugin-sandbox-child.mjs",
     }),
     {
       main: "/tmp/cli.cjs",
@@ -90,6 +92,7 @@ test("writes a CommonJS-only SEA config with the native assets", () => {
       assets: {
         [cliSeaAssetName]: "/tmp/keyring.node",
         [cliSeaManifestAssetName]: "/tmp/manifest.json",
+        [cliSeaPluginChildAssetName]: "/tmp/plugin-sandbox-child.mjs",
       },
     },
   );

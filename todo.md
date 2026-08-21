@@ -54,7 +54,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.
   - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.
   - [x] Connect the normal Node CLI to the sandboxed plugin lifecycle, native keyring, stdin-only secrets, and desktop-exported cookie credentials.
-  - [ ] Embed the verified plugin child in SEA, complete serve Web UI/cache parity, and produce the remaining Node SEA target matrix.
+  - [x] Embed and verify the disposable QuickJS plugin child in the host-native SEA artifact.
+  - [ ] Complete serve Web UI/cache parity and produce the remaining Node SEA target matrix.
   - [x] Produce a host-native Node SEA CLI executable with a verified extracted keyring addon; cross-compilation and release archives remain disabled.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
 - [ ] Connect legacy import UI/CLI and a separately-approved native credential migration.
