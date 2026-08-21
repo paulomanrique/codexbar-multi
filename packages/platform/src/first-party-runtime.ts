@@ -20,6 +20,7 @@ import type {
   ProviderBinaryResponse,
   ProviderContext,
   ProviderDescriptor,
+  ProviderGrokLocalSessionSummary,
   ProviderKiroUsageLimitsResponse,
   ProviderJSONResponse,
   ProviderLocalCapabilities,
@@ -76,6 +77,10 @@ export interface FirstPartyLocalCapabilities {
   readonly fetchKiroUsageLimits?: (
     providerId: ProviderId,
   ) => Effect.Effect<ProviderKiroUsageLimitsResponse, unknown>;
+  /** Grok-only aggregate local activity. It is not a usage/quota capability. */
+  readonly fetchGrokLocalSessionSummary?: (
+    providerId: ProviderId,
+  ) => Effect.Effect<ProviderGrokLocalSessionSummary, unknown>;
 }
 
 export interface FirstPartyProviderRuntimeOptions {
@@ -423,6 +428,38 @@ const localFor = (
       result.bodyText.includes("\u0000")
     )
       throw failure("api-failure", "Kiro usage-limit response is invalid or exceeds 1 MiB.");
+    return result;
+  },
+  fetchGrokLocalSessionSummary: async () => {
+    if (local === undefined || local.fetchGrokLocalSessionSummary === undefined)
+      throw failure(
+        "provider-unavailable",
+        "Grok local-session enrichment is not configured by this host.",
+      );
+    if (providerId !== "grok")
+      throw failure(
+        "permission-denied",
+        "Grok local-session enrichment is not declared for this provider.",
+      );
+    const result = await Effect.runPromise(local.fetchGrokLocalSessionSummary(providerId), {
+      signal,
+    });
+    if (
+      !Number.isSafeInteger(result.sessionCount) ||
+      result.sessionCount < 0 ||
+      !Number.isSafeInteger(result.totalTokens) ||
+      result.totalTokens < 0 ||
+      !Array.isArray(result.models) ||
+      result.models.length > 64 ||
+      result.models.some((model) => typeof model !== "string" || model.length > 256) ||
+      (result.primaryModel !== undefined &&
+        (typeof result.primaryModel !== "string" || result.primaryModel.length > 256)) ||
+      (result.lastSessionAtMs !== undefined &&
+        (!Number.isSafeInteger(result.lastSessionAtMs) ||
+          result.lastSessionAtMs < 0 ||
+          result.lastSessionAtMs > 8_640_000_000_000_000))
+    )
+      throw failure("api-failure", "Grok local-session enrichment is invalid.");
     return result;
   },
 });

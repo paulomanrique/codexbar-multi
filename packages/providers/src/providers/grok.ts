@@ -6,6 +6,7 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
+import { grokLocalSessionDetails } from "./grok-local-session.ts";
 
 const endpoint = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
 const grpcRequestBody = new Uint8Array([0, 0, 0, 0, 0]);
@@ -335,7 +336,14 @@ const definition: ProviderDefinition = {
       }
     }
     try {
-      return { primary: parseGrokGrpcWebResponse(response.body, ctx.date.now()) };
+      const primary = parseGrokGrpcWebResponse(response.body, ctx.date.now());
+      // Local sessions are observational diagnostics only. They never create
+      // a quota fallback and cannot make a successful billing response fail.
+      const localSummary = await ctx.local?.fetchGrokLocalSessionSummary?.().catch(() => undefined);
+      return {
+        primary,
+        ...(localSummary === undefined ? {} : { details: grokLocalSessionDetails(localSummary) }),
+      };
     } catch (error) {
       throw classify(ctx, error);
     }

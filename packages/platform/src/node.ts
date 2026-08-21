@@ -35,8 +35,16 @@ import type {
   FirstPartyLocalCapabilities,
   FirstPartySettings,
 } from "./first-party-runtime.ts";
-import type { ProviderLocalCommand } from "@codexbar/providers";
+import {
+  parseGrokLocalSessionSignal,
+  summarizeGrokLocalSessions,
+  type ProviderLocalCommand,
+} from "@codexbar/providers";
 import { resolveClaudeSwapExecutablePath } from "./claude-swap.ts";
+import {
+  scanNodeGrokLocalSessions,
+  type NodeGrokLocalSessionScanOptions,
+} from "./node-grok-local-session.ts";
 import {
   makeNodePrivateDirectoryRestriction,
   makeNodePrivateFileRestriction,
@@ -523,6 +531,8 @@ export interface NodeFirstPartyLocalCapabilitiesOptions {
   readonly fetchImpl?: typeof fetch;
   /** Injectable for deterministic cross-platform Kiro state-path tests. */
   readonly platform?: NodeJS.Platform;
+  /** Test/alternate-host scanner options; paths remain private to this module. */
+  readonly grokLocalSessionScan?: Omit<NodeGrokLocalSessionScanOptions, "signal">;
 }
 
 /**
@@ -636,6 +646,31 @@ export const makeNodeFirstPartyLocalCapabilities = (
               ),
       });
     },
+    fetchGrokLocalSessionSummary: (providerId) =>
+      Effect.tryPromise({
+        try: async (signal) => {
+          if (providerId !== "grok") throw new Error("Provider local activity is not allowlisted.");
+          const scanned = await scanNodeGrokLocalSessions({
+            ...options.grokLocalSessionScan,
+            environment,
+            homeDirectory: options.homeDirectory ?? homedir(),
+            platform: options.platform ?? process.platform,
+            signal,
+          });
+          return summarizeGrokLocalSessions(
+            scanned.signals.flatMap((entry) => {
+              const parsed = parseGrokLocalSessionSignal(entry.json, entry.modifiedAtMs);
+              return parsed === undefined ? [] : [parsed];
+            }),
+          );
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "read Grok local sessions",
+            "Grok local session scan failed",
+            error,
+          ),
+      }),
   };
 };
 

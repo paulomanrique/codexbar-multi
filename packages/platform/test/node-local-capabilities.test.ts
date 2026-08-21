@@ -114,6 +114,39 @@ describe("Node first-party local capabilities", () => {
     ).rejects.toMatchObject({ operation: "local command" });
   });
 
+  it("returns bounded Grok local activity only through the named diagnostic capability", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-grok-local-capability-"));
+    const sessions = join(root, "sessions");
+    try {
+      await mkdir(join(sessions, "cwd", "session"), { recursive: true });
+      await writeFile(
+        join(sessions, "cwd", "session", "signals.json"),
+        JSON.stringify({
+          totalTokensBeforeCompaction: 12,
+          contextTokensUsed: 8,
+          primaryModelId: "grok-code",
+        }),
+      );
+      const local = makeNodeFirstPartyLocalCapabilities({
+        grokLocalSessionScan: { root: sessions },
+      });
+      await expect(Effect.runPromise(local.fetchGrokLocalSessionSummary!("grok"))).resolves.toEqual(
+        {
+          sessionCount: 1,
+          totalTokens: 20,
+          primaryModel: "grok-code",
+          models: ["grok-code"],
+          lastSessionAtMs: expect.any(Number),
+        },
+      );
+      await expect(
+        Effect.runPromise(local.fetchGrokLocalSessionSummary!("openai")),
+      ).rejects.toMatchObject({ operation: "read Grok local sessions" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("discovers only known JetBrains quota files and rejects a path outside configured roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "codexbar-jetbrains-"));
     const base = join(root, "WebStorm2026.1");

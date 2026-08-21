@@ -31,7 +31,10 @@ const billingPayload = (usedPercent: number, resetEpoch: number): Uint8Array => 
   return new Uint8Array([0x0d, ...value, 0x18, ...varint(resetEpoch)]);
 };
 
-const context = (postBinary?: ProviderContext["http"]["postBinary"]): ProviderContext => ({
+const context = (
+  postBinary?: ProviderContext["http"]["postBinary"],
+  local?: ProviderContext["local"],
+): ProviderContext => ({
   settings: { get: () => undefined, getSecret: () => undefined },
   http: {
     get: async () => ({ status: 200, bodyText: "{}" }),
@@ -40,6 +43,7 @@ const context = (postBinary?: ProviderContext["http"]["postBinary"]): ProviderCo
     ...(postBinary === undefined ? {} : { postBinary }),
   },
   browser: { cookieHeader: async () => "sso=fixture; sso-rw=fixture" },
+  ...(local === undefined ? {} : { local }),
   env: {},
   date: {
     now: () => now,
@@ -103,6 +107,53 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
           "User-Agent": "CodexBar",
         },
       },
+    });
+  });
+
+  it("adds local activity only as a diagnostic detail after successful web billing", async () => {
+    const snapshot = await grok.fetchUsage(
+      context(
+        async () => ({ status: 200, headers: {}, body: frame(billingPayload(25, 1_800_000_002)) }),
+        {
+          run: async () => ({ exitCode: 0, signal: undefined, stdout: "", stderr: "" }),
+          readData: async () => undefined,
+          fetchGrokLocalSessionSummary: async () => ({
+            sessionCount: 2,
+            totalTokens: 25,
+            lastSessionAtMs: now.getTime(),
+            models: ["grok-code"],
+          }),
+        },
+      ),
+    );
+    expect(snapshot).toMatchObject({
+      primary: { usedPercent: 25 },
+      details: [
+        {
+          title: "Local Grok activity (not quota)",
+          rows: [
+            { label: "Sessions", value: "2" },
+            { label: "Tokens", value: "25" },
+            { label: "Latest session", value: "2026-08-20T12:00:00.000Z" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("does not turn local activity failure into a quota or billing failure", async () => {
+    const snapshot = await grok.fetchUsage(
+      context(
+        async () => ({ status: 200, headers: {}, body: frame(billingPayload(25, 1_800_000_002)) }),
+        {
+          run: async () => ({ exitCode: 0, signal: undefined, stdout: "", stderr: "" }),
+          readData: async () => undefined,
+          fetchGrokLocalSessionSummary: async () => Promise.reject(new Error("local unavailable")),
+        },
+      ),
+    );
+    expect(snapshot).toEqual({
+      primary: { usedPercent: 25, resetsAt: "2027-01-15T08:00:02.000Z" },
     });
   });
 

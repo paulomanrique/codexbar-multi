@@ -27,6 +27,15 @@ export interface ProviderKiroUsageLimitsResponse {
   readonly bodyText: string;
 }
 
+/** Aggregate-only local activity metadata. It is explicitly not a quota result. */
+export interface ProviderGrokLocalSessionSummary {
+  readonly sessionCount: number;
+  readonly totalTokens: number;
+  readonly lastSessionAtMs?: number;
+  readonly primaryModel?: string;
+  readonly models: readonly string[];
+}
+
 /**
  * Deliberately narrow local capability broker. It is not a process or
  * filesystem API: every command and data source is an allowlisted symbolic
@@ -43,6 +52,8 @@ export interface ProviderLocalCapabilities {
   ) => Promise<ProviderLocalDataResult | undefined>;
   /** Optional because a host may support the Kiro CLI without its private state store. */
   readonly fetchKiroUsageLimits?: () => Promise<ProviderKiroUsageLimitsResponse>;
+  /** Optional diagnostic-only local Grok activity; it must never supply a quota window. */
+  readonly fetchGrokLocalSessionSummary?: () => Promise<ProviderGrokLocalSessionSummary>;
 }
 
 /** Small, platform-neutral host surface used by first-party providers. */

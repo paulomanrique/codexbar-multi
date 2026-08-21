@@ -91,3 +91,28 @@ export const summarizeGrokLocalSessions = (
     models,
   };
 };
+
+/**
+ * Diagnostic-only local activity projection. It intentionally produces no
+ * RateWindow: session tokens are not a subscription quota measurement.
+ */
+export const grokLocalSessionDetails = (summary: GrokLocalSessionSummary) =>
+  summary.sessionCount === 0
+    ? []
+    : [
+        {
+          title: "Local Grok activity (not quota)",
+          rows: [
+            { label: "Sessions", value: String(summary.sessionCount) },
+            { label: "Tokens", value: String(summary.totalTokens) },
+            ...(summary.lastSessionAtMs === undefined
+              ? []
+              : [
+                  {
+                    label: "Latest session",
+                    value: new Date(summary.lastSessionAtMs).toISOString(),
+                  },
+                ]),
+          ],
+        },
+      ];
