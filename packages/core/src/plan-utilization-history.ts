@@ -1,5 +1,9 @@
 import type { ProviderInstanceId } from "@codexbar/contracts";
 
+export type PlanUtilizationHistoryProviders = Readonly<
+  Partial<Record<ProviderInstanceId, PlanUtilizationHistoryBuckets>>
+>;
+
 /** The on-disk format used by CodexBar's plan-utilization history. */
 export const PLAN_UTILIZATION_HISTORY_SCHEMA_VERSION = 1;
 

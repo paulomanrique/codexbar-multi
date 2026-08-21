@@ -10,6 +10,8 @@ import {
   PlanUtilizationHistoryBuckets,
   parsePlanUtilizationHistoryDocument,
   stringifyPlanUtilizationHistoryDocument,
+  type PlanUtilizationHistoryRepository,
+  type PlanUtilizationHistoryProviders,
   type PrivateFileStoreService,
 } from "@codexbar/core";
 import { Effect, Schema } from "effect";
@@ -17,10 +19,6 @@ import { makeNodePrivateDirectoryRestriction } from "./node-private-path-securit
 import { makeNodePrivateFileStore, type NodePrivateFileStoreOptions } from "./node.ts";
 
 const DEFAULT_MAXIMUM_FILE_BYTES = 16 * 1024 * 1024;
-
-export type PlanUtilizationHistoryProviders = Readonly<
-  Partial<Record<ProviderInstanceId, PlanUtilizationHistoryBuckets>>
->;
 
 export interface NodePlanUtilizationHistoryStoreOptions extends NodePrivateFileStoreOptions {
   readonly directoryPath: string;
@@ -31,7 +29,7 @@ export interface NodePlanUtilizationHistoryStoreOptions extends NodePrivateFileS
   readonly files?: Pick<PrivateFileStoreService, "writeAtomic" | "remove">;
 }
 
-export interface NodePlanUtilizationHistoryStore {
+export interface NodePlanUtilizationHistoryStore extends PlanUtilizationHistoryRepository {
   /** Invalid, unsupported, unreadable, or unsafe files are skipped independently. */
   readonly load: Effect.Effect<PlanUtilizationHistoryProviders>;
   /** Mirrors Swift's best-effort persistence: failures never replace a valid file partially. */

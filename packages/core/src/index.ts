@@ -20,3 +20,4 @@ export * from "./session-quota-coordinator.ts";
 export * from "./usage-pace.ts";
 export * from "./plan-utilization-history.ts";
 export * from "./plan-utilization-recorder.ts";
+export * from "./plan-utilization-coordinator.ts";
