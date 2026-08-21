@@ -102,6 +102,55 @@ describe("Claude Swap retained at-limit usage (#3081)", () => {
     ]);
   });
 
+  it("keeps source slot identities distinct when Claude Swap rows share a mailbox", () => {
+    const accounts = projectClaudeSwapAccounts(
+      {
+        activeAccountNumber: 2,
+        accounts: [
+          row({
+            number: 1,
+            email: "Shared@example.com",
+            organizationName: "Sendbird",
+            alias: "Work",
+            isActive: false,
+          }),
+          row({
+            number: 2,
+            email: "shared@example.com",
+            organizationName: "Sendbird",
+            isActive: true,
+          }),
+        ],
+      },
+      { now },
+    );
+    expect(accounts).toMatchObject([
+      {
+        id: { source: "claude-swap", opaqueId: "2" },
+        displayLabel: "shared@example.com · Sendbird",
+        accountEmail: "shared@example.com",
+        snapshot: { identity: { accountId: "claude-swap:2", accountEmail: "shared@example.com" } },
+      },
+      {
+        id: { source: "claude-swap", opaqueId: "1" },
+        displayLabel: "Work",
+        accountEmail: "Shared@example.com",
+        snapshot: { identity: { accountId: "claude-swap:1", accountEmail: "Shared@example.com" } },
+      },
+    ]);
+    expect(new Set(accounts.map((account) => account.id.opaqueId))).toEqual(new Set(["1", "2"]));
+  });
+
+  it("never fingerprints an email-shaped alias when the source mailbox is empty", () => {
+    const accounts = projectClaudeSwapAccounts(
+      { accounts: [row({ email: "", alias: "owner@example.test" })] },
+      { now },
+    );
+    expect(accounts[0]).toMatchObject({ displayLabel: "owner@example.test" });
+    expect(accounts[0]?.accountEmail).toBeUndefined();
+    expect(serializeClaudeSwapRetainedUsage(accounts)).toBe("[]");
+  });
+
   it("serializes only a fingerprint and reconstructs an inert cache account", () => {
     const original = projectClaudeSwapAccounts({ accounts: [row()] }, { now });
     const serialized = serializeClaudeSwapRetainedUsage(original);

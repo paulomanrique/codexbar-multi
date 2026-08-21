@@ -5,7 +5,11 @@ import {
   type UsageSnapshot,
 } from "@codexbar/core";
 import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
-import { claudeSwapProcessEnvironment } from "../src/claude-swap.ts";
+import {
+  activateClaudeSwapAccount,
+  claudeSwapActivatableSlot,
+  claudeSwapProcessEnvironment,
+} from "../src/claude-swap.ts";
 import { CLIExitCode, runCLI, type CLIIO, type CLIProviderRuntime } from "../src/runner.ts";
 
 const snapshot: UsageSnapshot = {
@@ -87,6 +91,59 @@ describe("CodexBar Multi cards CLI", () => {
         CODEX_ACCESS_TOKEN: "secret-codex",
       }),
     ).toEqual({ PATH: "/safe/bin", HOME: "/safe/home", SYSTEMROOT: "C:\\Windows" });
+  });
+
+  it("accepts only a current, eligible opaque Claude Swap slot for activation", () => {
+    expect(
+      claudeSwapActivatableSlot({
+        id: { source: "claude-swap", opaqueId: "2" },
+        provider: "claude",
+        displayLabel: "Account 2",
+        isActive: false,
+        canActivate: true,
+        sourceLabel: "claude-swap",
+      }),
+    ).toBe(2);
+    expect(() =>
+      claudeSwapActivatableSlot({
+        id: { source: "claude-swap", opaqueId: "../../2" },
+        provider: "claude",
+        displayLabel: "Account",
+        isActive: false,
+        canActivate: true,
+        sourceLabel: "claude-swap",
+      }),
+    ).toThrow("invalid source-issued slot");
+  });
+
+  it("requires the explicit Claude Swap opt-in before requesting an activation", async () => {
+    const account: ClaudeSwapAccountSnapshot = {
+      id: { source: "claude-swap", opaqueId: "2" },
+      provider: "claude",
+      displayLabel: "Account 2",
+      isActive: false,
+      canActivate: true,
+      sourceLabel: "claude-swap",
+    };
+    const activate = async () => ({
+      switched: true,
+      toAccountNumber: 2,
+      reason: "selected",
+    });
+    await expect(
+      activateClaudeSwapAccount(
+        { list: async () => [], activate },
+        { enabled: false, executablePath: "/safe/cswap", showSingleAccount: false },
+        account,
+      ),
+    ).rejects.toThrow("not enabled");
+    await expect(
+      activateClaudeSwapAccount(
+        { list: async () => [], activate },
+        { enabled: true, executablePath: "/safe/cswap", showSingleAccount: false },
+        account,
+      ),
+    ).resolves.toMatchObject({ toAccountNumber: 2 });
   });
 
   it("renders a deterministic JSON card from the shared usage snapshot", async () => {

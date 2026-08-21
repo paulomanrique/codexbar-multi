@@ -4,8 +4,10 @@ import type { PrivateFileStoreService, ProcessRunnerService } from "@codexbar/co
 import {
   ClaudeSwapAdapterError,
   parseClaudeSwapAccountList,
+  parseClaudeSwapAccountSwitch,
   readClaudeSwapAccountList,
   refreshClaudeSwapAccounts,
+  switchClaudeSwapAccount,
 } from "../src/claude-swap.ts";
 import { resolveNodeClaudeSwapExecutablePath } from "../src/node.ts";
 
@@ -30,6 +32,14 @@ const listJSON = JSON.stringify({
       usage: { sevenDay: { pct: 100, resetsAt: "2030-01-01T00:00:00Z" } },
     },
   ],
+});
+
+const switchJSON = JSON.stringify({
+  schemaVersion: 1,
+  switched: true,
+  from: { number: 1 },
+  to: { number: 2 },
+  reason: "selected",
 });
 
 const runner = (
@@ -81,6 +91,33 @@ describe("Claude Swap host adapter", () => {
     });
   });
 
+  it("keeps display-only Claude Swap aliases and organizations out of the switch identity", () => {
+    const result = parseClaudeSwapAccountList(
+      bytes(
+        JSON.stringify({
+          schemaVersion: 1,
+          activeAccountNumber: 1,
+          accounts: [
+            {
+              number: 1,
+              email: "shared@example.test",
+              organizationName: "Workspace",
+              alias: "Work",
+              active: true,
+              usageStatus: "ok",
+            },
+          ],
+        }),
+      ),
+    );
+    expect(result.accounts[0]).toMatchObject({
+      number: 1,
+      email: "shared@example.test",
+      organizationName: "Workspace",
+      alias: "Work",
+    });
+  });
+
   it("rejects malformed top-level state and preserves schema error envelopes", () => {
     expect(() => parseClaudeSwapAccountList(bytes("[]"))).toThrow(
       "claude-swap returned output that is not a JSON object.",
@@ -114,6 +151,62 @@ describe("Claude Swap host adapter", () => {
     expect(() => parseClaudeSwapAccountList(new Uint8Array(262_145))).toThrow(
       "refusing to parse more than 262144",
     );
+  });
+
+  it("parses only a matching schema-v1 switch result", () => {
+    expect(parseClaudeSwapAccountSwitch(bytes(switchJSON))).toEqual({
+      switched: true,
+      fromAccountNumber: 1,
+      toAccountNumber: 2,
+      reason: "selected",
+    });
+    expect(() =>
+      parseClaudeSwapAccountSwitch(
+        bytes('{"schemaVersion":1,"switched":true,"from":null,"to":{"number":0},"reason":"x"}'),
+      ),
+    ).toThrow("to account number is not a positive slot");
+  });
+
+  it("clears retained usage before a fixed run-to-completion switch command", async () => {
+    const events: string[] = [];
+    const fixture = runner(switchJSON);
+    const files: Pick<PrivateFileStoreService, "remove"> = {
+      remove: (path) => Effect.sync(() => void events.push(`remove:${path}`)),
+    };
+    const result = await Effect.runPromise(
+      switchClaudeSwapAccount({
+        processes: {
+          run: (spec) => {
+            events.push("run");
+            return fixture.service.run(spec);
+          },
+        },
+        files,
+        executablePath: "/safe/cswap",
+        accountNumber: 2,
+        retentionPath: "/private/claude-swap.json",
+      }),
+    );
+    expect(result).toMatchObject({ toAccountNumber: 2 });
+    expect(events).toEqual(["remove:/private/claude-swap.json", "run"]);
+    expect(fixture.calls).toEqual([
+      { command: "/safe/cswap", args: ["--switch-to", "2", "--json"] },
+    ]);
+  });
+
+  it("fails closed when the switch response targets a different source slot", async () => {
+    const fixture = runner(switchJSON);
+    await expect(
+      Effect.runPromise(
+        switchClaudeSwapAccount({
+          processes: fixture.service,
+          files: { remove: () => Effect.void },
+          executablePath: "/safe/cswap",
+          accountNumber: 1,
+          retentionPath: "/private/claude-swap.json",
+        }),
+      ),
+    ).rejects.toThrow("reported account slot 2 after CodexBar requested slot 1");
   });
 
   it("expands only the current user's tilde before Node launches the configured executable", () => {

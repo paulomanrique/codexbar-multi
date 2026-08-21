@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ProviderFetchOutcome } from "@codexbar/core";
+import { makeDefaultCodexBarConfig } from "@codexbar/core";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
+import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
 import { runCache, type CLICacheStore } from "../src/cache.ts";
 import { runDashboard } from "../src/dashboard.ts";
 import { runDiagnose } from "../src/diagnose.ts";
@@ -87,6 +89,146 @@ describe("CLI dashboard, cache, and diagnose", () => {
       implementationStatus: "unported",
       error: { kind: "provider" },
     });
+  });
+
+  it("attaches opt-in Claude Swap accounts to the Claude dashboard row and redacts labels", async () => {
+    const output = capture();
+    const base = makeDefaultCodexBarConfig();
+    const config = {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id !== "claude"
+          ? provider
+          : {
+              ...provider,
+              enabled: true,
+              extensions: {
+                ...provider.extensions,
+                claudeSwapEnabled: true,
+                claudeSwapExecutablePath: "/safe/cswap",
+              },
+            },
+      ),
+    };
+    const accounts: readonly ClaudeSwapAccountSnapshot[] = [
+      {
+        id: { source: "claude-swap", opaqueId: "2" },
+        provider: "claude",
+        displayLabel: "private@example.test",
+        isActive: true,
+        canActivate: false,
+        snapshot,
+        sourceLabel: "claude-swap",
+      },
+    ];
+    const result = await runDashboard(
+      ["--provider", "claude", "--identity", "redacted"],
+      output.io,
+      {
+        ...runtime(),
+        providers: [{ id: "claude", name: "Claude", status: "partial" }],
+        config: { path: "/tmp/config.json", load: async () => config, save: async () => undefined },
+        claudeSwap: {
+          list: async ({ executablePath }) => {
+            expect(executablePath).toBe("/safe/cswap");
+            return accounts;
+          },
+        },
+      },
+    );
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    const payload = JSON.parse(output.stdout[0] ?? "") as { providers: Array<Record<string, any>> };
+    expect(payload.providers[0]?.accounts).toMatchObject([
+      { id: "claude-swap:2", label: "<redacted>", active: true },
+    ]);
+    expect(output.stdout[0]).not.toContain("private@example.test");
+  });
+
+  it("keeps an adapter failure row-local without suppressing ambient Claude usage", async () => {
+    const output = capture();
+    const base = makeDefaultCodexBarConfig();
+    const config = {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id !== "claude"
+          ? provider
+          : {
+              ...provider,
+              enabled: true,
+              extensions: {
+                ...provider.extensions,
+                claudeSwapEnabled: true,
+                claudeSwapExecutablePath: "/safe/cswap",
+              },
+            },
+      ),
+    };
+    const result = await runDashboard(["--provider", "claude"], output.io, {
+      ...runtime(),
+      providers: [{ id: "claude", name: "Claude", status: "partial" }],
+      config: { path: "/tmp/config.json", load: async () => config, save: async () => undefined },
+      claudeSwap: { list: async () => Promise.reject(new Error("\u001b[31mstore locked")) },
+    });
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    expect(JSON.parse(output.stdout[0] ?? "").providers[0]).toMatchObject({
+      windows: [{ kind: "primary" }],
+      accountsError: "store locked",
+    });
+  });
+
+  it("keeps shared-mailbox dashboard account aliases distinct by opaque source slot", async () => {
+    const output = capture();
+    const base = makeDefaultCodexBarConfig();
+    const config = {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id !== "claude"
+          ? provider
+          : {
+              ...provider,
+              enabled: true,
+              extensions: {
+                ...provider.extensions,
+                claudeSwapEnabled: true,
+                claudeSwapExecutablePath: "/safe/cswap",
+              },
+            },
+      ),
+    };
+    const accounts: readonly ClaudeSwapAccountSnapshot[] = [
+      {
+        id: { source: "claude-swap", opaqueId: "1" },
+        provider: "claude",
+        displayLabel: "Work",
+        accountEmail: "shared@example.test",
+        isActive: false,
+        canActivate: true,
+        sourceLabel: "claude-swap",
+      },
+      {
+        id: { source: "claude-swap", opaqueId: "2" },
+        provider: "claude",
+        displayLabel: "shared@example.test · Sendbird",
+        accountEmail: "shared@example.test",
+        isActive: true,
+        canActivate: false,
+        sourceLabel: "claude-swap",
+      },
+    ];
+    await runDashboard(["--provider", "claude"], output.io, {
+      ...runtime(),
+      providers: [{ id: "claude", name: "Claude", status: "partial" }],
+      config: { path: "/tmp/config.json", load: async () => config, save: async () => undefined },
+      claudeSwap: { list: async () => accounts },
+    });
+    expect(JSON.parse(output.stdout[0] ?? "").providers[0]?.accounts).toMatchObject([
+      { id: "claude-swap:1", label: "Work", identity: { accountEmail: "shared@example.test" } },
+      {
+        id: "claude-swap:2",
+        label: "shared@example.test · Sendbird",
+        identity: { accountEmail: "shared@example.test" },
+      },
+    ]);
   });
 
   it("clears requested cache scopes and preserves provider scoping", async () => {

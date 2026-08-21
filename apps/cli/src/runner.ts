@@ -24,15 +24,27 @@ import {
   makeNodeConfigRepository,
   makeNodeSqlitePersistence,
   makeSystemClock,
+  inspectNodeLegacyImport,
+  executeNodeLegacyImport,
+  rollbackNodeLegacyImport,
+  type NodeLegacyImportOptions,
   type NodeSqlitePersistence,
 } from "@codexbar/platform/node";
-import { CLAUDE_SWAP_MAX_OUTPUT_BYTES, refreshClaudeSwapAccounts } from "@codexbar/platform";
+import {
+  CLAUDE_SWAP_MAX_OUTPUT_BYTES,
+  refreshClaudeSwapAccounts,
+  switchClaudeSwapAccount,
+} from "@codexbar/platform";
 import { discoverCodexCredential } from "./codex-credential.ts";
 import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config.ts";
 import { resolveCLIConfigPath } from "./config-path.ts";
 import { runCost, type CLICostStore } from "./cost.ts";
 import { runCards } from "./cards.ts";
-import { claudeSwapProcessEnvironment, type CLIClaudeSwapAdapter } from "./claude-swap.ts";
+import {
+  claudeSwapActivatableSlot,
+  claudeSwapProcessEnvironment,
+  type CLIClaudeSwapAdapter,
+} from "./claude-swap.ts";
 import { runCache, type CLICacheStore } from "./cache.ts";
 import { runDashboard } from "./dashboard.ts";
 import { runDiagnose } from "./diagnose.ts";
@@ -47,6 +59,7 @@ import {
   pluginBrowserCredentialKey,
 } from "./plugin-browser-session.ts";
 import { runServe } from "./serve.ts";
+import { runLegacyImport, type CLILegacyImportStore } from "./legacy-import.ts";
 import { encodeToon, type ToonValue } from "./toon.ts";
 
 /** Values intentionally match the upstream CLIExitCode.swift numeric contract. */
@@ -117,6 +130,8 @@ export interface CLIProviderRuntime {
   readonly plugins?: CLIPluginStore;
   /** Opt-in Claude multi-account adapter; it remains a host-owned subprocess capability. */
   readonly claudeSwap?: CLIClaudeSwapAdapter;
+  /** Explicit, user-selected legacy import adapter; it never discovers sources. */
+  readonly legacyImport?: CLILegacyImportStore;
   /** Optional host lifecycle cleanup; the renderer never receives this capability. */
   readonly dispose?: () => void | Promise<void>;
   readonly now?: () => number;
@@ -466,7 +481,7 @@ const isError = <T extends object>(
 ): value is { readonly error: string } => "error" in value;
 
 const usageHelp =
-  "Usage: codexbar-multi [usage] [provider] [--provider <id|all>] [--format text|json|toon] [--json] [--json-only] [--pretty]\nCommands: usage, providers, cost, cards, dashboard, diagnose, cache, guard, hooks, cookie, plugins, sessions, config, serve";
+  "Usage: codexbar-multi [usage] [provider] [--provider <id|all>] [--format text|json|toon] [--json] [--json-only] [--pretty]\nCommands: usage, providers, cost, cards, dashboard, diagnose, cache, guard, hooks, cookie, plugins, sessions, config, legacy-import, serve";
 
 const usageFailure = (io: CLIIO, output: OutputPreferences, error: string): CLICommandResult => {
   if (output.format === "text" && !output.jsonOnly) io.stderr(`Error: ${error}`);
@@ -588,6 +603,8 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
   if (command === "hooks") return runHooks(raw.slice(1), options.io, options.runtime);
   if (command === "cookie") return runCookie(raw.slice(1), options.io, options.runtime);
   if (command === "plugins") return runPlugins(raw.slice(1), options.io, options.runtime);
+  if (command === "legacy-import")
+    return runLegacyImport(raw.slice(1), options.io, options.runtime.legacyImport);
   if (command === "serve") return runServe(raw.slice(1), options.io, options.runtime);
   if (command === "sessions") {
     const sessionArgs = raw.slice(1);
@@ -724,6 +741,16 @@ export const makeNodeCLIProviderRuntime = (
       );
       return result.accounts;
     },
+    activate: async ({ executablePath, account }) =>
+      Effect.runPromise(
+        switchClaudeSwapAccount({
+          processes: claudeSwapProcessRunner,
+          files: claudeSwapFiles,
+          executablePath: resolveNodeClaudeSwapExecutablePath(executablePath),
+          accountNumber: claudeSwapActivatableSlot(account),
+          retentionPath: claudeSwapRetentionPath,
+        }),
+      ),
   };
   return {
     providers: PROVIDERS.map(({ id, name, status, isPrimaryProvider }) => ({
@@ -769,6 +796,14 @@ export const makeNodeCLIProviderRuntime = (
     },
     ...(plugins === undefined ? {} : { plugins }),
     claudeSwap,
+    legacyImport: {
+      inspect: (options: NodeLegacyImportOptions) =>
+        Effect.runPromise(inspectNodeLegacyImport(options)),
+      execute: (options: NodeLegacyImportOptions) =>
+        Effect.runPromise(executeNodeLegacyImport(options)),
+      rollback: (options: NodeLegacyImportOptions & { readonly importId: string }) =>
+        Effect.runPromise(rollbackNodeLegacyImport(options)),
+    },
     dispose: () => plugins?.dispose(),
     runHook: async (request) => {
       const input = new TextEncoder().encode(request.input);

@@ -1,11 +1,20 @@
 import type { PersistedCodexBarConfig } from "@codexbar/core";
-import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
+import { CLAUDE_SWAP_SOURCE, type ClaudeSwapAccountSnapshot } from "@codexbar/providers";
+import type { ClaudeSwapAccountSwitchResult } from "@codexbar/platform";
 
 export interface CLIClaudeSwapAdapter {
   readonly list: (request: {
     readonly executablePath: string;
     readonly signal?: AbortSignal;
   }) => Promise<readonly ClaudeSwapAccountSnapshot[]>;
+  /**
+   * The caller must pass one currently listed, eligible source-owned account.
+   * This prevents labels or arbitrary CLI arguments from becoming switch input.
+   */
+  readonly activate?: (request: {
+    readonly executablePath: string;
+    readonly account: ClaudeSwapAccountSnapshot;
+  }) => Promise<ClaudeSwapAccountSwitchResult>;
 }
 
 export type ClaudeSwapCLISettings = {
@@ -83,6 +92,32 @@ export const shouldPresentClaudeSwapAccounts = (
   accounts: readonly ClaudeSwapAccountSnapshot[],
   showSingleAccount: boolean,
 ): boolean => accounts.length > 1 || (showSingleAccount && accounts.length === 1);
+
+export const claudeSwapActivatableSlot = (account: ClaudeSwapAccountSnapshot): number => {
+  if (account.id.source !== CLAUDE_SWAP_SOURCE || !account.canActivate)
+    throw new Error("Claude Swap account is not eligible for activation.");
+  if (!/^[1-9][0-9]*$/u.test(account.id.opaqueId))
+    throw new Error("Claude Swap account has an invalid source-issued slot.");
+  const slot = Number(account.id.opaqueId);
+  if (!Number.isSafeInteger(slot)) throw new Error("Claude Swap account slot is too large.");
+  return slot;
+};
+
+/** Enforces the user opt-in before handing a listed source slot to the host mutation capability. */
+export const activateClaudeSwapAccount = async (
+  adapter: CLIClaudeSwapAdapter | undefined,
+  settings: ClaudeSwapCLISettings,
+  account: ClaudeSwapAccountSnapshot,
+): Promise<ClaudeSwapAccountSwitchResult> => {
+  if (!settings.enabled || settings.executablePath === "")
+    throw new Error("Claude Swap account activation is not enabled.");
+  if (adapter?.activate === undefined)
+    throw new Error("Claude Swap account activation is unavailable in this host.");
+  // Validate before crossing the host boundary; Node repeats the conversion
+  // immediately before constructing its fixed argument vector.
+  claudeSwapActivatableSlot(account);
+  return adapter.activate({ executablePath: settings.executablePath, account });
+};
 
 /** Bounded terminal-safe text, matching the Swift CLI's diagnostic policy. */
 export const sanitizeClaudeSwapCLIText = (raw: string, scalarLimit: number): string => {

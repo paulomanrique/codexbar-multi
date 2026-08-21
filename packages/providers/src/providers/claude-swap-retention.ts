@@ -45,6 +45,10 @@ export type ClaudeSwapAccountRow = {
   readonly number: number;
   /** Display-only sensitive information. Never written to retained records. */
   readonly email: string;
+  /** Display-only workspace name. It is never used as identity or retained data. */
+  readonly organizationName?: string;
+  /** Display-only source alias. It is never used as identity or retained data. */
+  readonly alias?: string;
   readonly isActive: boolean;
   readonly usageStatus: ClaudeSwapUsageStatus;
   readonly fiveHour?: ClaudeSwapUsageWindow;
@@ -67,6 +71,8 @@ export type ClaudeSwapAccountSnapshot = {
   readonly id: ClaudeSwapAccountIdentity;
   readonly provider: "claude";
   readonly displayLabel: string;
+  /** Raw source mailbox, separate from a mutable alias or organization suffix. */
+  readonly accountEmail?: string;
   readonly isActive: boolean;
   readonly canActivate: boolean;
   readonly snapshot?: UsageSnapshot;
@@ -98,13 +104,59 @@ const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
 const isFutureDate = (value: string | undefined, now: Date): value is string =>
   value !== undefined && Number.isFinite(Date.parse(value)) && Date.parse(value) > now.getTime();
 
-const displayLabel = (row: ClaudeSwapAccountRow) =>
-  row.email.trim() === "" ? `Account ${row.number}` : row.email.trim();
+const normalizedEmail = (value: string) => value.trim().toLowerCase();
+const hasAlias = (row: ClaudeSwapAccountRow) => {
+  const alias = row.alias?.trim();
+  return alias !== undefined && alias !== "";
+};
+
+const duplicateEmails = (rows: readonly ClaudeSwapAccountRow[]): ReadonlySet<string> => {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const email = normalizedEmail(row.email);
+    if (email !== "") counts.set(email, (counts.get(email) ?? 0) + 1);
+  }
+  return new Set([...counts].flatMap(([email, count]) => (count > 1 ? [email] : [])));
+};
+
+const displayLabels = (rows: readonly ClaudeSwapAccountRow[]): readonly string[] => {
+  const duplicated = duplicateEmails(rows);
+  const candidate = (row: ClaudeSwapAccountRow) => {
+    const alias = row.alias?.trim();
+    if (hasAlias(row) && alias !== undefined) return alias;
+    const email = row.email.trim();
+    if (email === "") return `Account ${row.number}`;
+    if (!duplicated.has(normalizedEmail(email))) return email;
+    const organization = row.organizationName?.trim();
+    return organization === undefined || organization === ""
+      ? `${email} · Account ${row.number}`
+      : `${email} · ${organization}`;
+  };
+  const candidates = rows.map(candidate);
+  const collisions = new Map<string, number>();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (duplicated.has(normalizedEmail(row.email)) && !hasAlias(row))
+      collisions.set(
+        candidates[index]!.toLowerCase(),
+        (collisions.get(candidates[index]!.toLowerCase()) ?? 0) + 1,
+      );
+  }
+  return rows.map((row, index) => {
+    const label = candidates[index]!;
+    return duplicated.has(normalizedEmail(row.email)) &&
+      !hasAlias(row) &&
+      (collisions.get(label.toLowerCase()) ?? 0) > 1
+      ? `${label} · Account ${row.number}`
+      : label;
+  });
+};
 
 const accountIdentity = (row: ClaudeSwapAccountRow) => ({
   providerId: "claude" as const,
-  accountEmail: displayLabel(row),
+  ...(row.email.trim() === "" ? {} : { accountEmail: row.email.trim() }),
   loginMethod: CLAUDE_SWAP_SOURCE,
+  accountId: `${CLAUDE_SWAP_SOURCE}:${row.number}`,
 });
 
 const rateWindow = (window: ClaudeSwapUsageWindow, windowMinutes: number): RateWindow => ({
@@ -268,7 +320,7 @@ const fingerprintFromAccount = (account: ClaudeSwapAccountSnapshot): string | un
   if (stored?.startsWith(FINGERPRINT_PREFIX) === true)
     return stored.slice(FINGERPRINT_PREFIX.length);
   return claudeSwapAccountFingerprint(
-    account.snapshot?.identity?.accountEmail ?? account.displayLabel,
+    account.snapshot?.identity?.accountEmail ?? account.accountEmail ?? "",
     account.id.opaqueId,
   );
 };
@@ -357,33 +409,34 @@ export const projectClaudeSwapAccounts = (
       previousById.set(account.id.opaqueId, account);
     }
   }
-  return [...list.accounts]
-    .sort(
-      (left, right) => Number(right.isActive) - Number(left.isActive) || left.number - right.number,
-    )
-    .map((row) => {
-      const previous = previousById.get(String(row.number));
-      const projected = projectedUsageSnapshot(row, now);
-      const snapshot =
-        row.usageStatus === "ok"
-          ? projected
-          : row.usageStatus === "unavailable"
-            ? projected === undefined
-              ? retainedAtLimitSnapshot(previous, row, now)
-              : pruneClaudeSwapAtLimitSnapshot(projected, projected.identity, now)
-            : undefined;
-      const error = statusError(row.usageStatus, snapshot, now);
-      return {
-        id: { source: CLAUDE_SWAP_SOURCE, opaqueId: String(row.number) },
-        provider: "claude",
-        displayLabel: displayLabel(row),
-        isActive: row.isActive,
-        canActivate: !row.isActive && canActivate(row.usageStatus),
-        ...(snapshot === undefined ? {} : { snapshot }),
-        ...(error === undefined ? {} : { error }),
-        sourceLabel: CLAUDE_SWAP_SOURCE,
-      };
-    });
+  const ordered = [...list.accounts].sort(
+    (left, right) => Number(right.isActive) - Number(left.isActive) || left.number - right.number,
+  );
+  const labels = displayLabels(ordered);
+  return ordered.map((row, index) => {
+    const previous = previousById.get(String(row.number));
+    const projected = projectedUsageSnapshot(row, now);
+    const snapshot =
+      row.usageStatus === "ok"
+        ? projected
+        : row.usageStatus === "unavailable"
+          ? projected === undefined
+            ? retainedAtLimitSnapshot(previous, row, now)
+            : pruneClaudeSwapAtLimitSnapshot(projected, projected.identity, now)
+          : undefined;
+    const error = statusError(row.usageStatus, snapshot, now);
+    return {
+      id: { source: CLAUDE_SWAP_SOURCE, opaqueId: String(row.number) },
+      provider: "claude",
+      displayLabel: labels[index]!,
+      ...(row.email.trim() === "" ? {} : { accountEmail: row.email.trim() }),
+      isActive: row.isActive,
+      canActivate: !row.isActive && canActivate(row.usageStatus),
+      ...(snapshot === undefined ? {} : { snapshot }),
+      ...(error === undefined ? {} : { error }),
+      sourceLabel: CLAUDE_SWAP_SOURCE,
+    };
+  });
 };
 
 /** Creates privacy-preserving records; callers persist them with their PrivateFileStore. */
@@ -393,7 +446,7 @@ export const retainClaudeSwapUsage = (
   accounts.flatMap((account) => {
     if (account.id.source !== CLAUDE_SWAP_SOURCE || account.snapshot === undefined) return [];
     const accountFingerprint = claudeSwapAccountFingerprint(
-      account.snapshot.identity?.accountEmail ?? account.displayLabel,
+      account.snapshot.identity?.accountEmail ?? account.accountEmail ?? "",
       account.id.opaqueId,
     );
     if (accountFingerprint === undefined) return [];

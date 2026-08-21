@@ -1,11 +1,14 @@
 import type { DashboardSnapshotDTO, ProviderIdentity, UsageSnapshot } from "@codexbar/contracts";
+import type { PersistedCodexBarConfig } from "@codexbar/core";
+import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
+import { claudeSwapCLISettings, sanitizeClaudeSwapCLIText } from "./claude-swap.ts";
 import type { CLICommandResult, CLIExitCode, CLIIO, CLIProviderRuntime } from "./runner.ts";
 
 type IdentityMode = "full" | "redacted";
 
 export interface DashboardCommandRuntime extends Pick<
   CLIProviderRuntime,
-  "providers" | "fetch" | "now"
+  "providers" | "fetch" | "now" | "config" | "claudeSwap"
 > {}
 
 type ParsedDashboard = {
@@ -129,6 +132,47 @@ const windows = (snapshot: UsageSnapshot): DashboardSnapshotDTO["providers"][num
   ];
 };
 
+/** Claude Swap is an explicit Claude-only dashboard enrichment, never a fallback for another provider. */
+const claudeSwapDashboardSettings = (
+  config: PersistedCodexBarConfig | undefined,
+): { readonly executablePath: string } | undefined => {
+  if (config === undefined) return undefined;
+  const claude = config.providers.find((provider) => provider.id === "claude");
+  const settings = claudeSwapCLISettings(config);
+  return claude?.enabled === true && settings.enabled && settings.executablePath !== ""
+    ? { executablePath: settings.executablePath }
+    : undefined;
+};
+
+const claudeSwapAccount = (
+  account: ClaudeSwapAccountSnapshot,
+  identityMode: IdentityMode,
+): NonNullable<DashboardSnapshotDTO["providers"][number]["accounts"]>[number] => {
+  const rawLabel =
+    sanitizeClaudeSwapCLIText(account.displayLabel, 256) || `Account ${account.id.opaqueId}`;
+  const label =
+    identityMode === "redacted"
+      ? rawLabel.replace(/[^\s()<>,;·/]+@[^\s()<>,;·/]+/gu, "<redacted>")
+      : rawLabel;
+  const accountEmail =
+    identityMode === "full" && account.accountEmail?.includes("@") === true
+      ? sanitizeClaudeSwapCLIText(account.accountEmail, 256)
+      : undefined;
+  return {
+    id: `${account.id.source}:${account.id.opaqueId}`,
+    label,
+    active: account.isActive,
+    ...(accountEmail === undefined
+      ? {}
+      : { identity: { providerId: "claude", accountEmail, loginMethod: "claude-swap" } }),
+    windows: account.snapshot === undefined ? [] : windows(account.snapshot),
+    ...(account.error === undefined
+      ? {}
+      : { error: sanitizeClaudeSwapCLIText(account.error, 512) || "claude-swap account failed." }),
+    ...(account.snapshot?.updatedAt === undefined ? {} : { updatedAt: account.snapshot.updatedAt }),
+  };
+};
+
 const fetchWithTimeout = async (
   runtime: DashboardCommandRuntime,
   providerId: Parameters<DashboardCommandRuntime["fetch"]>[0],
@@ -215,6 +259,16 @@ export const runDashboard = async (
     return failure(`Unknown provider: ${parsed.value.provider}`, structured, io);
   const now = runtime.now?.() ?? Date.now();
   const generatedAt = new Date(now).toISOString();
+  let config: PersistedCodexBarConfig | undefined;
+  if (runtime.config !== undefined) {
+    try {
+      config = await runtime.config.load();
+    } catch {
+      // The ambient provider dashboard is still useful when optional local
+      // account enrichment cannot safely inspect its opt-in configuration.
+    }
+  }
+  const claudeSwapSettings = claudeSwapDashboardSettings(config);
   const rows: Array<DashboardSnapshotDTO["providers"][number]> = [];
   let exitCode: CLIExitCode = 0;
   for (const provider of candidates) {
@@ -234,6 +288,25 @@ export const runDashboard = async (
     }
     try {
       const outcome = await fetchWithTimeout(runtime, provider.id, parsed.value.timeoutMs);
+      let accounts: readonly ClaudeSwapAccountSnapshot[] | undefined;
+      let accountsError: string | undefined;
+      if (
+        provider.id === "claude" &&
+        claudeSwapSettings !== undefined &&
+        runtime.claudeSwap !== undefined
+      ) {
+        try {
+          accounts = await runtime.claudeSwap.list({
+            executablePath: claudeSwapSettings.executablePath,
+          });
+        } catch (error) {
+          accountsError =
+            sanitizeClaudeSwapCLIText(
+              error instanceof Error ? error.message : String(error),
+              512,
+            ) || "claude-swap list failed.";
+        }
+      }
       rows.push({
         id: provider.id,
         name: provider.name,
@@ -247,6 +320,14 @@ export const runDashboard = async (
         ...(outcome.snapshot.providerCost === undefined
           ? {}
           : { cost: outcome.snapshot.providerCost }),
+        ...(accounts === undefined
+          ? {}
+          : {
+              accounts: accounts.map((account) =>
+                claudeSwapAccount(account, parsed.value.identity),
+              ),
+            }),
+        ...(accountsError === undefined ? {} : { accountsError }),
         updatedAt: outcome.snapshot.updatedAt,
       });
     } catch (error) {

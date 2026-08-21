@@ -30,6 +30,13 @@ export class ClaudeSwapAdapterError extends Error {
   }
 }
 
+export type ClaudeSwapAccountSwitchResult = {
+  readonly switched: boolean;
+  readonly fromAccountNumber?: number;
+  readonly toAccountNumber: number;
+  readonly reason: string;
+};
+
 const malformed = (details: string) =>
   new ClaudeSwapAdapterError(`claude-swap output is malformed: ${details}`);
 
@@ -117,6 +124,11 @@ const parseRow = (value: unknown): ClaudeSwapAccountRow => {
   return {
     number,
     email: typeof value.email === "string" ? value.email.trim() : "",
+    organizationName:
+      typeof value.organizationName === "string" ? value.organizationName.trim() : "",
+    ...(typeof value.alias === "string" && value.alias.trim() !== ""
+      ? { alias: value.alias.trim() }
+      : {}),
     isActive: value.active,
     usageStatus: usageStatus(value.usageStatus),
     ...(fiveHour === undefined ? {} : { fiveHour }),
@@ -180,6 +192,61 @@ export const parseClaudeSwapAccountList = (bytes: Uint8Array): ClaudeSwapAccount
   };
 };
 
+/** Strict schema-v1 parser for `cswap --switch-to <slot> --json`. */
+export const parseClaudeSwapAccountSwitch = (bytes: Uint8Array): ClaudeSwapAccountSwitchResult => {
+  if (bytes.byteLength > CLAUDE_SWAP_MAX_OUTPUT_BYTES)
+    throw new ClaudeSwapAdapterError(
+      `claude-swap produced ${bytes.byteLength} bytes of output; refusing to parse more than ${CLAUDE_SWAP_MAX_OUTPUT_BYTES}.`,
+    );
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  } catch {
+    throw new ClaudeSwapAdapterError(
+      "claude-swap returned switch output that is not a JSON object.",
+    );
+  }
+  if (!isRecord(raw))
+    throw new ClaudeSwapAdapterError(
+      "claude-swap returned switch output that is not a JSON object.",
+    );
+  if (!Number.isSafeInteger(raw.schemaVersion))
+    throw new ClaudeSwapAdapterError("claude-swap switch output has no schemaVersion field.");
+  if (raw.schemaVersion !== 1)
+    throw new ClaudeSwapAdapterError(
+      `claude-swap switch output uses unsupported schema version ${raw.schemaVersion}; CodexBar supports version 1.`,
+    );
+  if (isRecord(raw.error)) {
+    const type = typeof raw.error.type === "string" ? raw.error.type : "Error";
+    const message = typeof raw.error.message === "string" ? raw.error.message : "unknown error";
+    throw new ClaudeSwapAdapterError(`claude-swap reported ${type}: ${message}`);
+  }
+  if (typeof raw.switched !== "boolean") throw malformed("switch output has no switched flag");
+  if (typeof raw.reason !== "string" || raw.reason.trim() === "")
+    throw malformed("switch output has no reason");
+  const accountNumber = (
+    value: unknown,
+    field: "from" | "to",
+    allowsNull: boolean,
+  ): number | undefined => {
+    if (value === null && allowsNull) return undefined;
+    if (!isRecord(value)) throw malformed(`switch output has no ${field} account`);
+    if (value.number === null && allowsNull) return undefined;
+    if (!positiveSlot(value.number))
+      throw malformed(`switch output ${field} account number is not a positive slot`);
+    return value.number;
+  };
+  const fromAccountNumber = accountNumber(raw.from, "from", true);
+  const toAccountNumber = accountNumber(raw.to, "to", false);
+  if (toAccountNumber === undefined) throw malformed("switch output has no target account slot");
+  return {
+    switched: raw.switched,
+    ...(fromAccountNumber === undefined ? {} : { fromAccountNumber }),
+    toAccountNumber,
+    reason: raw.reason.trim(),
+  };
+};
+
 export const resolveClaudeSwapExecutablePath = (configuredPath: string): string => {
   const trimmed = configuredPath.trim();
   if (trimmed === "")
@@ -210,6 +277,60 @@ export const readClaudeSwapAccountList = (
           : new ClaudeSwapAdapterError("claude-swap returned output that is not a JSON object."),
     });
   });
+
+export interface ClaudeSwapSwitchRequest {
+  readonly processes: ProcessRunnerService;
+  readonly files: Pick<PrivateFileStoreService, "remove">;
+  readonly executablePath: string;
+  /** Source-issued slot from a freshly listed account; no labels or arbitrary arguments are accepted. */
+  readonly accountNumber: number;
+  /** Clears this private retained usage cache before the irreversible mutation. */
+  readonly retentionPath: string;
+}
+
+/**
+ * Runs exactly `cswap --switch-to <positive-slot> --json`.
+ *
+ * Once launched, a credential mutation deliberately becomes uninterruptible:
+ * aborting a caller must not terminate the helper midway through its own
+ * transaction. The preflight cache removal fails closed so no retained usage
+ * from the prior active credential can survive a switch attempt.
+ */
+export const switchClaudeSwapAccount = (
+  request: ClaudeSwapSwitchRequest,
+): Effect.Effect<ClaudeSwapAccountSwitchResult, InfrastructureError | ClaudeSwapAdapterError> =>
+  Effect.uninterruptible(
+    Effect.gen(function* () {
+      if (!positiveSlot(request.accountNumber))
+        return yield* Effect.fail(
+          new ClaudeSwapAdapterError("claude-swap switch target must be a positive numeric slot."),
+        );
+      const command = resolveClaudeSwapExecutablePath(request.executablePath);
+      // This is intentionally before launch. A helper may have committed even
+      // when it later emits malformed output or exits non-zero.
+      yield* request.files.remove(request.retentionPath);
+      const result = yield* request.processes.run({
+        command,
+        args: ["--switch-to", String(request.accountNumber), "--json"],
+      });
+      const parsed = yield* Effect.try({
+        try: () => parseClaudeSwapAccountSwitch(result.stdout),
+        catch: (cause) =>
+          cause instanceof ClaudeSwapAdapterError
+            ? cause
+            : new ClaudeSwapAdapterError(
+                "claude-swap returned switch output that is not a JSON object.",
+              ),
+      });
+      if (parsed.toAccountNumber !== request.accountNumber)
+        return yield* Effect.fail(
+          new ClaudeSwapAdapterError(
+            `claude-swap reported account slot ${parsed.toAccountNumber} after CodexBar requested slot ${request.accountNumber}.`,
+          ),
+        );
+      return parsed;
+    }),
+  );
 
 export interface ClaudeSwapRefreshRequest {
   readonly processes: ProcessRunnerService;

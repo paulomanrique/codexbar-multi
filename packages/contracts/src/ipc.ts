@@ -25,6 +25,22 @@ export const DashboardWindowDTO = Schema.Struct({
 });
 export type DashboardWindowDTO = Schema.Schema.Type<typeof DashboardWindowDTO>;
 
+/**
+ * A local multi-account entry attached only to its owning provider row.
+ * `id` is source-issued and opaque: consumers must neither derive it from nor
+ * use it as an account identity such as an email address.
+ */
+export const DashboardAccountDTO = Schema.Struct({
+  id: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(160))),
+  label: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
+  active: Schema.Boolean,
+  identity: Schema.optional(ProviderIdentity),
+  windows: Schema.Array(DashboardWindowDTO).pipe(Schema.check(Schema.isMaxLength(32))),
+  error: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(512)))),
+  updatedAt: Schema.optional(ISODateString),
+});
+export type DashboardAccountDTO = Schema.Schema.Type<typeof DashboardAccountDTO>;
+
 export const DashboardProviderDTO = Schema.Struct({
   id: ProviderInstanceId,
   name: Schema.String,
@@ -38,6 +54,12 @@ export const DashboardProviderDTO = Schema.Struct({
   cost: Schema.optional(ProviderCost),
   error: Schema.optional(ProviderError),
   updatedAt: Schema.optional(ISODateString),
+  /** Additive, provider-siloed local-account data (currently Claude Swap). */
+  accounts: Schema.optional(
+    Schema.Array(DashboardAccountDTO).pipe(Schema.check(Schema.isMaxLength(64))),
+  ),
+  /** A local-account adapter failure that does not replace the ambient provider row. */
+  accountsError: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(512)))),
 });
 export type DashboardProviderDTO = Schema.Schema.Type<typeof DashboardProviderDTO>;
 
