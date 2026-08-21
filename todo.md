@@ -28,7 +28,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Add bounded incremental Codex/Claude JSONL scanners with resumable cursors, source-identity checks, provenance, and fail-closed counter regressions.
   - [x] Persist xAI vendor-metered daily spend with atomic range replacement, exact/estimated coverage, confirmed-empty handling, and unavailable-source retention.
   - [x] Commit each local scanner cursor and its rows in one SQLite transaction, with checkpoint CAS across concurrent desktop/CLI processes and source-scoped reset.
-  - [ ] Complete recursive log inventory, fork lineage/issue #2037, priority metadata, and scanner cache parity.
+  - [x] Connect bounded recursive Codex/Claude inventory to `cost --refresh`, with SIGINT/SIGTERM cancellation and explicit partial-coverage output.
+  - [ ] Complete fork lineage/issue #2037, priority metadata, and scanner cache parity.
 
 ## Milestone 2 — first vertical slice
 
@@ -88,6 +89,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.
+  - [x] Port Grok's bounded local `signals.json` session scanner and pure aggregation; RPC/status composition remains pending.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate

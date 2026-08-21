@@ -177,6 +177,7 @@ providers:
         - TestsLinux/*OpenCodeGo*Tests.swift
       tsGlobs:
         - packages/providers/test/web-cookie-wave-a.test.ts
+        - packages/platform/test/opencodego-multistrategy.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenCodeGo/**/*
     tsPaths:
@@ -185,9 +186,10 @@ providers:
         - packages/providers/src/providers/opencodego.ts
     tsTestGlobs:
       - packages/providers/test/web-cookie-wave-a.test.ts
+      - packages/platform/test/opencodego-multistrategy.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 0d7af47ec88256b530cbf280287cfb4a9ab67656
   - id: alibaba
     swiftGlobs:
       - Sources/CodexBar/Providers/Alibaba/**/*.swift
@@ -1106,17 +1108,26 @@ providers:
         - TestsLinux/*Grok*Tests.swift
       tsGlobs:
         - packages/providers/test/local-cli-oauth-providers.test.ts
+        - packages/providers/test/grok-local-session.test.ts
+        - packages/platform/test/node-grok-local-session.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Grok/**/*
     tsPaths:
-      expected: [packages/providers/src/providers/grok.ts]
+      expected:
+        - packages/providers/src/providers/grok.ts
+        - packages/providers/src/providers/grok-local-session.ts
+        - packages/platform/src/node-grok-local-session.ts
       real:
         - packages/providers/src/providers/grok.ts
+        - packages/providers/src/providers/grok-local-session.ts
+        - packages/platform/src/node-grok-local-session.ts
     tsTestGlobs:
       - packages/providers/test/local-cli-oauth-providers.test.ts
+      - packages/providers/test/grok-local-session.test.ts
+      - packages/platform/test/node-grok-local-session.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 3bfbffdcea58c1314d91724c0c35e227bc8a0733
   - id: groq
     swiftGlobs:
       - Sources/CodexBar/Providers/Groq/**/*.swift
