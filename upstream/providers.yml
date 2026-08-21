@@ -493,17 +493,22 @@ providers:
         - TestsLinux/*Kiro*Tests.swift
       tsGlobs:
         - packages/providers/test/kilo-kiro-augment-parity.test.ts
+        - packages/providers/test/kiro-usage-limits.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Kiro/**/*
     tsPaths:
-      expected: [packages/providers/src/providers/kiro.ts]
+      expected:
+        - packages/providers/src/providers/kiro.ts
+        - packages/providers/src/providers/kiro-usage-limits.ts
       real:
         - packages/providers/src/providers/kiro.ts
+        - packages/providers/src/providers/kiro-usage-limits.ts
     tsTestGlobs:
       - packages/providers/test/kilo-kiro-augment-parity.test.ts
+      - packages/providers/test/kiro-usage-limits.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 5691a02f804b3789349c09491d5d8c3869552ca8
   - id: vertexai
     swiftGlobs:
       - Sources/CodexBar/Providers/VertexAI/**/*.swift
@@ -663,6 +668,7 @@ providers:
         - TestsLinux/*Synthetic*Tests.swift
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
+        - packages/providers/test/xai-daily-spend.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Synthetic/**/*
     tsPaths:
@@ -671,9 +677,10 @@ providers:
         - packages/providers/src/providers/synthetic.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/xai-daily-spend.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 3bfbffdce
   - id: openrouter
     swiftGlobs:
       - Sources/CodexBar/Providers/OpenRouter/**/*.swift
@@ -1399,6 +1406,7 @@ providers:
   - id: xai
     swiftGlobs:
       - Sources/CodexBar/Providers/XAI/**/*.swift
+      - Sources/CodexBarCore/Providers/XAI/**/*.swift
       - Sources/CodexBarCore/Resources/Plugins/xai.js
     tests:
       swiftGlobs:
@@ -1406,6 +1414,7 @@ providers:
         - TestsLinux/*XAI*Tests.swift
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
+        - packages/providers/test/xai-daily-spend.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/XAI/**/*
     tsPaths:
@@ -1414,9 +1423,10 @@ providers:
         - packages/providers/src/providers/xai.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/xai-daily-spend.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 3bfbffdcea58c1314d91724c0c35e227bc8a0733
   - id: notion
     swiftGlobs:
       - Sources/CodexBar/Providers/Notion/**/*.swift

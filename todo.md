@@ -26,6 +26,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Port full cost scanning and history retention behavior.
   - [x] Add atomic SQLite pruning for history and cost rows with worker coverage.
   - [x] Add bounded incremental Codex/Claude JSONL scanners with resumable cursors, source-identity checks, provenance, and fail-closed counter regressions.
+  - [x] Persist xAI vendor-metered daily spend with atomic range replacement, exact/estimated coverage, confirmed-empty handling, and unavailable-source retention.
   - [ ] Complete recursive log inventory, fork lineage/issue #2037, priority metadata, scanner checkpoints/cache, and atomic cursor-plus-row persistence parity.
 
 ## Milestone 2 — first vertical slice
@@ -85,6 +86,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial).
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
+  - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate
@@ -92,6 +94,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Port tray/settings/accounts/history/cost/notifications/autostart/shortcuts/privacy UI.
   - [x] Add accessible provider cards, explicit refresh, persisted history/cost views, and an honest read-only settings shell.
   - [x] Add schema-validated provider enablement/source mutations with serialized atomic persistence.
+  - [x] Publish the provider-siloed spend overview/dashboard with xAI coverage state and no internal source IDs crossing IPC.
   - [ ] Add account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
 - [ ] Port all 23 languages, pluralization, RTL, and visual tests.
   - [x] Establish the 23-locale catalog, current renderer messages, plural rules, and RTL direction.

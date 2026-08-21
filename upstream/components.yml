@@ -144,25 +144,36 @@ components:
     tsPaths:
       - packages/core/src/services.ts
       - packages/core/src/cost-jsonl.ts
+      - packages/core/src/daily-spend-ingestion.ts
+      - packages/core/src/spend-publication.ts
+      - packages/core/src/spend-dashboard.ts
       - packages/contracts/src/usage.ts
+      - packages/contracts/src/ipc.ts
       - packages/platform/src/node-cost-jsonl.ts
       - packages/platform/src/**/*.ts
       - apps/desktop/src/main/history-api.ts
       - apps/desktop/src/main/overview.ts
+      - apps/desktop/src/main/spend-overview.ts
+      - apps/desktop/src/renderer/spend-dashboard.tsx
     tests:
       - Tests/CodexBarTests/CostUsage*Tests.swift
       - Tests/CodexBarTests/SpendDashboard*Tests.swift
       - Tests/CodexBarTests/Issue2037*Tests.swift
       - packages/platform/test/node-persistence*.test.ts
       - packages/core/test/cost-jsonl.test.ts
+      - packages/core/test/daily-spend-ingestion.test.ts
+      - packages/core/test/spend-publication.test.ts
+      - packages/core/test/spend-dashboard.test.ts
       - packages/platform/test/node-cost-jsonl.test.ts
       - apps/desktop/test/history-api.test.ts
+      - apps/desktop/test/spend-overview.test.ts
+      - apps/desktop/test/spend-dashboard.test.tsx
     fixtures:
       - Tests/CodexBarTests/Fixtures/CostUsage/**/*.json
       - Tests/CodexBarTests/Fixtures/CostUsage/**/*.jsonl
       - Tests/CodexBarTests/Fixtures/codex-historical-usage-real-legacy.jsonl
     status: partial
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 3bfbffdcea58c1314d91724c0c35e227bc8a0733
 
   - id: plugins
     description: Untrusted QuickJS plugin manifests, host bridge and snapshot mapping.
