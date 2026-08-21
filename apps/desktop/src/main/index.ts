@@ -93,6 +93,7 @@ import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./b
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
 import { DesktopClaudeSwapController } from "./claude-swap.js";
+import { DesktopAdaptiveRefreshController } from "./adaptive-refresh.js";
 import { makeDesktopSessionQuotaNotificationAdapter } from "./session-quota-notifications.js";
 import {
   sessionQuotaNotificationSettingsProjection,
@@ -133,6 +134,7 @@ let spendPublisher: DesktopSpendPublisher | undefined;
 let claudeSwap: DesktopClaudeSwapController | undefined;
 let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | undefined;
 let legacyImport: DesktopLegacyImportController | undefined;
+let adaptiveRefresh: DesktopAdaptiveRefreshController | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
@@ -234,6 +236,40 @@ const publishSessionQuotaNotification = (
     // Native permission/back-end failures never fail an otherwise successful
     // provider refresh and are never sent to renderer IPC.
   }
+};
+
+/**
+ * Main-process-only background refresh. Failures stay provider-local and do
+ * not surface their text through a renderer, console, or adaptive scheduler.
+ */
+const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise<void> => {
+  await Promise.all(
+    overviewProviders()
+      .filter((provider) => provider.enabled)
+      .map(async (provider) => {
+        try {
+          // Local Grok tokens are independent of the remote billing session;
+          // retain that source even when the following web refresh fails.
+          if (provider.id === "grok") await activeGrokLocalTokenScanner().refresh(signal);
+          const outcome = await Effect.runPromise(
+            refreshProviderAndPersist(activeProviderRuntime(), provider.id, {
+              sourceMode: provider.source,
+              includeCredits: false,
+            }).pipe(
+              Effect.provideService(Clock, providerClock),
+              Effect.provideService(HistoryRepository, activePersistence().history),
+              Effect.provideService(CostUsageRepository, activePersistence().costs),
+            ),
+            { signal },
+          );
+          if (!signal.aborted) publishSessionQuotaNotification(provider.id, outcome.snapshot);
+        } catch {
+          // The provider refresh path owns classified errors. Avoid retaining
+          // transport text here because it can contain sensitive context.
+          if (signal.aborted) throw new Error("Adaptive refresh was cancelled.");
+        }
+      }),
+  );
 };
 
 /**
@@ -432,6 +468,31 @@ void app
       desktopConfig = makeDefaultCodexBarConfig();
       await Effect.runPromise(configRepository.save(desktopConfig));
     }
+    adaptiveRefresh = new DesktopAdaptiveRefreshController({
+      now: () => new Date(),
+      sleep: (milliseconds, signal) =>
+        new Promise<void>((resolve, reject) => {
+          const cancel = () => {
+            clearTimeout(timer);
+            reject(new Error("Adaptive refresh was cancelled."));
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener("abort", cancel);
+            resolve();
+          }, milliseconds);
+          signal.addEventListener("abort", cancel, { once: true });
+        }),
+      refresh: refreshEnabledProvidersInBackground,
+      // Electron does not expose the OS low-power-mode state or thermal
+      // pressure consistently across all three targets. Keep both neutral
+      // until a dedicated platform adapter can supply the real semantics;
+      // being on battery alone is not equivalent to low-power mode.
+      signals: () => ({
+        lowPowerModeEnabled: false,
+        thermalPressure: "nominal",
+      }),
+    });
+    adaptiveRefresh.start();
     claudeSwap = new DesktopClaudeSwapController({
       config: () => desktopConfig,
       processes: makeNodeProcessRunner({ environment: claudeSwapProcessEnvironment(process.env) }),
@@ -609,6 +670,7 @@ void app
     ipcMain.handle(DesktopChannels.refreshProvider, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         const request = await decodeRefresh(input);
+        adaptiveRefresh?.noteMenuOpen();
         // Persist local Grok token activity before the remote billing request:
         // a web/session failure must not erase independently readable logs.
         if (request.provider === "grok") {
@@ -784,6 +846,7 @@ void app
     tray = new Tray(trayImage());
     tray.setToolTip("CodexBar Multi");
     tray.on("click", () => {
+      adaptiveRefresh?.noteMenuOpen();
       if (window === undefined) window = createWindow();
       else if (window.isVisible()) window.hide();
       else window.show();
@@ -795,6 +858,8 @@ void app
   });
 
 app.on("before-quit", (event) => {
+  adaptiveRefresh?.stop();
+  adaptiveRefresh = undefined;
   legacyImport?.cancel();
   legacyImport = undefined;
   spendPublisher?.cancel();
