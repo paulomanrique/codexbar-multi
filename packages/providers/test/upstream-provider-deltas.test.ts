@@ -145,8 +145,129 @@ describe("post-0.54 upstream provider deltas", () => {
     );
     expect(JSON.stringify(result)).not.toContain("Account balance");
     expect(zai.descriptor.endpoints).toContainEqual({
+      setting: "Z_AI_BALANCE_URL",
+      policy: "https",
+    });
+    expect(zai.descriptor.endpoints).toContainEqual({
       setting: "Z_AI_BALANCE_ENDPOINT",
       policy: "https",
     });
+  });
+
+  it("falls back from a null available balance and omits null secondary amounts", async () => {
+    const result = await zai.fetchUsage(
+      context(
+        (request) =>
+          request.url.pathname.endsWith("quota/limit")
+            ? quotaResponse
+            : request.url.hostname === "www.bigmodel.cn"
+              ? response({
+                  success: true,
+                  data: {
+                    balance: 42.5,
+                    availableBalance: null,
+                    rechargeAmount: null,
+                    giveAmount: 5,
+                    totalSpendAmount: null,
+                  },
+                })
+              : response({}, 503),
+        { Z_AI_REGION: "bigmodel-cn" },
+        [],
+      ),
+    );
+
+    const details = result.details as readonly { readonly rows: readonly unknown[] }[];
+    expect(details[0]?.rows).toContainEqual({
+      label: "Account balance",
+      value: "¥42.50",
+      secondaryValue: "granted ¥5.00",
+    });
+  });
+
+  it("rejects an insecure balance override before sending the API key", async () => {
+    const requests: Request[] = [];
+    await expect(
+      zai.fetchUsage(
+        context(
+          () => quotaResponse,
+          { Z_AI_REGION: "bigmodel-cn", Z_AI_BALANCE_ENDPOINT: "http://attacker.test/report" },
+          requests,
+        ),
+      ),
+    ).rejects.toThrow("Z_AI_BALANCE_ENDPOINT must use HTTPS");
+    expect(requests).toHaveLength(0);
+  });
+
+  it("rejects a known API host override from the other region", async () => {
+    await expect(
+      zai.fetchUsage(
+        context(
+          () => quotaResponse,
+          { Z_AI_REGION: "global", Z_AI_QUOTA_ENDPOINT: "https://open.bigmodel.cn/quota" },
+          [],
+        ),
+      ),
+    ).rejects.toThrow("does not match the selected global region");
+  });
+
+  it("keeps quota intact when the optional balance request fails", async () => {
+    const result = await zai.fetchUsage(
+      context(
+        (request) =>
+          request.url.pathname.endsWith("quota/limit")
+            ? quotaResponse
+            : response({}, request.url.hostname === "www.bigmodel.cn" ? 500 : 503),
+        { Z_AI_REGION: "bigmodel-cn" },
+        [],
+      ),
+    );
+    expect(result.primary).toMatchObject({ usedPercent: 20 });
+    const details = result.details as readonly { readonly rows: readonly unknown[] }[];
+    expect(details[0]?.rows).not.toContainEqual(
+      expect.objectContaining({ label: "Account balance" }),
+    );
+  });
+
+  it("uses the public balance URL alias and prefers it over the internal endpoint", async () => {
+    const requests: Request[] = [];
+    await zai.fetchUsage(
+      context(
+        (request) =>
+          request.url.pathname.endsWith("quota/limit")
+            ? quotaResponse
+            : response({ success: true, data: { availableBalance: 7 } }),
+        {
+          Z_AI_REGION: "bigmodel-cn",
+          Z_AI_BALANCE_URL: "https://public-balance.test/report",
+          Z_AI_BALANCE_ENDPOINT: "https://internal-balance.test/ignored",
+        },
+        requests,
+      ),
+    );
+    expect(
+      requests.some((request) => request.url.href === "https://public-balance.test/report"),
+    ).toBe(true);
+    expect(
+      requests.some((request) => request.url.href === "https://internal-balance.test/ignored"),
+    ).toBe(false);
+  });
+
+  it("rejects an invalid public alias before falling back to the internal endpoint", async () => {
+    const requests: Request[] = [];
+    await expect(
+      zai.fetchUsage(
+        context(
+          () => quotaResponse,
+          {
+            Z_AI_REGION: "bigmodel-cn",
+            Z_AI_BALANCE_URL: "http://attacker.test/report",
+            Z_AI_BALANCE_ENDPOINT: "https://internal-balance.test/report",
+          },
+          requests,
+        ),
+      ),
+    ).rejects.toThrow("Z_AI_BALANCE_URL must use HTTPS");
+    expect(requests).toHaveLength(0);
   });
 });

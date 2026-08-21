@@ -5,6 +5,66 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
+
+type ZaiRegion = "global" | "bigmodel-cn";
+
+const clean = (value: string | undefined): string | undefined => {
+  let result = value?.trim();
+  if (!result) return undefined;
+  if (
+    (result.startsWith('"') && result.endsWith('"')) ||
+    (result.startsWith("'") && result.endsWith("'"))
+  ) {
+    result = result.slice(1, -1).trim();
+  }
+  return result || undefined;
+};
+
+/** Mirrors Swift's ProviderEndpointOverrideValidator.normalizedHTTPSURL. */
+const normalizedHTTPSURL = (raw: string | undefined): URL | undefined => {
+  const value = clean(raw);
+  if (
+    !value ||
+    [...value].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return /\s/u.test(character) || codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  )
+    return undefined;
+  const candidate = /^[A-Za-z][A-Za-z\d+.-]*:\/\//u.test(value) ? value : `https://${value}`;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password)
+      return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+};
+
+const endpointOverride = (
+  ctx: ProviderContext,
+  key: string,
+  region: ZaiRegion,
+  knownRegionHosts: readonly string[],
+): string | undefined => {
+  const raw = clean(ctx.settings.get(key));
+  if (!raw) return undefined;
+  const url = normalizedHTTPSURL(raw);
+  if (!url)
+    throw ctx.fail.apiFailure(`z.ai endpoint override ${key} must use HTTPS or a bare host.`);
+  const host = url.hostname.toLowerCase();
+  if (knownRegionHosts.includes(host)) {
+    const expectedHost = region === "global" ? "api.z.ai" : "open.bigmodel.cn";
+    if (host !== expectedHost) {
+      throw ctx.fail.apiFailure(
+        `z.ai endpoint override ${key} does not match the selected ${region} region.`,
+      );
+    }
+  }
+  return url.href;
+};
+
 const definition: ProviderDefinition = {
   id: "zai",
   name: "z.ai / GLM",
@@ -14,6 +74,7 @@ const definition: ProviderDefinition = {
     "https://www.bigmodel.cn",
     { setting: "Z_AI_QUOTA_ENDPOINT", policy: "https" },
     { setting: "Z_AI_MODEL_USAGE_ENDPOINT", policy: "https" },
+    { setting: "Z_AI_BALANCE_URL", policy: "https" },
     { setting: "Z_AI_BALANCE_ENDPOINT", policy: "https" },
   ],
   auth: { type: "bearer", secret: "Z_AI_API_KEY" },
@@ -25,11 +86,12 @@ const definition: ProviderDefinition = {
     { key: "Z_AI_PROJECT", title: "Project", type: "plain" },
     { key: "Z_AI_QUOTA_ENDPOINT", title: "Quota endpoint", type: "plain" },
     { key: "Z_AI_MODEL_USAGE_ENDPOINT", title: "Model usage endpoint", type: "plain" },
+    { key: "Z_AI_BALANCE_URL", title: "Balance URL", type: "plain" },
     { key: "Z_AI_BALANCE_ENDPOINT", title: "Balance endpoint", type: "plain" },
   ],
 
   fetchUsage: async (ctx: ProviderContext) => {
-    const region: any = ctx.settings.get("Z_AI_REGION") || "global";
+    const region: ZaiRegion = (ctx.settings.get("Z_AI_REGION") || "global") as ZaiRegion;
     const scope: any = ctx.settings.get("Z_AI_USAGE_SCOPE") || "personal";
     const organization: any = ctx.settings.get("Z_AI_ORGANIZATION");
     const project: any = ctx.settings.get("Z_AI_PROJECT");
@@ -38,10 +100,23 @@ const definition: ProviderDefinition = {
     if (scope === "team" && (!organization || !project))
       throw new Error("z.ai team scope needs organization and project");
     const base: any = region === "bigmodel-cn" ? "https://open.bigmodel.cn" : "https://api.z.ai";
+    const knownRegionHosts = ["api.z.ai", "open.bigmodel.cn"];
     const quotaEndpoint: any =
-      ctx.settings.get("Z_AI_QUOTA_ENDPOINT") || `${base}/api/monitor/usage/quota/limit`;
+      endpointOverride(ctx, "Z_AI_QUOTA_ENDPOINT", region, knownRegionHosts) ||
+      `${base}/api/monitor/usage/quota/limit`;
     const modelUsageEndpoint: any =
-      ctx.settings.get("Z_AI_MODEL_USAGE_ENDPOINT") || `${base}/api/monitor/usage/model-usage`;
+      // Model usage is independently proxyable in the plugin contract; only the
+      // region-selecting quota endpoint participates in known-host matching.
+      endpointOverride(ctx, "Z_AI_MODEL_USAGE_ENDPOINT", region, []) ||
+      `${base}/api/monitor/usage/model-usage`;
+    // Validate this even for the global region, matching the Swift settings reader;
+    // the region gate below still ensures global never performs the optional request.
+    // Z_AI_BALANCE_URL is the public Swift/environment key. The endpoint name is
+    // retained for plugin/runtime compatibility, but the public key wins whenever
+    // both are present (including when the public value is invalid).
+    const configuredBalanceEndpoint =
+      endpointOverride(ctx, "Z_AI_BALANCE_URL", region, []) ??
+      endpointOverride(ctx, "Z_AI_BALANCE_ENDPOINT", region, []);
     const headers: any =
       scope === "team"
         ? { "Bigmodel-Organization": organization, "Bigmodel-Project": project }
@@ -256,7 +331,7 @@ const definition: ProviderDefinition = {
     if (region === "bigmodel-cn") {
       try {
         const balanceEndpoint: any =
-          ctx.settings.get("Z_AI_BALANCE_ENDPOINT") ||
+          configuredBalanceEndpoint ||
           "https://www.bigmodel.cn/api/biz/account/query-customer-account-report";
         const balanceResponse: any = await ctx.http.getJSON(balanceEndpoint, {
           timeoutSeconds: 5,
