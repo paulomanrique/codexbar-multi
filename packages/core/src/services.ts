@@ -265,8 +265,65 @@ export interface DailyCostUsageSourceState {
   readonly coverage: "exact" | "estimated";
 }
 
+/**
+ * One durable local-log scanner checkpoint and the rows it made billable.
+ *
+ * `sourceKey` identifies one immutable-at-a-time log source, while
+ * `checkpointJson` remains host-owned so the portable core does not learn
+ * about files, inodes, or a particular scanner implementation. A reset is
+ * required when a source identity changes: old rows for that source are
+ * replaced in the same transaction as its new checkpoint. The expected
+ * checkpoint makes concurrent desktop/CLI commits compare-and-swap rather
+ * than duplicating a scanned byte range.
+ */
+export interface LocalCostUsageScanCommit {
+  readonly providerId: ProviderId;
+  readonly sourceKey: string;
+  /**
+   * Exact checkpoint observed before scanning. Its absence means this commit
+   * may create a checkpoint only when the source has no prior checkpoint.
+   */
+  readonly expectedCheckpointJson?: string;
+  readonly checkpointJson: string;
+  readonly records: ReadonlyArray<CostUsageRecord>;
+  readonly reset?: boolean;
+}
+
+/** Bound durable scanner state before it reaches a platform persistence layer. */
+export const LOCAL_COST_USAGE_SCAN_CHECKPOINT_MAX_BYTES = 1_048_576;
+
+/** Rejects malformed or oversized host-owned checkpoint payloads consistently. */
+export const assertLocalCostUsageScanCheckpointJson = (checkpointJson: string): void => {
+  const byteLength = new TextEncoder().encode(checkpointJson).byteLength;
+  if (byteLength === 0 || byteLength > LOCAL_COST_USAGE_SCAN_CHECKPOINT_MAX_BYTES) {
+    throw new Error("local cost usage scan checkpoint is invalid");
+  }
+  let checkpoint: unknown;
+  try {
+    checkpoint = JSON.parse(checkpointJson);
+  } catch {
+    throw new Error("local cost usage scan checkpoint is invalid");
+  }
+  if (typeof checkpoint !== "object" || checkpoint === null || Array.isArray(checkpoint)) {
+    throw new Error("local cost usage scan checkpoint is invalid");
+  }
+};
+
 export interface CostUsageRepositoryService {
   readonly append: (record: CostUsageRecord) => Effect.Effect<void, InfrastructureError>;
+  /**
+   * Commits newly billable local-log rows and the cursor that covers them as
+   * one unit. A crash therefore leaves either both the previous checkpoint
+   * and rows, or both the next checkpoint and rows.
+   */
+  readonly commitLocalScan: (
+    commit: LocalCostUsageScanCommit,
+  ) => Effect.Effect<void, InfrastructureError>;
+  /** Main-process-only checkpoint; it never crosses the renderer bridge. */
+  readonly localScanCheckpoint: (
+    providerId: ProviderId,
+    sourceKey: string,
+  ) => Effect.Effect<string | undefined, InfrastructureError>;
   /**
    * Replaces one vendor's daily ledger atomically. This is deliberately
    * separate from append-only local/session accounting, whose rows may share

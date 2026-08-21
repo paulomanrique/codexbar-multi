@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  assertLocalCostUsageScanCheckpointJson,
+  LOCAL_COST_USAGE_SCAN_CHECKPOINT_MAX_BYTES,
   parseClaudeCostJsonl,
   parseCodexCostJsonl,
   scanCostJsonlChunks,
@@ -14,6 +16,16 @@ async function* chunks(...parts: string[]): AsyncIterable<Uint8Array> {
 }
 
 describe("cost JSONL scanner (Swift parity)", () => {
+  it("bounds portable scanner checkpoints by UTF-8 bytes", () => {
+    const valid = JSON.stringify({
+      state: "x".repeat(LOCAL_COST_USAGE_SCAN_CHECKPOINT_MAX_BYTES - 20),
+    });
+    expect(() => assertLocalCostUsageScanCheckpointJson(valid)).not.toThrow();
+    expect(() =>
+      assertLocalCostUsageScanCheckpointJson(`{"state":"${"é".repeat(600_000)}"}`),
+    ).toThrow("local cost usage scan checkpoint is invalid");
+  });
+
   it("commits only complete lines and replays an appended tail without losing it", async () => {
     const lines: string[] = [];
     const first = await scanCostJsonlChunks(chunks('{"one":1}\n{"two":'), {

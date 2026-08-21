@@ -12,6 +12,7 @@ import {
   type CostUsageRepositoryService,
   type DailyCostUsageReplacement,
   type DailyCostUsageSourceState,
+  type LocalCostUsageScanCommit,
   type HistoryRecord,
   type HistoryRepositoryService,
   InfrastructureError,
@@ -19,6 +20,7 @@ import {
   type UsageRecordRetentionResult,
   type UsageRecordRetentionService,
   assertUsageRecordRetentionRequest,
+  assertLocalCostUsageScanCheckpointJson,
 } from "@codexbar/core";
 import { ProviderId, ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { makeNodePrivateFileStore } from "./node.ts";
@@ -28,6 +30,14 @@ import {
 } from "./node-private-path-security.ts";
 
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+
+/** A stale scanner cursor lost its compare-and-swap race; reload and retry. */
+export class CostUsageScanCheckpointConflictError extends Error {
+  constructor(providerId: string, sourceKey: string) {
+    super(`Local cost usage scan checkpoint changed: ${providerId}/${sourceKey}`);
+    this.name = "CostUsageScanCheckpointConflictError";
+  }
+}
 
 /** A monotonically-versioned schema change. Destructive steps trigger a SQLite backup first. */
 export interface NodeSqliteMigration {
@@ -77,6 +87,17 @@ export const NODE_PERSISTENCE_MIGRATIONS: readonly NodeSqliteMigration[] = [
         source_key TEXT NOT NULL,
         availability TEXT NOT NULL CHECK (availability IN ('available', 'unavailable')),
         coverage TEXT NOT NULL CHECK (coverage IN ('exact', 'estimated')),
+        PRIMARY KEY (provider_id, source_key)
+      );
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE cost_usage_scan_checkpoints (
+        provider_id TEXT NOT NULL REFERENCES providers(provider_id),
+        source_key TEXT NOT NULL,
+        checkpoint_json TEXT NOT NULL CHECK (json_valid(checkpoint_json)),
         PRIMARY KEY (provider_id, source_key)
       );
     `,
@@ -402,6 +423,60 @@ const makeRepositories = (database: DatabaseSync, reader: DatabaseSync): NodeSql
             );
         });
       }),
+    commitLocalScan: (commit) =>
+      queuedSqlite(queue, "commit local cost usage scan", () => {
+        assertLocalCostUsageScanCommit(commit);
+        return inImmediateTransactionWithRetry(database, () => {
+          const existing = database
+            .prepare(
+              "SELECT checkpoint_json FROM cost_usage_scan_checkpoints WHERE provider_id = ? AND source_key = ?",
+            )
+            .get(commit.providerId, commit.sourceKey) as Record<string, unknown> | undefined;
+          const currentCheckpoint =
+            existing === undefined ? undefined : readString(existing, "checkpoint_json");
+          if (currentCheckpoint !== commit.expectedCheckpointJson) {
+            throw new CostUsageScanCheckpointConflictError(commit.providerId, commit.sourceKey);
+          }
+          ensureProvider(database, commit.providerId);
+          if (commit.reset) {
+            database
+              .prepare("DELETE FROM cost_usage_records WHERE provider_id = ? AND source_key = ?")
+              .run(commit.providerId, commit.sourceKey);
+          }
+          const insert = database.prepare(
+            "INSERT INTO cost_usage_records (provider_id, recorded_at, input_tokens, output_tokens, cost_usd, source_key) VALUES (?, ?, ?, ?, ?, ?)",
+          );
+          for (const record of commit.records) {
+            insert.run(
+              record.providerId,
+              record.recordedAt,
+              record.inputTokens,
+              record.outputTokens,
+              record.costUsd,
+              commit.sourceKey,
+            );
+          }
+          database
+            .prepare(
+              `INSERT INTO cost_usage_scan_checkpoints (provider_id, source_key, checkpoint_json)
+               VALUES (?, ?, ?)
+               ON CONFLICT(provider_id, source_key) DO UPDATE SET
+                 checkpoint_json = excluded.checkpoint_json`,
+            )
+            .run(commit.providerId, commit.sourceKey, commit.checkpointJson);
+        });
+      }),
+    localScanCheckpoint: (providerId, sourceKey) =>
+      readSqlite("get local cost usage scan checkpoint", () => {
+        assertProviderId(providerId);
+        assertDailySourceKey(sourceKey);
+        const row = reader
+          .prepare(
+            "SELECT checkpoint_json FROM cost_usage_scan_checkpoints WHERE provider_id = ? AND source_key = ?",
+          )
+          .get(providerId, sourceKey) as Record<string, unknown> | undefined;
+        return row === undefined ? undefined : readString(row, "checkpoint_json");
+      }),
     replaceDaily: (replacement) =>
       queuedSqlite(queue, "replace daily cost usage records", () => {
         assertDailyCostUsageReplacement(replacement);
@@ -694,6 +769,22 @@ const assertDailyCostUsageReplacement = (replacement: DailyCostUsageReplacement)
     }
     if (days.has(record.recordedAt)) throw new Error("daily cost usage contains duplicate days");
     days.add(record.recordedAt);
+  }
+};
+
+const assertLocalCostUsageScanCommit = (commit: LocalCostUsageScanCommit): void => {
+  assertProviderId(commit.providerId);
+  assertDailySourceKey(commit.sourceKey);
+  assertLocalCostUsageScanCheckpointJson(commit.checkpointJson);
+  if (commit.expectedCheckpointJson !== undefined) {
+    assertLocalCostUsageScanCheckpointJson(commit.expectedCheckpointJson);
+  }
+  if (commit.records.length > 50_000) throw new Error("local cost usage scan has too many records");
+  for (const record of commit.records) {
+    assertCostUsageRecord(record);
+    if (record.providerId !== commit.providerId) {
+      throw new Error("local cost usage scan record crosses provider ownership");
+    }
   }
 };
 

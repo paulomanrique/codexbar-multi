@@ -5,6 +5,7 @@ import type {
   CostUsageRepositoryService,
   DailyCostUsageReplacement,
   DailyCostUsageSourceState,
+  LocalCostUsageScanCommit,
   HistoryRecord,
   HistoryRepositoryService,
   UsageRecordRetentionRequest,
@@ -48,6 +49,19 @@ type WorkerRequest =
       readonly id: string;
       readonly type: "append-cost";
       readonly record: CostUsageRecord;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "commit-local-cost-scan";
+      readonly commit: LocalCostUsageScanCommit;
+    }
+  | {
+      readonly version: 1;
+      readonly id: string;
+      readonly type: "local-cost-scan-checkpoint";
+      readonly providerId: string;
+      readonly sourceKey: string;
     }
   | {
       readonly version: 1;
@@ -211,6 +225,18 @@ class NodeSqliteWorkerClient {
     };
     const costs: CostUsageRepositoryService = {
       append: (record) => this.effect("append-cost", { record }, "append cost usage record"),
+      commitLocalScan: (commit) =>
+        this.effect(
+          "commit-local-cost-scan",
+          { commit },
+          "commit local cost usage scan",
+        ) as Effect.Effect<void, InfrastructureError>,
+      localScanCheckpoint: (providerId, sourceKey) =>
+        this.effect(
+          "local-cost-scan-checkpoint",
+          { providerId, sourceKey },
+          "get local cost usage scan checkpoint",
+        ) as Effect.Effect<string | undefined, InfrastructureError>,
       replaceDaily: (replacement) =>
         this.effect(
           "replace-daily-cost",
@@ -361,6 +387,8 @@ type RequestType =
   | "list-history"
   | "remove-provider-history"
   | "append-cost"
+  | "commit-local-cost-scan"
+  | "local-cost-scan-checkpoint"
   | "replace-daily-cost"
   | "daily-cost-source-state"
   | "list-cost"
@@ -369,6 +397,7 @@ type RequestType =
 type RequestPayload =
   | { readonly record: HistoryRecord }
   | { readonly record: CostUsageRecord }
+  | { readonly commit: LocalCostUsageScanCommit }
   | { readonly replacement: DailyCostUsageReplacement }
   | { readonly request: UsageRecordRetentionRequest }
   | { readonly providerId: string }

@@ -21,6 +21,162 @@ const expectOwnerOnlyFileMode = async (path: string): Promise<void> => {
 };
 
 describe("Node SQLite persistence", () => {
+  it("commits local scanner rows and checkpoints together, including source replacement", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-local-cost-scan-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    const sourceKey = "local-jsonl:fixture";
+    const first = {
+      providerId: "codex" as ProviderId,
+      sourceKey,
+      checkpointJson: JSON.stringify({ cursor: 10 }),
+      records: [
+        {
+          providerId: "codex" as ProviderId,
+          recordedAt: 10,
+          inputTokens: 3,
+          outputTokens: 2,
+          costUsd: 0.01,
+        },
+      ],
+    };
+    try {
+      await Effect.runPromise(persistence.costs.commitLocalScan(first));
+      await expect(
+        Effect.runPromise(persistence.costs.localScanCheckpoint("codex", sourceKey)),
+      ).resolves.toBe(first.checkpointJson);
+
+      // A source replacement still has to own the checkpoint it replaces;
+      // otherwise a stale CLI could erase rows just committed by desktop.
+      await expect(
+        Effect.runPromise(
+          persistence.costs.commitLocalScan({
+            ...first,
+            checkpointJson: JSON.stringify({ cursor: 11 }),
+            reset: true,
+            records: [{ ...first.records[0]!, recordedAt: 11, costUsd: 0.011 }],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        causeValue: { name: "CostUsageScanCheckpointConflictError" },
+      });
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual(
+        first.records,
+      );
+
+      const inspection = new DatabaseSync(databasePath);
+      try {
+        inspection.exec(`
+          CREATE TRIGGER fixture_abort_local_cost_scan
+          BEFORE INSERT ON cost_usage_records
+          WHEN NEW.provider_id = 'codex' AND NEW.cost_usd = 0.02
+          BEGIN SELECT RAISE(ABORT, 'fixture local scan failure'); END;
+        `);
+      } finally {
+        inspection.close();
+      }
+      await expect(
+        Effect.runPromise(
+          persistence.costs.commitLocalScan({
+            ...first,
+            expectedCheckpointJson: first.checkpointJson,
+            checkpointJson: JSON.stringify({ cursor: 20 }),
+            records: [{ ...first.records[0]!, recordedAt: 20, costUsd: 0.02 }],
+          }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "InfrastructureError",
+        operation: "commit local cost usage scan",
+      });
+      await expect(
+        Effect.runPromise(persistence.costs.localScanCheckpoint("codex", sourceKey)),
+      ).resolves.toBe(first.checkpointJson);
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual(
+        first.records,
+      );
+
+      await Effect.runPromise(
+        persistence.costs.commitLocalScan({
+          ...first,
+          expectedCheckpointJson: first.checkpointJson,
+          checkpointJson: JSON.stringify({ cursor: 30 }),
+          reset: true,
+          records: [{ ...first.records[0]!, recordedAt: 30, costUsd: 0.03 }],
+        }),
+      );
+      await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual([
+        { ...first.records[0]!, recordedAt: 30, costUsd: 0.03 },
+      ]);
+      await expect(
+        Effect.runPromise(persistence.costs.localScanCheckpoint("codex", sourceKey)),
+      ).resolves.toBe(JSON.stringify({ cursor: 30 }));
+    } finally {
+      await Effect.runPromise(persistence.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows exactly one stale local scanner commit across two database instances", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-local-cost-scan-cas-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const first = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    const second = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+    const sourceKey = "local-jsonl:cas-fixture";
+    const initialCheckpoint = JSON.stringify({ cursor: 0 });
+    const commit = (cursor: number, costUsd: number) => ({
+      providerId: "codex" as ProviderId,
+      sourceKey,
+      expectedCheckpointJson: initialCheckpoint,
+      checkpointJson: JSON.stringify({ cursor }),
+      records: [
+        {
+          providerId: "codex" as ProviderId,
+          recordedAt: cursor,
+          inputTokens: cursor,
+          outputTokens: 1,
+          costUsd,
+        },
+      ],
+    });
+    try {
+      await Effect.runPromise(
+        first.costs.commitLocalScan({
+          providerId: "codex",
+          sourceKey,
+          checkpointJson: initialCheckpoint,
+          records: [],
+        }),
+      );
+      const results = await Promise.allSettled([
+        Effect.runPromise(first.costs.commitLocalScan(commit(10, 0.1))),
+        Effect.runPromise(second.costs.commitLocalScan(commit(20, 0.2))),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.find((result) => result.status === "rejected");
+      expect(rejected).toMatchObject({
+        reason: {
+          _tag: "InfrastructureError",
+          operation: "commit local cost usage scan",
+          causeValue: { name: "CostUsageScanCheckpointConflictError" },
+        },
+      });
+      const rows = await Effect.runPromise(first.costs.list("codex", 0));
+      expect(rows).toHaveLength(1);
+      const checkpoint = await Effect.runPromise(
+        first.costs.localScanCheckpoint("codex", sourceKey),
+      );
+      expect([JSON.stringify({ cursor: 10 }), JSON.stringify({ cursor: 20 })]).toContain(
+        checkpoint,
+      );
+      expect(checkpoint).toBe(JSON.stringify({ cursor: rows[0]!.recordedAt }));
+    } finally {
+      await Effect.runPromise(first.close);
+      await Effect.runPromise(second.close);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("atomically replaces a vendor daily ledger by provider/day/source without duplicate refreshes", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-daily-cost-"));
     const databasePath = join(directory, "usage.sqlite");
@@ -331,7 +487,7 @@ describe("Node SQLite persistence", () => {
       expect(database.prepare("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
       expect(database.prepare("PRAGMA foreign_keys").get()?.foreign_keys).toBe(1);
       expect(database.prepare("PRAGMA quick_check").get()?.quick_check).toBe("ok");
-      expect(database.prepare("PRAGMA user_version").get()?.user_version).toBe(2);
+      expect(database.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
     } finally {
       database.close();
       await rm(directory, { recursive: true, force: true });
@@ -350,7 +506,7 @@ describe("Node SQLite persistence", () => {
         migrations: [
           ...NODE_PERSISTENCE_MIGRATIONS,
           {
-            version: 3,
+            version: 4,
             destructive: true,
             sql: "CREATE TABLE migration_witness (id INTEGER PRIMARY KEY)",
           },
@@ -359,10 +515,10 @@ describe("Node SQLite persistence", () => {
     );
     try {
       expect(
-        (await readdir(directory)).some((name) => name.startsWith("usage.sqlite.backup-v3-")),
+        (await readdir(directory)).some((name) => name.startsWith("usage.sqlite.backup-v4-")),
       ).toBe(true);
       const backupName = (await readdir(directory)).find((name) =>
-        name.startsWith("usage.sqlite.backup-v3-"),
+        name.startsWith("usage.sqlite.backup-v4-"),
       );
       expect(backupName).toBeDefined();
       await expectOwnerOnlyFileMode(join(directory, backupName!));

@@ -82,6 +82,8 @@ const makePersistence = (): Pick<NodeSqliteWorkerPersistence, "history" | "costs
         Effect.sync(() => {
           costs.push(record);
         }),
+      commitLocalScan: () => Effect.void,
+      localScanCheckpoint: () => Effect.succeed(undefined),
       replaceDaily: () => Effect.void,
       dailySourceState: () => Effect.succeed(undefined),
       list: (providerId, since, limit) =>

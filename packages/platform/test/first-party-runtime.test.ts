@@ -112,6 +112,8 @@ describe("first-party refresh runtime", () => {
         }),
         Effect.provideService(CostUsageRepository, {
           append: () => Effect.void,
+          commitLocalScan: () => Effect.void,
+          localScanCheckpoint: () => Effect.succeed(undefined),
           replaceDaily: () => Effect.void,
           dailySourceState: () => Effect.succeed(undefined),
           list: () => Effect.succeed([]),
@@ -157,6 +159,8 @@ describe("first-party refresh runtime", () => {
           }),
           Effect.provideService(CostUsageRepository, {
             append: () => Effect.void,
+            commitLocalScan: () => Effect.void,
+            localScanCheckpoint: () => Effect.succeed(undefined),
             replaceDaily: () => Effect.void,
             dailySourceState: () => Effect.succeed(undefined),
             list: () => Effect.succeed([]),

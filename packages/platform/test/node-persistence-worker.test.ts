@@ -12,6 +12,46 @@ import { makeNodeSqliteWorkerPersistence } from "../src/node.ts";
 const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
 
 describe("Node SQLite worker persistence", () => {
+  it("commits a local scanner checkpoint with its rows through the worker", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-local-scan-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const persistence = await Effect.runPromise(makeNodeSqliteWorkerPersistence({ databasePath }));
+    const sourceKey = "local-jsonl:worker-fixture";
+    try {
+      await Effect.runPromise(
+        persistence.costs.commitLocalScan({
+          providerId: "claude" as ProviderId,
+          sourceKey,
+          checkpointJson: JSON.stringify({ cursor: 12 }),
+          records: [
+            {
+              providerId: "claude" as ProviderId,
+              recordedAt: 12,
+              inputTokens: 4,
+              outputTokens: 2,
+              costUsd: 0.04,
+            },
+          ],
+        }),
+      );
+      await expect(
+        Effect.runPromise(persistence.costs.localScanCheckpoint("claude", sourceKey)),
+      ).resolves.toBe(JSON.stringify({ cursor: 12 }));
+      await expect(Effect.runPromise(persistence.costs.list("claude", 0))).resolves.toEqual([
+        {
+          providerId: "claude",
+          recordedAt: 12,
+          inputTokens: 4,
+          outputTokens: 2,
+          costUsd: 0.04,
+        },
+      ]);
+    } finally {
+      await Effect.runPromise(persistence.close).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("routes replaceable vendor daily spend through the worker without exposing its source key in rows", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-daily-"));
     const databasePath = join(directory, "usage.sqlite");

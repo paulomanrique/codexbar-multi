@@ -1,9 +1,11 @@
 import { Effect, Layer } from "effect";
 import {
   BrowserSessionBroker,
+  assertLocalCostUsageScanCheckpointJson,
   Clock,
   ConfigRepository,
   type CostUsageRecord,
+  type LocalCostUsageScanCommit,
   CostUsageRepository,
   CredentialStore,
   HistoryRepository,
@@ -100,6 +102,8 @@ export const MemoryHistoryRepository = Layer.sync(HistoryRepository, () => {
 
 export const MemoryCostUsageRepository = Layer.sync(CostUsageRepository, () => {
   const appendedRecords: Array<CostUsageRecord> = [];
+  const localScanRecords = new Map<string, Array<CostUsageRecord>>();
+  const localScanCheckpoints = new Map<string, string>();
   const dailyRecords = new Map<string, Map<number, CostUsageRecord>>();
   const dailyStates = new Map<
     string,
@@ -109,6 +113,7 @@ export const MemoryCostUsageRepository = Layer.sync(CostUsageRepository, () => {
     `${providerId}\u0000${sourceKey}`;
   const allRecords = (): CostUsageRecord[] => [
     ...appendedRecords,
+    ...[...localScanRecords.values()].flat(),
     ...[...dailyRecords.values()].flatMap((records) => [...records.values()]),
   ];
   return {
@@ -116,6 +121,30 @@ export const MemoryCostUsageRepository = Layer.sync(CostUsageRepository, () => {
       Effect.sync(() => {
         appendedRecords.push(record);
       }),
+    commitLocalScan: (commit: LocalCostUsageScanCommit) =>
+      Effect.try({
+        try: () => {
+          assertLocalCostUsageScanCheckpointJson(commit.checkpointJson);
+          if (commit.expectedCheckpointJson !== undefined) {
+            assertLocalCostUsageScanCheckpointJson(commit.expectedCheckpointJson);
+          }
+          const key = dailyKey(commit.providerId, commit.sourceKey);
+          if (localScanCheckpoints.get(key) !== commit.expectedCheckpointJson) {
+            throw new Error("Local cost usage scan checkpoint changed");
+          }
+          const existing = commit.reset ? [] : (localScanRecords.get(key) ?? []);
+          localScanRecords.set(key, [...existing, ...commit.records]);
+          localScanCheckpoints.set(key, commit.checkpointJson);
+        },
+        catch: (error) =>
+          new InfrastructureError(
+            "commit local cost usage scan",
+            "Memory cost scan commit failed",
+            error,
+          ),
+      }),
+    localScanCheckpoint: (providerId, sourceKey) =>
+      Effect.succeed(localScanCheckpoints.get(dailyKey(providerId, sourceKey))),
     replaceDaily: (replacement) =>
       Effect.sync(() => {
         const key = dailyKey(replacement.providerId, replacement.sourceKey);
@@ -172,6 +201,8 @@ export const EmptyHostCapabilities = Layer.mergeAll(
   }),
   Layer.succeed(CostUsageRepository, {
     append: () => Effect.void,
+    commitLocalScan: () => Effect.void,
+    localScanCheckpoint: () => Effect.succeed(undefined),
     replaceDaily: () => Effect.void,
     dailySourceState: () => Effect.succeed(undefined),
     list: () => Effect.succeed([]),
