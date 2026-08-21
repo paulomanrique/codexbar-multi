@@ -79,6 +79,8 @@ export interface PersistedCodexBarConfig {
   readonly version: number;
   readonly providers: readonly PersistedProviderConfig[];
   readonly hooks?: PersistedHooksConfig;
+  /** Swift defaults this opt-out preference to true when it is absent. */
+  readonly sessionQuotaNotificationsEnabled?: boolean;
 }
 
 export class ConfigDecodeError extends Error {
@@ -413,7 +415,16 @@ export const decodeCodexBarConfig = (
     });
   }
   const hooks = decodeHooks(own(value, "hooks"), options.createHookId ?? defaultHookId);
-  return { version, providers, ...(hooks === undefined ? {} : { hooks }) };
+  const sessionQuotaNotificationsEnabled = optionalBoolean(
+    own(value, "sessionQuotaNotificationsEnabled"),
+    "sessionQuotaNotificationsEnabled",
+  );
+  return {
+    version,
+    providers,
+    ...(hooks === undefined ? {} : { hooks }),
+    ...(sessionQuotaNotificationsEnabled === undefined ? {} : { sessionQuotaNotificationsEnabled }),
+  };
 };
 
 const omitUndefined = (value: Record<string, unknown>): Record<string, unknown> =>
@@ -444,6 +455,9 @@ export const encodeCodexBarConfig = (config: PersistedCodexBarConfig): Record<st
     }),
   })),
   ...(config.hooks === undefined ? {} : { hooks: config.hooks }),
+  ...(config.sessionQuotaNotificationsEnabled === undefined
+    ? {}
+    : { sessionQuotaNotificationsEnabled: config.sessionQuotaNotificationsEnabled }),
 });
 
 export const cleanConfigString = (raw: string | undefined): string | undefined => {
@@ -486,6 +500,7 @@ export const makeDefaultCodexBarConfig = (
       ...defaultProvider(id, "international"),
       enabled: enabledById.get(id) ?? false,
     })),
+    sessionQuotaNotificationsEnabled: true,
   };
 };
 
@@ -514,6 +529,9 @@ export const normalizeCodexBarConfig = (
     version: CODEXBAR_CONFIG_VERSION,
     providers,
     ...(config.hooks === undefined ? {} : { hooks: config.hooks }),
+    ...(config.sessionQuotaNotificationsEnabled === undefined
+      ? {}
+      : { sessionQuotaNotificationsEnabled: config.sessionQuotaNotificationsEnabled }),
   };
 };
 

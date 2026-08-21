@@ -16,4 +16,5 @@ export * from "./testing.ts";
 export * from "./quota.ts";
 export * from "./reset.ts";
 export * from "./session-quota.ts";
+export * from "./session-quota-coordinator.ts";
 export * from "./usage-pace.ts";

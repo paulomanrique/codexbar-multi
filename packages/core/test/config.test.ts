@@ -100,6 +100,7 @@ describe("CodexBarConfig coding (Swift parity)", () => {
   it("uses exact default ordering and asymmetric Alibaba Token Plan defaults", () => {
     const fresh = makeDefaultCodexBarConfig();
     expect(fresh.version).toBe(CODEXBAR_CONFIG_VERSION);
+    expect(fresh.sessionQuotaNotificationsEnabled).toBe(true);
     expect(fresh.providers).toHaveLength(69);
     expect(fresh.providers[0]).toMatchObject({ id: "codex", enabled: true });
     expect(fresh.providers.find((entry) => entry.id === "alibabatokenplan")).toMatchObject({
@@ -130,6 +131,24 @@ describe("CodexBarConfig coding (Swift parity)", () => {
         region: "china-mainland",
       },
     );
+  });
+
+  it("preserves Swift's global session-notification opt-out without forcing legacy configs", () => {
+    const disabled = decodeCodexBarConfig({
+      version: 1,
+      providers: [],
+      sessionQuotaNotificationsEnabled: false,
+    });
+    expect(disabled.sessionQuotaNotificationsEnabled).toBe(false);
+    expect(encodeCodexBarConfig(disabled)).toMatchObject({
+      sessionQuotaNotificationsEnabled: false,
+    });
+    expect(
+      decodeCodexBarConfig({ version: 1, providers: [] }).sessionQuotaNotificationsEnabled,
+    ).toBeUndefined();
+    expect(() =>
+      decodeCodexBarConfig({ version: 1, providers: [], sessionQuotaNotificationsEnabled: "yes" }),
+    ).toThrow(ConfigDecodeError);
   });
 
   it("normalizes the two upstream descriptor-owned extension values", () => {

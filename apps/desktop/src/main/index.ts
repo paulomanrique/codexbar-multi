@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, Notification, Tray } from "electron";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +55,7 @@ import {
   Clock,
   CostUsageRepository,
   HistoryRepository,
+  SessionQuotaCoordinator,
   makeDefaultCodexBarConfig,
   refreshProviderAndPersist,
   XAI_DAILY_SPEND_SOURCE,
@@ -70,6 +71,7 @@ import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./b
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
 import { DesktopClaudeSwapController } from "./claude-swap.js";
+import { makeDesktopSessionQuotaNotificationAdapter } from "./session-quota-notifications.js";
 import {
   DesktopSpendPublisher,
   type DesktopSpendConfiguration,
@@ -101,6 +103,7 @@ let pluginManager: DesktopPluginManager | undefined;
 let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
 let spendPublisher: DesktopSpendPublisher | undefined;
 let claudeSwap: DesktopClaudeSwapController | undefined;
+const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
   id: provider.descriptor.id,
@@ -152,6 +155,46 @@ const overviewProviders = () => {
       source: source !== undefined && availableSources.includes(source) ? source : "auto",
     } as const;
   });
+};
+
+const sessionQuotaProviderName = (providerId: (typeof PROVIDERS)[number]["id"]): string =>
+  PROVIDERS.find((provider) => provider.id === providerId)?.name ?? providerId;
+
+const sessionQuotaNotificationAdapter = makeDesktopSessionQuotaNotificationAdapter({
+  nativeNotifications: {
+    create: ({ title, body }) => new Notification({ title, body }),
+  },
+  providerName: sessionQuotaProviderName,
+});
+
+/**
+ * This runs only after a successful persisted refresh. Codex deliberately has
+ * no owner key here: until the owner derivation is ported from the Swift
+ * credential/account path, the core coordinator fails closed and emits no
+ * Codex notification.
+ */
+const publishSessionQuotaNotification = (
+  provider: (typeof PROVIDERS)[number]["id"],
+  snapshot: UsageSnapshot,
+): void => {
+  const result = sessionQuotaCoordinator.observe({
+    provider,
+    snapshot,
+    ...(desktopConfig?.sessionQuotaNotificationsEnabled === undefined
+      ? {}
+      : { notificationsEnabled: desktopConfig.sessionQuotaNotificationsEnabled }),
+    now: new Date(),
+  });
+  if (result.notification === undefined) return;
+  try {
+    void Promise.resolve(sessionQuotaNotificationAdapter.notify(result.notification)).catch(() => {
+      // Async native adapters are best effort for the same reason as their
+      // synchronous counterparts below.
+    });
+  } catch {
+    // Native permission/back-end failures never fail an otherwise successful
+    // provider refresh and are never sent to renderer IPC.
+  }
 };
 
 /**
@@ -465,6 +508,7 @@ void app
             Effect.provideService(CostUsageRepository, activePersistence().costs),
           ),
         );
+        publishSessionQuotaNotification(request.provider, outcome.snapshot);
         return decodeRefreshResult({
           provider: request.provider,
           strategyId: outcome.strategyId,
@@ -480,7 +524,7 @@ void app
         // The external tool owns the credential. Refreshing the ambient Claude
         // snapshot is best effort; the subsequent account listing is already
         // verified and replaces any stale active-row presentation.
-        await Effect.runPromise(
+        const outcome = await Effect.runPromise(
           refreshProviderAndPersist(activeProviderRuntime(), "claude", {
             sourceMode: "auto",
             includeCredits: true,
@@ -491,6 +535,7 @@ void app
             Effect.orElseSucceed(() => undefined),
           ),
         );
+        if (outcome !== undefined) publishSessionQuotaNotification("claude", outcome.snapshot);
         return decodeActivateClaudeSwapAccountResult({
           provider: "claude",
           accountId: result.accountId,

@@ -97,6 +97,8 @@ export const CodexBarConfig = Schema.Struct({
   version: Schema.Number,
   providers: Schema.Array(ProviderConfig),
   hooks: Schema.optional(HooksConfig),
+  /** Matches Swift's persisted global session-notification preference. */
+  sessionQuotaNotificationsEnabled: Schema.optional(Schema.Boolean),
 });
 export type CodexBarConfig = Schema.Schema.Type<typeof CodexBarConfig>;
 
