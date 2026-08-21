@@ -29,7 +29,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Persist xAI vendor-metered daily spend with atomic range replacement, exact/estimated coverage, confirmed-empty handling, and unavailable-source retention.
   - [x] Commit each local scanner cursor and its rows in one SQLite transaction, with checkpoint CAS across concurrent desktop/CLI processes and source-scoped reset.
   - [x] Connect bounded recursive Codex/Claude inventory to `cost --refresh`, with SIGINT/SIGTERM cancellation and explicit partial-coverage output.
-  - [ ] Complete fork lineage/issue #2037, priority metadata, and scanner cache parity.
+  - [x] Reconcile Codex fork lineage/issue #2037 through one CAS-protected atomic family commit.
+  - [ ] Complete issue #2037 priority metadata and scanner cache parity.
 
 ## Milestone 2 — first vertical slice
 
@@ -99,7 +100,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Add accessible provider cards, explicit refresh, persisted history/cost views, and an honest read-only settings shell.
   - [x] Add schema-validated provider enablement/source mutations with serialized atomic persistence.
   - [x] Publish the provider-siloed spend overview/dashboard with xAI coverage state and no internal source IDs crossing IPC.
+  - [x] Publish local Grok token activity independently from remote billing without attributing subscription dollars.
   - [x] Add opt-in Claude Swap account cards and a schema-validated, freshly reauthorized desktop account-switch transaction.
+  - [x] Add localized session-quota notifications and a schema-validated persisted settings toggle.
   - [ ] Add remaining account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
 - [ ] Port all 23 languages, pluralization, RTL, and visual tests.
   - [x] Establish the 23-locale catalog, current renderer messages, plural rules, and RTL direction.

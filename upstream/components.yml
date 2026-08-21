@@ -84,7 +84,10 @@ components:
       - packages/core/src/quota.ts
       - packages/core/src/reset.ts
       - packages/core/src/session-quota.ts
+      - packages/core/src/session-quota-coordinator.ts
       - packages/core/src/usage-pace.ts
+      - apps/desktop/src/main/session-quota-notifications.ts
+      - apps/desktop/src/main/session-quota-notification-settings.ts
     tests:
       - Tests/CodexBarTests/UsagePaceTests.swift
       - Tests/CodexBarTests/ResetTimeBackfillTests.swift
@@ -94,9 +97,35 @@ components:
       - Tests/CodexBarTests/CodexSessionQuotaFalseRestoreTests.swift
       - packages/core/test/quota-reset-pace.test.ts
       - packages/core/test/session-quota.test.ts
+      - packages/core/test/session-quota-coordinator.test.ts
+      - apps/desktop/test/session-quota-notifications.test.ts
+      - apps/desktop/test/session-quota-notification-settings.test.ts
     fixtures: []
     status: partial
-    lastReviewedCommit: 61fbe9fac50770bc3f7036e69003277aaed68162
+    lastReviewedCommit: f74117aeb7a9ee02a78c0f08ca354ff26b2292e0
+
+  - id: agent-sessions
+    description: Local Codex, Claude, Pi and OMP process/session discovery, JSON/table output and safe focus adapters.
+    swiftGlobs:
+      - Sources/CodexBarCore/AgentSession.swift
+      - Sources/CodexBarCore/LocalAgentSessionScanner.swift
+      - Sources/CodexBarCore/PiFamilySessionScanner.swift
+      - Sources/CodexBarCLI/CLISessionsCommand.swift
+      - Sources/CodexBar/AgentSessionsStore.swift
+      - Sources/CodexBarCore/SessionWindowFocuser.swift
+    tsPaths:
+      - packages/platform/src/node-agent-sessions.ts
+      - apps/cli/src/sessions.ts
+    tests:
+      - Tests/CodexBarTests/AgentSessionJSONTests.swift
+      - Tests/CodexBarTests/AgentSessionParserTests.swift
+      - Tests/CodexBarTests/PiFamilySessionTests.swift
+      - packages/platform/test/node-agent-sessions.test.ts
+      - apps/cli/test/guard-hooks-sessions.test.ts
+    fixtures:
+      - Tests/CodexBarTests/Fixtures/PiFamily/**/*
+    status: partial
+    lastReviewedCommit: f74117aeb7a9ee02a78c0f08ca354ff26b2292e0
 
   - id: http-security
     description: HTTP endpoint policy, bounded responses and platform-neutral security gates.
@@ -155,6 +184,7 @@ components:
       - packages/contracts/src/usage.ts
       - packages/contracts/src/ipc.ts
       - packages/platform/src/node-cost-jsonl.ts
+      - packages/platform/src/node-local-cost-scan.ts
       - packages/platform/src/**/*.ts
       - apps/desktop/src/main/history-api.ts
       - apps/desktop/src/main/overview.ts
@@ -170,6 +200,7 @@ components:
       - packages/core/test/spend-publication.test.ts
       - packages/core/test/spend-dashboard.test.ts
       - packages/platform/test/node-cost-jsonl.test.ts
+      - packages/platform/test/node-local-cost-scan.test.ts
       - apps/desktop/test/history-api.test.ts
       - apps/desktop/test/spend-overview.test.ts
       - apps/desktop/test/spend-dashboard.test.tsx
