@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -115,6 +115,22 @@ describe("desktop plugin lifecycle", () => {
     await manager.install(source(), "javascript");
     await expect(manager.install(source(), "typescript")).rejects.toThrow("already installed");
     await expect(manager.remove("../escape")).rejects.toThrow("plugin id is invalid");
+  });
+
+  it("discovers a Swift-compatible flat plugin file whose name differs from its provider id", async () => {
+    const { root, manager } = await fixture();
+    await mkdir(join(root, "plugins"), { recursive: true });
+    await writeFile(join(root, "plugins", "Legacy Meter.ts"), source("legacy-meter"));
+
+    await expect(manager.list()).resolves.toMatchObject({
+      plugins: [{ id: "legacy-meter", language: "typescript", approvalStatus: "needs-approval" }],
+      invalidFiles: [],
+    });
+    await manager.approve({ pluginId: "legacy-meter", settings: {}, typedConfirmations: {} });
+    await expect(manager.remove("legacy-meter")).resolves.toBeUndefined();
+    await expect(readFile(join(root, "plugins", "Legacy Meter.ts"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("requires exact typed confirmation for local and private-network origins", async () => {

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { backup, DatabaseSync } from "node:sqlite";
-import { copyFile, lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { Effect, Schema } from "effect";
 import {
@@ -21,7 +21,8 @@ import { makeNodeSqlitePersistence } from "./node-persistence.ts";
 import { makeNodePrivateFileStore } from "./node.ts";
 
 const MAX_LEGACY_JSONL_BYTES = 25 * 1024 * 1024;
-const manifestVersion = 1;
+const MAX_LEGACY_PLUGIN_SOURCE_BYTES = 1 * 1024 * 1024;
+const manifestVersion = 3;
 const excludedFeatures = ["icloud", "widgetkit", "sparkle", "approvals"] as const;
 
 export interface NodeLegacyImportOptions {
@@ -69,8 +70,28 @@ interface LegacyImportManifest {
   readonly state: "in-progress" | "completed";
   readonly config?: { readonly path: string; readonly sha256: string };
   readonly database?: { readonly path: string; readonly backupPath: string };
+  readonly plugins: readonly LegacyImportedPlugin[];
+}
+
+/** A rollback may remove only the exact, unchanged file that this import created. */
+interface LegacyImportedPlugin {
+  readonly path: string;
+  /** Private sibling hard-linked to path; it is the ownership proof for rollback. */
+  readonly proofPath: string;
+  readonly sha256: string;
+}
+
+/** Journal format from the initial pre-release directory-plugin importer. */
+interface LegacyImportManifestV1 {
+  readonly version: 1;
+  readonly importId: string;
+  readonly state: "in-progress" | "completed";
+  readonly config?: { readonly path: string; readonly sha256: string };
+  readonly database?: { readonly path: string; readonly backupPath: string };
   readonly plugins: readonly string[];
 }
+
+type ReadLegacyImportManifest = LegacyImportManifest | LegacyImportManifestV1;
 
 /** Inspecting is read-only and reports only source names/counts, never JSON or secret values. */
 export const inspectNodeLegacyImport = (
@@ -203,24 +224,37 @@ export const executeNodeLegacyImport = (
         for (const plugin of sources.plugins) {
           assertNotAborted(options.signal);
           const destination = join(layout.targetPluginsPath, basename(plugin));
-          const created = await createPluginDestination(
+          const source = await readPluginSource(plugin);
+          await ensureRealDestinationDirectory(layout.root, layout.targetPluginsPath);
+          await assertRealDestinationDirectory(layout.root, layout.targetPluginsPath);
+          const proofPath = join(
+            layout.targetPluginsPath,
+            `.codexbar-multi-legacy-proof-${randomUUID()}`,
+          );
+          await writePluginProof(layout.root, layout.targetPluginsPath, proofPath, source);
+          const importedPlugin = { path: destination, proofPath, sha256: sha256(source) };
+          manifest = { ...manifest, plugins: [...manifest.plugins, importedPlugin] };
+          await writeManifest(layout.manifestPath, manifest, layout.root);
+          const created = await publishPluginProof(
             layout.root,
             layout.targetPluginsPath,
             destination,
+            proofPath,
           );
           if (!created) {
+            const existing = await lstat(destination);
+            if (existing.isSymbolicLink() || !existing.isFile()) {
+              throw new Error("Legacy plugin destination is not a regular file");
+            }
+            await rm(proofPath, { force: true });
+            manifest = {
+              ...manifest,
+              plugins: manifest.plugins.filter((entry) => entry !== importedPlugin),
+            };
+            await writeManifest(layout.manifestPath, manifest, layout.root);
             skipped.push("plugin target already exists");
             continue;
           }
-          manifest = { ...manifest, plugins: [...manifest.plugins, destination] };
-          await writeManifest(layout.manifestPath, manifest, layout.root);
-          await copyPluginWithoutApprovals(
-            plugin,
-            destination,
-            importId,
-            options.signal,
-            layout.root,
-          );
           imported.plugins += 1;
         }
         manifest = { ...manifest, state: "completed" };
@@ -264,7 +298,7 @@ export const rollbackNodeLegacyImport = (
 
 const resolveLayout = (options: NodeLegacyImportOptions, importId: string) => {
   const root = resolve(options.destinationRoot);
-  const targetConfigPath = resolve(options.targetConfigPath ?? join(root, "config", "config.json"));
+  const targetConfigPath = resolve(options.targetConfigPath ?? join(root, "config.json"));
   const targetPluginsPath = resolve(options.targetPluginsPath ?? join(root, "plugins"));
   const databasePath = resolve(options.databasePath);
   if (
@@ -289,7 +323,7 @@ const loadLegacySources = async (
   const configPath = legacyEntry(options.legacyRoot, options.configFile ?? "config.json");
   const historyPath = legacyEntry(options.legacyRoot, options.historyFile ?? "history.jsonl");
   const costsPath = legacyEntry(options.legacyRoot, options.costsFile ?? "costs.jsonl");
-  const pluginsPath = legacyEntry(options.legacyRoot, options.pluginsDirectory ?? "plugins");
+  const pluginsPath = legacyEntry(options.legacyRoot, options.pluginsDirectory ?? "providers");
   const candidates: LegacyImportCandidate[] = [];
   let config: ReturnType<typeof decodeCodexBarConfig> | undefined;
   let history: readonly HistoryRecord[] = [];
@@ -401,9 +435,15 @@ const loadPlugins = async (
     throw new Error("Legacy plugin source must be a real directory");
   }
   const entries = await readdir(path, { withFileTypes: true });
-  const plugins = entries
-    .filter((entry) => entry.isDirectory() && !isExcludedPluginName(entry.name))
-    .map((entry) => join(path, entry.name));
+  const plugins: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    if (entry.isSymbolicLink()) throw new Error("Legacy plugin source contains a symlink");
+    if (!entry.isFile() || !isPluginSourceName(entry.name)) continue;
+    const source = join(path, entry.name);
+    await readPluginSource(source);
+    plugins.push(source);
+  }
   return {
     candidate: {
       kind: "plugins",
@@ -472,7 +512,7 @@ const openImportDatabase = async (databasePath: string): Promise<DatabaseSync> =
 };
 
 const rollbackManifest = async (
-  manifest: LegacyImportManifest,
+  manifest: ReadLegacyImportManifest,
   layout: ReturnType<typeof resolveLayout>,
 ): Promise<NodeLegacyRollbackResult> => {
   const removed = { config: 0, history: 0, cost: 0, plugins: 0 };
@@ -489,32 +529,49 @@ const rollbackManifest = async (
     }
   }
   for (const plugin of manifest.plugins) {
-    if (!inside(layout.targetPluginsPath, plugin)) {
+    if (typeof plugin === "string") {
+      await rollbackV1Plugin(plugin, manifest.importId, layout, removed, skipped);
+      continue;
+    }
+    if (!isDirectChild(layout.targetPluginsPath, plugin.path)) {
       skipped.push("plugin path outside target");
       continue;
     }
     try {
       await assertRealDestinationDirectory(layout.root, layout.targetPluginsPath);
-      await assertRealDestinationDirectory(layout.root, plugin);
     } catch {
       skipped.push("plugin destination is not a real directory");
       continue;
     }
-    const marker = join(plugin, ".codexbar-multi-legacy-import.json");
-    if (!(await exists(marker))) {
-      skipped.push("plugin marker missing");
+    if (!isProofPath(layout.targetPluginsPath, plugin.proofPath)) {
+      skipped.push("plugin ownership proof outside target");
       continue;
     }
     try {
-      const markerValue = JSON.parse(await readFile(marker, "utf8")) as { importId?: unknown };
-      if (markerValue.importId !== manifest.importId) {
-        skipped.push("plugin marker mismatch");
+      const [destination, proof] = await Promise.all([
+        lstat(plugin.path, { bigint: true }),
+        lstat(plugin.proofPath, { bigint: true }),
+      ]);
+      if (
+        destination.isSymbolicLink() ||
+        !destination.isFile() ||
+        proof.isSymbolicLink() ||
+        !proof.isFile() ||
+        !sameFile(destination, proof)
+      ) {
+        skipped.push("plugin ownership proof no longer matches import");
         continue;
       }
-      await rm(plugin, { recursive: true, force: true });
+      const content = await readPluginSource(plugin.path);
+      if (sha256(content) !== plugin.sha256) {
+        skipped.push("plugin changed since import");
+        continue;
+      }
+      await rm(plugin.path, { force: true });
+      await rm(plugin.proofPath, { force: true });
       removed.plugins += 1;
     } catch {
-      skipped.push("plugin marker unreadable");
+      skipped.push("plugin destination is not an unchanged regular file");
     }
   }
   if (manifest.database !== undefined) {
@@ -566,6 +623,38 @@ const rollbackManifest = async (
   return { importId: manifest.importId, removed, skipped };
 };
 
+/**
+ * Version 1 was never a product release, but its journal is kept rollbackable
+ * so an interrupted local pre-release import cannot strand its own directory
+ * copies. The old marker is the ownership proof for that format.
+ */
+const rollbackV1Plugin = async (
+  plugin: string,
+  importId: string,
+  layout: ReturnType<typeof resolveLayout>,
+  removed: { config: number; history: number; cost: number; plugins: number },
+  skipped: string[],
+): Promise<void> => {
+  if (!inside(layout.targetPluginsPath, plugin)) {
+    skipped.push("plugin path outside target");
+    return;
+  }
+  try {
+    await assertRealDestinationDirectory(layout.root, layout.targetPluginsPath);
+    await assertRealDestinationDirectory(layout.root, plugin);
+    const marker = join(plugin, ".codexbar-multi-legacy-import.json");
+    const markerValue = JSON.parse(await readFile(marker, "utf8")) as { importId?: unknown };
+    if (markerValue.importId !== importId) {
+      skipped.push("plugin marker mismatch");
+      return;
+    }
+    await rm(plugin, { recursive: true, force: true });
+    removed.plugins += 1;
+  } catch {
+    skipped.push("plugin marker unreadable");
+  }
+};
+
 /** Database path is recorded only in the backup sibling; resolve it without any OS-specific lookup. */
 const openImportDatabaseFromExisting = async (
   recorded: NonNullable<LegacyImportManifest["database"]>,
@@ -590,79 +679,76 @@ const openImportDatabaseFromExisting = async (
   return database;
 };
 
-const copyPluginWithoutApprovals = async (
-  source: string,
-  destination: string,
-  importId: string,
-  signal: AbortSignal | undefined,
-  destinationRoot: string,
-  writeMarker = true,
-): Promise<void> => {
-  await assertRealDestinationDirectory(destinationRoot, destination);
-  if (writeMarker) {
-    const marker = join(destination, ".codexbar-multi-legacy-import.json");
-    const markerCreated = await makeNodePrivateFileStore()
-      .writeAtomicIfAbsent(marker, new TextEncoder().encode(`${JSON.stringify({ importId })}\n`))
-      .pipe(Effect.runPromise);
-    if (!markerCreated) throw new Error("Legacy plugin marker already exists");
-    await assertRealDestinationDirectory(destinationRoot, destination);
-  }
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    assertNotAborted(signal);
-    if (isApprovalName(entry.name)) continue;
-    const from = join(source, entry.name);
-    const to = join(destination, entry.name);
-    const info = await lstat(from);
-    if (info.isSymbolicLink()) throw new Error(`Legacy plugin contains a symlink: ${entry.name}`);
-    if (info.isDirectory()) {
-      await createPluginDirectory(destinationRoot, to);
-      await copyPluginWithoutApprovals(from, to, importId, signal, destinationRoot, false);
-    } else if (info.isFile()) {
-      await assertRealDestinationDirectory(destinationRoot, destination);
-      await copyFile(from, to, constants.COPYFILE_EXCL);
-      const copied = await lstat(to);
-      if (copied.isSymbolicLink() || !copied.isFile()) {
-        throw new Error(`Legacy plugin destination changed during copy: ${entry.name}`);
-      }
+/**
+ * Swift's provider directory holds bounded .js/.ts files directly. Read the
+ * opened inode rather than following a path while copying an untrusted legacy
+ * directory; approvals are stored elsewhere and are never read here.
+ */
+const readPluginSource = async (path: string): Promise<Uint8Array> => {
+  const source = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const info = await source.stat();
+    if (!info.isFile() || info.size > MAX_LEGACY_PLUGIN_SOURCE_BYTES) {
+      throw new Error("Legacy plugin source must be a bounded regular file");
     }
+    return new Uint8Array(await source.readFile());
+  } finally {
+    await source.close();
   }
 };
 
-/** Creates a plugin root once. Existing files/directories are never merged into. */
-const createPluginDestination = async (
+/** Materializes an import-owned inode before it is published at the plugin path. */
+const writePluginProof = async (
+  destinationRoot: string,
+  pluginsRoot: string,
+  proofPath: string,
+  source: Uint8Array,
+): Promise<void> => {
+  if (!isProofPath(pluginsRoot, proofPath)) {
+    throw new Error("Legacy plugin ownership proof is invalid");
+  }
+  await assertRealDestinationDirectory(destinationRoot, pluginsRoot);
+  const created = await makeNodePrivateFileStore()
+    .writeAtomicIfAbsent(proofPath, source)
+    .pipe(Effect.runPromise);
+  if (!created) throw new Error("Legacy plugin ownership proof already exists");
+  const info = await lstat(proofPath);
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error("Legacy plugin ownership proof changed during copy");
+  }
+};
+
+/** Hard-link the proof inode to the visible plugin path without replacing any entry. */
+const publishPluginProof = async (
   destinationRoot: string,
   pluginsRoot: string,
   destination: string,
+  proofPath: string,
 ): Promise<boolean> => {
-  await ensureRealDestinationDirectory(destinationRoot, pluginsRoot);
+  if (!isDirectChild(pluginsRoot, destination) || !isPluginSourceName(basename(destination))) {
+    throw new Error("Legacy plugin destination is invalid");
+  }
   await assertRealDestinationDirectory(destinationRoot, pluginsRoot);
   try {
-    await mkdir(destination, { mode: 0o700 });
+    await link(proofPath, destination);
   } catch (error) {
-    if (!isAlreadyExists(error)) throw error;
-    const existing = await lstat(destination);
-    if (existing.isSymbolicLink() || !existing.isDirectory()) {
-      throw new Error("Legacy plugin destination is not a real directory");
-    }
-    await assertRealDestinationDirectory(destinationRoot, destination);
-    return false;
-  }
-  await assertRealDestinationDirectory(destinationRoot, destination);
-  return true;
-};
-
-/** A recursive copy may only create a fresh, real child directory. */
-const createPluginDirectory = async (destinationRoot: string, path: string): Promise<void> => {
-  await assertRealDestinationDirectory(destinationRoot, dirname(path));
-  try {
-    await mkdir(path, { mode: 0o700 });
-  } catch (error) {
-    if (isAlreadyExists(error)) {
-      throw new Error("Legacy plugin destination already contains a path with this name");
-    }
+    if (isAlreadyExists(error)) return false;
     throw error;
   }
-  await assertRealDestinationDirectory(destinationRoot, path);
+  const [created, proof] = await Promise.all([
+    lstat(destination, { bigint: true }),
+    lstat(proofPath, { bigint: true }),
+  ]);
+  if (
+    created.isSymbolicLink() ||
+    !created.isFile() ||
+    proof.isSymbolicLink() ||
+    !proof.isFile() ||
+    !sameFile(created, proof)
+  ) {
+    throw new Error("Legacy plugin destination changed during copy");
+  }
+  return true;
 };
 
 /**
@@ -712,19 +798,34 @@ const assertRealDirectory = async (path: string): Promise<void> => {
   }
 };
 
-const readManifest = async (path: string): Promise<LegacyImportManifest | undefined> => {
+const readManifest = async (path: string): Promise<ReadLegacyImportManifest | undefined> => {
   if (!(await exists(path))) return undefined;
   const value = JSON.parse(await readFile(path, "utf8")) as Partial<LegacyImportManifest>;
   if (
-    value.version !== manifestVersion ||
     typeof value.importId !== "string" ||
     (value.state !== "in-progress" && value.state !== "completed") ||
-    !Array.isArray(value.plugins) ||
-    !value.plugins.every((entry) => typeof entry === "string")
+    !Array.isArray(value.plugins)
   ) {
     throw new Error("Legacy import journal is invalid");
   }
-  return value as LegacyImportManifest;
+  if (value.version === 1 && value.plugins.every((entry) => typeof entry === "string")) {
+    return value as unknown as LegacyImportManifestV1;
+  }
+  if (
+    value.version === manifestVersion &&
+    value.plugins.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        !Array.isArray(entry) &&
+        typeof (entry as Partial<LegacyImportedPlugin>).path === "string" &&
+        typeof (entry as Partial<LegacyImportedPlugin>).proofPath === "string" &&
+        typeof (entry as Partial<LegacyImportedPlugin>).sha256 === "string",
+    )
+  ) {
+    return value as LegacyImportManifest;
+  }
+  throw new Error("Legacy import journal is invalid");
 };
 
 const writeManifest = async (
@@ -836,9 +937,23 @@ const exists = async (path: string): Promise<boolean> => {
 const isAlreadyExists = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
 
-const isApprovalName = (name: string): boolean => name.toLowerCase().includes("approval");
-const isExcludedPluginName = (name: string): boolean =>
-  isApprovalName(name) || name.startsWith(".");
+const isPluginSourceName = (name: string): boolean =>
+  !name.includes("/") &&
+  !name.includes("\\") &&
+  ![...name].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  }) &&
+  /\.(?:js|ts)$/iu.test(name);
+const isDirectChild = (parent: string, path: string): boolean =>
+  dirname(resolve(path)) === resolve(parent) && basename(path) === basename(resolve(path));
+const isProofPath = (parent: string, path: string): boolean =>
+  isDirectChild(parent, path) &&
+  /^\.codexbar-multi-legacy-proof-[0-9a-f-]{36}$/u.test(basename(path));
+const sameFile = (
+  left: { readonly dev: bigint; readonly ino: bigint },
+  right: { readonly dev: bigint; readonly ino: bigint },
+): boolean => left.ino > 0n && right.ino > 0n && left.dev === right.dev && left.ino === right.ino;
 const inside = (root: string, path: string): boolean => {
   const result = relative(resolve(root), resolve(path));
   return result === "" || (!result.startsWith("..") && !result.includes(".." + "\\"));

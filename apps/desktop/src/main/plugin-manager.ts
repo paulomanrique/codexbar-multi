@@ -64,16 +64,27 @@ interface DiscoveredPlugin {
 
 const encoder = new TextEncoder();
 const pluginIdPattern = /^[a-z0-9-]{1,64}$/;
-const pluginFile = /^([a-z0-9-]{1,64})\.(js|ts)$/;
+const pluginSourceFile = /^.+\.(js|ts)$/iu;
 
 function assertPluginId(pluginId: string): void {
   if (!pluginIdPattern.test(pluginId)) throw new PluginRuntimeError("load", "plugin id is invalid");
 }
 
 function languageFor(fileName: string): PluginSourceLanguage | undefined {
-  const match = pluginFile.exec(fileName);
+  if (
+    fileName.startsWith(".") ||
+    fileName.includes("/") ||
+    fileName.includes("\\") ||
+    [...fileName].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    })
+  ) {
+    return undefined;
+  }
+  const match = pluginSourceFile.exec(fileName);
   if (match === null) return undefined;
-  return match[2] === "ts" ? "typescript" : "javascript";
+  return match[1]?.toLowerCase() === "ts" ? "typescript" : "javascript";
 }
 
 function safeMessage(cause: unknown): string {
@@ -126,7 +137,7 @@ function parseApprovals(value: unknown): Record<string, ApprovalRecord> {
   if (typeof source !== "object" || source === null || Array.isArray(source)) return {};
   const parsed: Record<string, ApprovalRecord> = {};
   for (const [id, raw] of Object.entries(source)) {
-    if (!pluginFile.test(`${id}.js`) || typeof raw !== "object" || raw === null) continue;
+    if (!pluginIdPattern.test(id) || typeof raw !== "object" || raw === null) continue;
     const record = raw as { binding?: unknown; settings?: unknown };
     const binding = parseBinding(record.binding);
     if (binding === undefined || binding.instanceId !== id) continue;
@@ -305,11 +316,19 @@ export class DesktopPluginManager {
     const entries = await readdir(this.pluginsRoot, { withFileTypes: true });
     const plugins: InstalledPluginDTO[] = [];
     const invalidFiles: Array<{ fileName: string; error: string }> = [];
+    const seenIds = new Set(this.reservedIds);
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       const language = languageFor(entry.name);
       if (language === undefined || !entry.isFile() || entry.isSymbolicLink()) continue;
       try {
         const discovered = await this.load(entry.name, language);
+        if (seenIds.has(discovered.loaded.manifest.id)) {
+          throw new PluginRuntimeError(
+            "invalid-manifest",
+            "plugin id collides with another installed provider",
+          );
+        }
+        seenIds.add(discovered.loaded.manifest.id);
         const approval = approvals[discovered.loaded.manifest.id];
         let approved = false;
         if (approval !== undefined) {
@@ -334,6 +353,8 @@ export class DesktopPluginManager {
           "invalid-manifest",
           "plugin id collides with a first-party provider",
         );
+      if ((await this.findOptional(loaded.manifest.id)) !== undefined)
+        throw new PluginRuntimeError("load", "plugin is already installed");
       await ensurePrivateDirectory(this.pluginsRoot);
       for (const existingExtension of ["js", "ts"] as const) {
         try {
@@ -501,15 +522,34 @@ export class DesktopPluginManager {
   private async find(pluginId: string): Promise<DiscoveredPlugin> {
     assertPluginId(pluginId);
     await ensurePrivateDirectory(this.pluginsRoot);
-    for (const extension of ["js", "ts"] as const) {
-      const fileName = `${pluginId}.${extension}`;
+    const matches: DiscoveredPlugin[] = [];
+    const entries = await readdir(this.pluginsRoot, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const language = languageFor(entry.name);
+      if (language === undefined || !entry.isFile() || entry.isSymbolicLink()) continue;
       try {
-        return await this.load(fileName, extension === "ts" ? "typescript" : "javascript");
-      } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+        const discovered = await this.load(entry.name, language);
+        if (discovered.loaded.manifest.id === pluginId) matches.push(discovered);
+      } catch {
+        // An unrelated malformed plugin must not make an installed, valid
+        // provider impossible to remove or re-approve.
       }
     }
+    if (matches.length === 1) return matches[0]!;
+    if (matches.length > 1)
+      throw new PluginRuntimeError("invalid-manifest", "plugin id has multiple installed sources");
     throw new PluginRuntimeError("load", "plugin is not installed");
+  }
+
+  private async findOptional(pluginId: string): Promise<DiscoveredPlugin | undefined> {
+    try {
+      return await this.find(pluginId);
+    } catch (cause) {
+      if (cause instanceof PluginRuntimeError && cause.message === "plugin is not installed") {
+        return undefined;
+      }
+      throw cause;
+    }
   }
 
   private async load(fileName: string, language: PluginSourceLanguage): Promise<DiscoveredPlugin> {
@@ -520,11 +560,6 @@ export class DesktopPluginManager {
       ),
     );
     const loaded = await this.sandbox.inspect(source, { language, allowsDynamicId: true });
-    if (loaded.manifest.id !== pluginFile.exec(fileName)?.[1])
-      throw new PluginRuntimeError(
-        "invalid-manifest",
-        "plugin id must match its installed file name",
-      );
     if (this.reservedIds.has(loaded.manifest.id))
       throw new PluginRuntimeError(
         "invalid-manifest",
