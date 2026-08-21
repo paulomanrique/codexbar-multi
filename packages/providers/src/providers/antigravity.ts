@@ -81,6 +81,23 @@ const quotaSummaryRemaining = (bucket: Record<string, unknown>): number | undefi
   );
 };
 
+/** Mirrors Swift's modern-summary admission guard before legacy/remote fallback. */
+export const antigravityQuotaSummaryHasUsableBucket = (payload: unknown): boolean => {
+  const root = object(payload);
+  const summary = object(root?.response) ?? object(root?.summary) ?? root;
+  return (Array.isArray(summary?.groups) ? summary.groups : []).some((rawGroup) => {
+    const group = object(rawGroup);
+    return (Array.isArray(group?.buckets) ? group.buckets : []).some((rawBucket) => {
+      const bucket = object(rawBucket);
+      return (
+        bucket !== undefined &&
+        bucket.disabled !== true &&
+        quotaSummaryRemaining(bucket) !== undefined
+      );
+    });
+  });
+};
+
 const quota = (id: string, value: unknown): Quota | undefined => {
   const model = object(value);
   const info = object(model?.quotaInfo) ?? model;
@@ -378,6 +395,50 @@ const remoteUsage = async (ctx: ProviderContext, token: string) => {
   });
 };
 
+const configuredLocalUsage = async (ctx: ProviderContext) => {
+  const local = ctx.settings.getSecret("ANTIGRAVITY_LOCAL_QUOTA_JSON")?.trim() || undefined;
+  let quotaSummaryJson: string;
+  let userStatusJson: string | undefined;
+  if (local !== undefined) {
+    quotaSummaryJson = local;
+    userStatusJson = ctx.settings.getSecret("ANTIGRAVITY_LOCAL_USER_STATUS_JSON")?.trim();
+  } else {
+    if (ctx.local?.fetchAntigravityLocalSnapshot === undefined)
+      throw ctx.fail.providerUnavailable("Antigravity local usage is not available.");
+    const response = await ctx.local.fetchAntigravityLocalSnapshot();
+    quotaSummaryJson = response.quotaSummaryJson;
+    userStatusJson = response.userStatusJson;
+  }
+
+  let quotaPayload: unknown;
+  try {
+    quotaPayload = JSON.parse(quotaSummaryJson) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError)
+      throw ctx.fail.parseFailure("Antigravity local quota output was not valid JSON.");
+    throw error;
+  }
+  if (!antigravityQuotaSummaryHasUsableBucket(quotaPayload))
+    throw ctx.fail.parseFailure("Antigravity local quota response has no usable buckets.");
+  let identity: Record<string, unknown> = {};
+  if (userStatusJson !== undefined) {
+    try {
+      identity = parseAntigravityUserStatusIdentity(JSON.parse(userStatusJson) as unknown);
+    } catch (error) {
+      if (error instanceof SyntaxError)
+        throw ctx.fail.parseFailure("Antigravity local user status was not valid JSON.");
+      throw error;
+    }
+  }
+  return parseAntigravityQuotaSummary(quotaPayload, ctx, identity);
+};
+
+const oauthUsage = async (ctx: ProviderContext) => {
+  const token = ctx.settings.getSecret("ANTIGRAVITY_OAUTH_ACCESS_TOKEN")?.trim();
+  if (!token) throw ctx.fail.missingCredential("Antigravity needs an OAuth access token.");
+  return remoteUsage(ctx, token);
+};
+
 const definition: ProviderDefinition = {
   id: "antigravity",
   name: "Antigravity",
@@ -395,41 +456,37 @@ const definition: ProviderDefinition = {
     },
   ],
   fetchUsage: async (ctx) => {
-    const local = ctx.settings.getSecret("ANTIGRAVITY_LOCAL_QUOTA_JSON")?.trim();
-    if (local) {
-      let quotaPayload: unknown;
-      try {
-        quotaPayload = JSON.parse(local) as unknown;
-      } catch (error) {
-        if (error instanceof SyntaxError)
-          throw ctx.fail.parseFailure("Antigravity local quota output was not valid JSON.");
-        throw error;
-      }
-      const userStatus = ctx.settings.getSecret("ANTIGRAVITY_LOCAL_USER_STATUS_JSON")?.trim();
-      let identity: Record<string, unknown> = {};
-      if (userStatus !== undefined) {
-        try {
-          identity = parseAntigravityUserStatusIdentity(JSON.parse(userStatus) as unknown);
-        } catch (error) {
-          if (error instanceof SyntaxError)
-            throw ctx.fail.parseFailure("Antigravity local user status was not valid JSON.");
-          throw error;
-        }
-      }
-      return parseAntigravityQuotaSummary(quotaPayload, ctx, identity);
-    }
-    const token = ctx.settings.getSecret("ANTIGRAVITY_OAUTH_ACCESS_TOKEN")?.trim();
-    if (!token)
-      throw ctx.fail.missingCredential(
-        "Antigravity needs ProcessRunner/PrivateFileStore local data or an OAuth credential owned by CredentialStore.",
-      );
-    return remoteUsage(ctx, token);
+    if (ctx.settings.getSecret("ANTIGRAVITY_LOCAL_QUOTA_JSON")?.trim())
+      return configuredLocalUsage(ctx);
+    return oauthUsage(ctx);
   },
 };
-const strategy: ProviderStrategy = {
+
+const localStrategy: ProviderStrategy = {
+  id: "antigravity.local",
+  kind: "local",
+  fetchUsage: configuredLocalUsage,
+  fallbackOn: ["provider-unavailable", "network-failure", "api-failure", "parse-failure"],
+};
+const oauthStrategy: ProviderStrategy = {
   id: "antigravity.oauth",
-  kind: "api",
+  kind: "oauth",
+  fetchUsage: oauthUsage,
+};
+const compatibilityStrategy: ProviderStrategy = {
+  id: "antigravity.auto",
+  kind: "oauth",
   fetchUsage: definition.fetchUsage,
 };
-export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };
-export const antigravity: FirstPartyProvider = { ...strategy, descriptor };
+const strategies = [localStrategy, oauthStrategy] as const;
+export const descriptor: ProviderDescriptor = {
+  ...definition,
+  status: "partial",
+  strategy: compatibilityStrategy,
+  strategies,
+};
+export const antigravity: FirstPartyProvider = {
+  ...compatibilityStrategy,
+  descriptor,
+  strategies,
+};

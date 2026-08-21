@@ -13,6 +13,26 @@ import {
 } from "../src/node.ts";
 
 describe("Node first-party local capabilities", () => {
+  it("keeps the native Antigravity probe provider-scoped and returns only its narrow DTO", async () => {
+    const calls: AbortSignal[] = [];
+    const local = makeNodeFirstPartyLocalCapabilities({
+      antigravityLocalFetch: async (signal) => {
+        calls.push(signal);
+        return { quotaSummaryJson: '{"groups":[]}', userStatusJson: '{"userStatus":{}}' };
+      },
+    });
+    await expect(
+      Effect.runPromise(local.fetchAntigravityLocalSnapshot!("antigravity")),
+    ).resolves.toEqual({
+      quotaSummaryJson: '{"groups":[]}',
+      userStatusJson: '{"userStatus":{}}',
+    });
+    expect(calls).toHaveLength(1);
+    await expect(
+      Effect.runPromise(local.fetchAntigravityLocalSnapshot!("claude")),
+    ).rejects.toMatchObject({ operation: "read Antigravity local usage" });
+  });
+
   it("resolves Kiro CLI state per platform without accepting a provider path", () => {
     const environment = {};
     expect(kiroStateDatabasePath(environment, "/fixture/home", "darwin")).toBe(

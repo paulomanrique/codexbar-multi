@@ -9,7 +9,7 @@ import {
   refreshProviderAndPersist,
   type HistoryRecord,
 } from "@codexbar/core";
-import { amp, grok, openai } from "@codexbar/providers";
+import { amp, antigravity, grok, openai } from "@codexbar/providers";
 import { ibmbob } from "@codexbar/providers";
 import type { FirstPartyProvider } from "@codexbar/providers";
 import { makeFirstPartyProviderRuntime, nextDailyReset } from "../src/first-party-runtime.ts";
@@ -22,6 +22,187 @@ const response = (value: unknown) => ({
 });
 
 describe("first-party refresh runtime", () => {
+  it("prefers the Antigravity local broker in auto mode and keeps host credentials out of the snapshot", async () => {
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () =>
+          Effect.succeed({
+            quotaSummaryJson: JSON.stringify({
+              groups: [
+                {
+                  displayName: "Gemini",
+                  buckets: [
+                    {
+                      bucketId: "gemini-session",
+                      displayName: "5-hour",
+                      remainingFraction: 0.75,
+                    },
+                  ],
+                },
+              ],
+            }),
+            userStatusJson: JSON.stringify({
+              userStatus: { email: "local@example.test", userTier: { name: "Ultra" } },
+            }),
+          }),
+      },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+    await expect(
+      Effect.runPromise(
+        runtime.fetch("antigravity", { sourceMode: "auto", includeCredits: false }),
+      ),
+    ).resolves.toMatchObject({
+      strategyId: "antigravity.local",
+      source: "local-probe",
+      snapshot: {
+        primary: { usedPercent: 25 },
+        identity: {
+          accountEmail: "local@example.test",
+          loginMethod: "Ultra",
+          providerId: "antigravity",
+        },
+      },
+    });
+  });
+
+  it("falls back from unavailable Antigravity local usage to OAuth only in auto mode", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: {
+        read: (_provider, key) =>
+          Effect.succeed(key === "ANTIGRAVITY_OAUTH_ACCESS_TOKEN" ? "oauth-token" : undefined),
+      },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () =>
+          Effect.fail(new InfrastructureError("local probe", "not running")),
+      },
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          const body = request.url.endsWith("loadCodeAssist")
+            ? { currentTier: { id: "standard-tier" }, cloudaicompanionProject: "project" }
+            : request.url.endsWith("fetchAvailableModels")
+              ? {
+                  models: {
+                    gemini: {
+                      displayName: "Gemini",
+                      quotaInfo: { remainingFraction: 0.5 },
+                    },
+                  },
+                }
+              : {};
+          return Effect.succeed(response(body));
+        },
+      },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+    await expect(
+      Effect.runPromise(
+        runtime.fetch("antigravity", { sourceMode: "auto", includeCredits: false }),
+      ),
+    ).resolves.toMatchObject({ strategyId: "antigravity.oauth", source: "oauth" });
+    expect(requests).toHaveLength(2);
+    await expect(
+      Effect.runPromise(runtime.fetch("antigravity", { sourceMode: "cli", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+  });
+
+  it("never falls through to Antigravity OAuth after caller cancellation", async () => {
+    const controller = new AbortController();
+    let startedResolve: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+    let oauthRequests = 0;
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: {
+        read: (_provider, key) =>
+          Effect.succeed(key === "ANTIGRAVITY_OAUTH_ACCESS_TOKEN" ? "oauth-token" : undefined),
+      },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () =>
+          Effect.tryPromise({
+            try: (signal) => {
+              startedResolve?.();
+              return new Promise((_resolve, reject) =>
+                signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+              );
+            },
+            catch: (error) => error,
+          }),
+      },
+      http: {
+        execute: () => {
+          oauthRequests += 1;
+          return Effect.succeed(response({}));
+        },
+      },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+    const pending = Effect.runPromise(
+      runtime.fetch("antigravity", { sourceMode: "auto", includeCredits: false }),
+      { signal: controller.signal },
+    );
+    await started;
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await expect(pending).rejects.toBeDefined();
+    expect(oauthRequests).toBe(0);
+  });
+
+  it("rejects an oversized Antigravity broker DTO before provider parsing", async () => {
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () =>
+          Effect.succeed({ quotaSummaryJson: "x".repeat(1024 * 1024 + 1) }),
+      },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+    await expect(
+      Effect.runPromise(runtime.fetch("antigravity", { sourceMode: "cli", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+  });
+
   it("routes an explicit Grok OAuth refresh through the private credential capability", async () => {
     const requests: HttpRequest[] = [];
     const runtime = makeFirstPartyProviderRuntime({

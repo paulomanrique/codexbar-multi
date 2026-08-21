@@ -17,6 +17,7 @@ import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import { mapProviderSnapshot } from "@codexbar/providers";
 import type {
   FirstPartyProvider,
+  ProviderAntigravityLocalSnapshot,
   ProviderBinaryResponse,
   ProviderContext,
   ProviderDescriptor,
@@ -79,6 +80,10 @@ export interface FirstPartyLocalCapabilities {
   readonly fetchKiroUsageLimits?: (
     providerId: ProviderId,
   ) => Effect.Effect<ProviderKiroUsageLimitsResponse, unknown>;
+  /** Antigravity-only bounded local responses; endpoint credentials remain in platform. */
+  readonly fetchAntigravityLocalSnapshot?: (
+    providerId: ProviderId,
+  ) => Effect.Effect<ProviderAntigravityLocalSnapshot, unknown>;
   /** Grok-only aggregate local activity. It is not a usage/quota capability. */
   readonly fetchGrokLocalSessionSummary?: (
     providerId: ProviderId,
@@ -419,6 +424,21 @@ const localFor = (
       (result.text.length > maximumResponseBytes || result.text.includes("\u0000"))
     )
       throw failure("api-failure", "Local data response is invalid or exceeds 1 MiB.");
+    return result;
+  },
+  fetchAntigravityLocalSnapshot: async () => {
+    if (providerId !== "antigravity" || local?.fetchAntigravityLocalSnapshot === undefined)
+      throw failure(
+        "provider-unavailable",
+        "Antigravity local usage is not configured by this host.",
+      );
+    const result = await Effect.runPromise(local.fetchAntigravityLocalSnapshot(providerId), {
+      signal,
+    });
+    for (const value of [result.quotaSummaryJson, result.userStatusJson]) {
+      if (value !== undefined && (value.length > maximumResponseBytes || value.includes("\u0000")))
+        throw failure("api-failure", "Antigravity local response is invalid or exceeds 1 MiB.");
+    }
     return result;
   },
   fetchKiroUsageLimits: async () => {

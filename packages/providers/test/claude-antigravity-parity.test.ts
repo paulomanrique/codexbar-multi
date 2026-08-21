@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   antigravity,
+  antigravityQuotaSummaryHasUsableBucket,
   antigravityQuotaWindowMinutes,
   parseAntigravityQuotaSummary,
   parseAntigravityTokenClaims,
@@ -183,6 +184,34 @@ describe("Claude and Antigravity Swift-derived parity", () => {
     });
   });
 
+  it("treats an empty manual local fixture as absent instead of shadowing OAuth", async () => {
+    const calls: Request[] = [];
+    await expect(
+      antigravity.fetchUsage(
+        context(
+          (request) => {
+            calls.push(request);
+            if (request.url.pathname.endsWith("loadCodeAssist"))
+              return response({ cloudaicompanionProject: "project" });
+            return response({
+              models: {
+                gemini: {
+                  displayName: "Gemini",
+                  quotaInfo: { remainingFraction: 0.5 },
+                },
+              },
+            });
+          },
+          {
+            ANTIGRAVITY_LOCAL_QUOTA_JSON: "   ",
+            ANTIGRAVITY_OAUTH_ACCESS_TOKEN: "fixture",
+          },
+        ),
+      ),
+    ).resolves.toMatchObject({ primary: { usedPercent: 50 } });
+    expect(calls).toHaveLength(2);
+  });
+
   it("ports Antigravity OAuth claims and plan-tier resolution fail-soft", () => {
     expect(parseAntigravityTokenClaims(jwt({ email: " person@example.com ", hd: "corp" }))).toEqual(
       { email: "person@example.com", hostedDomain: "corp" },
@@ -317,6 +346,35 @@ describe("Claude and Antigravity Swift-derived parity", () => {
       ],
       identity: { providerId: "antigravity" },
     });
+  });
+
+  it("admits the modern local summary only when Swift would find a usable bucket", async () => {
+    expect(
+      antigravityQuotaSummaryHasUsableBucket({
+        groups: [
+          {
+            buckets: [
+              { bucketId: "disabled", remainingFraction: 0.5, disabled: true },
+              { bucketId: "unknown" },
+            ],
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      antigravityQuotaSummaryHasUsableBucket({
+        groups: [{ buckets: [{ bucketId: "known", remaining: { remainingFraction: 0.5 } }] }],
+      }),
+    ).toBe(true);
+    await expect(
+      antigravity.fetchUsage(
+        context(() => response({}), {
+          ANTIGRAVITY_LOCAL_QUOTA_JSON: JSON.stringify({
+            groups: [{ buckets: [{ bucketId: "unknown", disabled: false }] }],
+          }),
+        }),
+      ),
+    ).rejects.toThrow("parse-failure");
   });
 
   it("matches Swift quota cadence aliases and rejects unrelated model labels", () => {

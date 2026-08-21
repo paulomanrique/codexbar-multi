@@ -69,6 +69,12 @@ export interface ProviderGrokCliBillingResponse {
   readonly stderr: string;
 }
 
+/** Bounded local Antigravity responses; process, port and CSRF details stay host-owned. */
+export interface ProviderAntigravityLocalSnapshot {
+  readonly quotaSummaryJson: string;
+  readonly userStatusJson?: string;
+}
+
 /**
  * Deliberately narrow local capability broker. It is not a process or
  * filesystem API: every command and data source is an allowlisted symbolic
@@ -85,6 +91,8 @@ export interface ProviderLocalCapabilities {
   ) => Promise<ProviderLocalDataResult | undefined>;
   /** Optional because a host may support the Kiro CLI without its private state store. */
   readonly fetchKiroUsageLimits?: () => Promise<ProviderKiroUsageLimitsResponse>;
+  /** Reads only the modern local quota-summary path plus best-effort identity. */
+  readonly fetchAntigravityLocalSnapshot?: () => Promise<ProviderAntigravityLocalSnapshot>;
   /** Optional diagnostic-only local Grok activity; it must never supply a quota window. */
   readonly fetchGrokLocalSessionSummary?: () => Promise<ProviderGrokLocalSessionSummary>;
   /** Reads only the selected Grok OIDC record from the private auth file. */

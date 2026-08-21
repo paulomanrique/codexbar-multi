@@ -56,8 +56,13 @@ import {
   makeNodePrivateFileRestriction,
   type NodePrivatePathRestrictionOptions,
 } from "./node-private-path-security.ts";
+import {
+  fetchNodeAntigravityLocalSnapshot,
+  makeNodeAntigravityLocalDependencies,
+} from "./node-antigravity-local.ts";
 
 export * from "./node-persistence.ts";
+export * from "./node-antigravity-local.ts";
 export * from "./node-persistence-worker-client.ts";
 export * from "./first-party-runtime.ts";
 export * from "./legacy-import.ts";
@@ -560,6 +565,10 @@ export interface NodeFirstPartyLocalCapabilitiesOptions {
   readonly platform?: NodeJS.Platform;
   /** Test/alternate-host scanner options; paths remain private to this module. */
   readonly grokLocalSessionScan?: Omit<NodeGrokLocalSessionScanOptions, "signal">;
+  /** Test seam for the narrow Antigravity broker; production uses native discovery. */
+  readonly antigravityLocalFetch?: (
+    signal: AbortSignal,
+  ) => Promise<import("@codexbar/providers").ProviderAntigravityLocalSnapshot>;
 }
 
 /**
@@ -576,6 +585,33 @@ export const makeNodeFirstPartyLocalCapabilities = (
   const roots =
     options.jetBrainsRoots ?? jetBrainsConfigRoots(environment, options.homeDirectory ?? homedir());
   return {
+    fetchAntigravityLocalSnapshot: (providerId) =>
+      Effect.tryPromise({
+        try: (signal) => {
+          if (providerId !== "antigravity")
+            throw new Error("Provider Antigravity local usage is not allowlisted.");
+          return (
+            options.antigravityLocalFetch ??
+            ((operationSignal: AbortSignal) =>
+              fetchNodeAntigravityLocalSnapshot(
+                makeNodeAntigravityLocalDependencies({
+                  processRunner,
+                  environment,
+                  platform: options.platform ?? process.platform,
+                }),
+                { signal: operationSignal, platform: options.platform ?? process.platform },
+              ))
+          )(signal);
+        },
+        catch: (error) =>
+          isAbort(error)
+            ? error
+            : new InfrastructureError(
+                "read Antigravity local usage",
+                "Antigravity local usage probe failed.",
+                error,
+              ),
+      }),
     run: (providerId, command, request) => {
       if (
         (providerId !== "amp" && providerId !== "kiro") ||
