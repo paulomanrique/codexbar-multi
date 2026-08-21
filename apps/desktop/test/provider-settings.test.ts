@@ -6,6 +6,7 @@ import {
   providerSettingsFor,
   providerSettingsProjection,
   providerSettingsSourcesForKind,
+  providerSettingsSourcesForStrategies,
   updateFirstPartyProviderSettings,
   updateSupportedFirstPartyProviderSettings,
 } from "../src/main/provider-settings.ts";
@@ -55,6 +56,14 @@ describe("desktop provider settings", () => {
     expect(providerSettingsSourcesForKind("web")).toEqual(["auto", "web"]);
     expect(providerSettingsSourcesForKind("cli")).toEqual(["auto", "cli"]);
     expect(providerSettingsSourcesForKind("local")).toEqual(["auto", "cli"]);
+  });
+
+  it("unions only declared source modes for a multi-strategy provider", () => {
+    expect(providerSettingsSourcesForStrategies([{ kind: "api" }, { kind: "web" }])).toEqual([
+      "auto",
+      "api",
+      "web",
+    ]);
   });
 
   it("normalizes an unsupported persisted source in the returned projection", () => {

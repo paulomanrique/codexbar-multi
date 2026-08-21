@@ -28,6 +28,7 @@ import type {
   ProviderLocalDataResult,
   ProviderLocalProcessResult,
   ProviderResponse,
+  ProviderStrategy,
 } from "@codexbar/providers";
 
 const maximumResponseBytes = 1024 * 1024;
@@ -92,23 +93,26 @@ export interface FirstPartyProviderRuntimeOptions {
   readonly credentialKey?: (providerId: ProviderId, setting: string) => string;
 }
 
-const sourceFor = (provider: FirstPartyProvider): ProviderFetchStrategy["source"] =>
-  provider.kind === "web"
+const sourceFor = (strategy: ProviderStrategy): ProviderFetchStrategy["source"] =>
+  strategy.kind === "web"
     ? "web"
-    : provider.kind === "cli"
+    : strategy.kind === "cli"
       ? "cli"
-      : provider.kind === "local"
+      : strategy.kind === "local"
         ? "local-probe"
         : "api-token";
 
 const acceptsSource = (
-  provider: FirstPartyProvider,
+  strategy: ProviderStrategy,
   mode: ProviderFetchContext["sourceMode"],
 ): boolean =>
   mode === "auto" ||
-  (mode === "web" && provider.kind === "web") ||
-  (mode === "cli" && (provider.kind === "cli" || provider.kind === "local")) ||
-  (mode === "api" && provider.kind === "api");
+  (mode === "web" && strategy.kind === "web") ||
+  (mode === "cli" && (strategy.kind === "cli" || strategy.kind === "local")) ||
+  (mode === "api" && strategy.kind === "api");
+
+const declaredStrategies = (provider: FirstPartyProvider): readonly ProviderStrategy[] =>
+  provider.strategies ?? provider.descriptor.strategies ?? [provider];
 
 const credentialKeyFor = (providerId: ProviderId, setting: string): string =>
   `provider/${providerId}/secret/${setting}`;
@@ -439,16 +443,23 @@ export const makeFirstPartyProviderRuntime = (
     context: ProviderFetchContext,
   ): Effect.Effect<readonly ProviderFetchStrategy[], never> => {
     const provider = byId.get(providerId);
-    if (provider === undefined || !acceptsSource(provider, context.sourceMode))
-      return Effect.succeed([]);
-    const strategy: ProviderFetchStrategy = {
-      id: provider.id,
-      source: sourceFor(provider),
-      isAvailable: () => Effect.succeed(true),
-      fetch: () => executeProvider(provider, context, options, keyFor),
-      shouldFallback: () => false,
-    };
-    return Effect.succeed([strategy]);
+    if (provider === undefined) return Effect.succeed([]);
+    return Effect.succeed(
+      declaredStrategies(provider)
+        .filter((strategy) => acceptsSource(strategy, context.sourceMode))
+        .map(
+          (strategy): ProviderFetchStrategy => ({
+            id: strategy.id,
+            source: sourceFor(strategy),
+            isAvailable: () => Effect.succeed(true),
+            fetch: () => executeProvider(provider, strategy, context, options, keyFor),
+            shouldFallback: (error, fetchContext) =>
+              fetchContext.sourceMode === "auto" &&
+              error instanceof ClassifiedFetchFailure &&
+              strategy.fallbackOn?.includes(error.kind) === true,
+          }),
+        ),
+    );
   };
 
   const pipeline = makeProviderFetchPipeline({ resolveStrategies: strategyFor });
@@ -460,6 +471,7 @@ export const makeFirstPartyProviderRuntime = (
 
 const executeProvider = (
   provider: FirstPartyProvider,
+  strategy: ProviderStrategy,
   fetchContext: ProviderFetchContext,
   options: FirstPartyProviderRuntimeOptions,
   keyFor: (providerId: ProviderId, setting: string) => string,
@@ -676,7 +688,7 @@ const executeProvider = (
           apiFailure: (message) => failure("api-failure", message),
         },
       };
-      return mapProviderSnapshot(await provider.fetchUsage(context), descriptor.id, now());
+      return mapProviderSnapshot(await strategy.fetchUsage(context), descriptor.id, now());
     },
     catch: (error) =>
       error instanceof ClassifiedFetchFailure

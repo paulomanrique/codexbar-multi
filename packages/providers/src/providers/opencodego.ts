@@ -264,10 +264,9 @@ const definition: ProviderDefinition = {
   capabilities: ["browser-cookies"],
   cookieDomains: ["opencode.ai"],
   fetchUsage: async (ctx) => {
-    // The runtime currently exposes one strategy per provider and filters explicit sourceMode
-    // by strategy.kind. Keep this strategy web-shaped for cookie mode, while selecting the API
-    // first in auto/direct calls when a key is configured; explicit api mode needs shared
-    // multi-strategy selection before the host can dispatch it here.
+    // Compatibility entry point for parser/direct-provider callers. The host
+    // runtime uses `strategies` below, where each source is independently
+    // selected and fallback is classified before the next source is attempted.
     const token = apiKeyFrom(ctx);
     const apiMode =
       ctx.sourceMode === undefined || ctx.sourceMode === "auto" || ctx.sourceMode === "api";
@@ -284,10 +283,43 @@ const definition: ProviderDefinition = {
     return fetchWebUsage(ctx);
   },
 };
-const strategy: ProviderStrategy = {
+const legacyStrategy: ProviderStrategy = {
   id: "opencodego.web",
   kind: "web",
   fetchUsage: definition.fetchUsage,
 };
-export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };
-export const opencodego: FirstPartyProvider = { ...strategy, descriptor };
+const apiStrategy: ProviderStrategy = {
+  id: "opencodego.api",
+  kind: "api",
+  fetchUsage: async (ctx) => {
+    const token = apiKeyFrom(ctx);
+    if (!token) throw ctx.fail.missingCredential("No OpenCode Go API key is configured.");
+    return fetchAPI(ctx, token);
+  },
+  // This mirrors the prior Auto-only direct path: a bad, unavailable, or
+  // malformed API response may use the separately approved web session, but
+  // an explicit API request never crosses that source boundary.
+  fallbackOn: [
+    "authentication-expired",
+    "missing-credential",
+    "permission-denied",
+    "rate-limited",
+    "provider-unavailable",
+    "parse-failure",
+    "network-failure",
+    "api-failure",
+  ],
+};
+const webStrategy: ProviderStrategy = {
+  id: "opencodego.web",
+  kind: "web",
+  fetchUsage: fetchWebUsage,
+};
+const strategies = [apiStrategy, webStrategy] as const;
+export const descriptor: ProviderDescriptor = {
+  ...definition,
+  status: "partial",
+  strategy: legacyStrategy,
+  strategies,
+};
+export const opencodego: FirstPartyProvider = { ...legacyStrategy, descriptor, strategies };

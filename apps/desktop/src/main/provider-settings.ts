@@ -21,6 +21,21 @@ export const providerSettingsSourcesForKind = (
 ): readonly ProviderSourceMode[] =>
   kind === "api" ? ["auto", "api"] : kind === "web" ? ["auto", "web"] : ["auto", "cli"];
 
+/**
+ * A first-party provider may deliberately declare more than one host strategy.
+ * Settings exposes only the union of those declared source modes; it never
+ * infers a source from a renderer value.
+ */
+export const providerSettingsSourcesForStrategies = (
+  strategies: readonly { readonly kind: "api" | "web" | "cli" | "local" }[],
+): readonly ProviderSourceMode[] => {
+  const sources = new Set<ProviderSourceMode>(["auto"]);
+  for (const strategy of strategies) {
+    for (const source of providerSettingsSourcesForKind(strategy.kind)) sources.add(source);
+  }
+  return [...sources];
+};
+
 export const providerSettingsProjection = (
   config: PersistedCodexBarConfig,
   capabilities: readonly ProviderSettingsCapability[],

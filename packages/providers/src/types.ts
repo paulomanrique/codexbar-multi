@@ -164,6 +164,12 @@ export interface ProviderDescriptor {
   readonly settings: readonly ProviderSetting[];
   readonly capabilities?: readonly ("browser-cookies" | "http-status")[];
   readonly cookieDomains?: readonly string[];
+  /**
+   * Ordered host-runtime strategies.  `strategy` remains the compatibility
+   * entry point for direct provider calls; hosts use this array when a
+   * provider has more than one deliberately declared source.
+   */
+  readonly strategies?: readonly ProviderStrategy[];
   readonly strategy?: ProviderStrategy;
 }
 
@@ -183,9 +189,25 @@ export interface ProviderStrategy {
   readonly id: string;
   readonly kind: "api" | "web" | "cli" | "local";
   readonly fetchUsage: (context: ProviderContext) => Promise<ProviderSnapshot>;
+  /**
+   * Classified failures that may continue to the next declared strategy in
+   * Auto mode.  An omitted list is fail-closed: only this strategy is tried.
+   */
+  readonly fallbackOn?: readonly (
+    | "authentication-expired"
+    | "missing-credential"
+    | "permission-denied"
+    | "rate-limited"
+    | "provider-unavailable"
+    | "parse-failure"
+    | "network-failure"
+    | "api-failure"
+  )[];
 }
 
 export interface FirstPartyProvider extends ProviderStrategy {
   readonly descriptor: ProviderDescriptor;
+  /** Ordered strategies for the host runtime; absent for ordinary single-source providers. */
+  readonly strategies?: readonly ProviderStrategy[];
 }
 import type { ProviderId } from "@codexbar/contracts";

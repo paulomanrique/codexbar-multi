@@ -82,7 +82,7 @@ import {
   DesktopConfigMutations,
   providerSettingsFor,
   providerSettingsProjection,
-  providerSettingsSourcesForKind,
+  providerSettingsSourcesForStrategies,
   updateSupportedFirstPartyProviderSettings,
 } from "./provider-settings.js";
 
@@ -104,7 +104,9 @@ let claudeSwap: DesktopClaudeSwapController | undefined;
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
   id: provider.descriptor.id,
-  availableSources: providerSettingsSourcesForKind(provider.kind),
+  availableSources: providerSettingsSourcesForStrategies(
+    provider.strategies ?? provider.descriptor.strategies ?? [provider],
+  ),
 }));
 const providerSettingsCapabilitiesById = new Map(
   providerSettingsCapabilities.map((capability) => [capability.id, capability]),
