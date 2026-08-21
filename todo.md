@@ -27,7 +27,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Add atomic SQLite pruning for history and cost rows with worker coverage.
   - [x] Add bounded incremental Codex/Claude JSONL scanners with resumable cursors, source-identity checks, provenance, and fail-closed counter regressions.
   - [x] Persist xAI vendor-metered daily spend with atomic range replacement, exact/estimated coverage, confirmed-empty handling, and unavailable-source retention.
-  - [ ] Complete recursive log inventory, fork lineage/issue #2037, priority metadata, scanner checkpoints/cache, and atomic cursor-plus-row persistence parity.
+  - [x] Commit each local scanner cursor and its rows in one SQLite transaction, with checkpoint CAS across concurrent desktop/CLI processes and source-scoped reset.
+  - [ ] Complete recursive log inventory, fork lineage/issue #2037, priority metadata, and scanner cache parity.
 
 ## Milestone 2 — first vertical slice
 
@@ -95,7 +96,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Add accessible provider cards, explicit refresh, persisted history/cost views, and an honest read-only settings shell.
   - [x] Add schema-validated provider enablement/source mutations with serialized atomic persistence.
   - [x] Publish the provider-siloed spend overview/dashboard with xAI coverage state and no internal source IDs crossing IPC.
-  - [ ] Add account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
+  - [x] Add opt-in Claude Swap account cards and a schema-validated, freshly reauthorized desktop account-switch transaction.
+  - [ ] Add remaining account mutations, full dashboards, tray parity, notifications, autostart, shortcuts, and privacy controls.
 - [ ] Port all 23 languages, pluralization, RTL, and visual tests.
   - [x] Establish the 23-locale catalog, current renderer messages, plural rules, and RTL direction.
   - [x] Import the complete upstream `.strings`/`.stringsdict` catalogs with deterministic regeneration and English fallback.
