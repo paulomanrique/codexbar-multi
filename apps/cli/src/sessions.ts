@@ -82,8 +82,10 @@ export const runSessions = async (
   let sessions: readonly AgentSession[];
   try {
     sessions = await runtime.scanSessions(controller.signal);
-  } catch (error) {
-    io.stderr(`Error: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    // Session discovery can touch volatile process and local transcript state;
+    // keep filesystem paths and process details out of CLI error output.
+    io.stderr("Error: Unable to scan sessions.");
     return { exitCode: 1 };
   }
   const filtered = out.v2
@@ -108,12 +110,23 @@ export const runSessionsFocus = async (
     return { exitCode: 2 };
   }
   const controller = new AbortController();
-  const sessions = await runtime.scanSessions(controller.signal);
+  let sessions: readonly AgentSession[];
+  try {
+    sessions = await runtime.scanSessions(controller.signal);
+  } catch {
+    io.stderr("Error: Unable to scan sessions.");
+    return { exitCode: 2 };
+  }
   const session = sessions.find((candidate) => candidate.id === args[0]);
   if (session === undefined) {
     io.stderr(`Unknown session: ${args[0]}`);
     return { exitCode: 1 };
   }
-  const result = await runtime.focusSession(session, controller.signal);
-  return { exitCode: result === "focused" || result === "activated" ? 0 : 2 };
+  try {
+    const result = await runtime.focusSession(session, controller.signal);
+    return { exitCode: result === "focused" || result === "activated" ? 0 : 2 };
+  } catch {
+    io.stderr("Could not focus session.");
+    return { exitCode: 2 };
+  }
 };

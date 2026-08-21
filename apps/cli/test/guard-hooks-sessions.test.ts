@@ -239,4 +239,29 @@ describe("CLI sessions", () => {
     ).toBe(2);
     expect(output.stderr[0]).toContain("not ported");
   });
+
+  it("focuses a scanned session through the explicit platform adapter", async () => {
+    const output = capture();
+    const focused: AgentSession[] = [];
+    const result = await runSessionsFocus(["s1"], output.io, {
+      scanSessions: async () => sessions,
+      focusSession: async (session) => {
+        focused.push(session);
+        return "focused";
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(focused.map((session) => session.id)).toEqual(["s1"]);
+  });
+
+  it("redacts scanner failures from the user-facing sessions command", async () => {
+    const output = capture();
+    const result = await runSessions([], output.io, {
+      scanSessions: async () => {
+        throw new Error("/private/session.jsonl should not be displayed");
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(output.stderr).toEqual(["Error: Unable to scan sessions."]);
+  });
 });

@@ -33,6 +33,7 @@ import {
 } from "@codexbar/platform/node";
 import {
   CLAUDE_SWAP_MAX_OUTPUT_BYTES,
+  makeNodeAgentSessionRuntime,
   refreshClaudeSwapAccounts,
   switchClaudeSwapAccount,
 } from "@codexbar/platform";
@@ -51,7 +52,7 @@ import { runDashboard } from "./dashboard.ts";
 import { runDiagnose } from "./diagnose.ts";
 import { runGuard } from "./guard.ts";
 import { runHooks, type HookProcessRequest } from "./hooks.ts";
-import { runSessions, runSessionsFocus } from "./sessions.ts";
+import { runSessions, runSessionsFocus, type AgentSession } from "./sessions.ts";
 import { runCookie, type CLICookieStore } from "./cookie.ts";
 import { runPlugins, type CLIPluginStore } from "./plugins.ts";
 import { NodeCLIPluginStore, pluginSecretKey } from "./node-plugin-store.ts";
@@ -128,6 +129,11 @@ export interface CLIProviderRuntime {
   readonly costScanner?: CLICostScanner;
   readonly cache?: CLICacheStore;
   readonly runHook?: (request: HookProcessRequest) => Promise<{ readonly stdout: string }>;
+  readonly scanSessions?: (signal: AbortSignal) => Promise<readonly AgentSession[]>;
+  readonly focusSession?: (
+    session: AgentSession,
+    signal: AbortSignal,
+  ) => Promise<"focused" | "activated" | "failed">;
   readonly cookies?: CLICookieStore;
   readonly plugins?: CLIPluginStore;
   /** Opt-in Claude multi-account adapter; it remains a host-owned subprocess capability. */
@@ -680,6 +686,7 @@ export const makeNodeCLIProviderRuntime = (
   const claudeSwapFiles = makeNodePrivateFileStore();
   const claudeSwapRetentionPath = join(dirname(configPath), "claude-swap-retained-usage.json");
   const environmentSettings = makeEnvironmentProviderSettings(environment);
+  const agentSessions = makeNodeAgentSessionRuntime(environment);
   const codexCredential = discoverCodexCredential({ environment });
   const runtime: ProviderRuntimeService = makeFirstPartyProviderRuntime({
     providers: FIRST_PARTY_PROVIDERS,
@@ -789,6 +796,8 @@ export const makeNodeCLIProviderRuntime = (
     config: makeNodeCLIConfigStore(configRepository, configPath),
     costs: costStore,
     costScanner,
+    scanSessions: agentSessions.scan,
+    focusSession: agentSessions.focus,
     cache: {
       clearCookies: async (provider) => {
         const ids = provider === undefined ? PROVIDERS.map(({ id }) => id) : [provider];
