@@ -4,6 +4,8 @@ import {
   antigravity,
   antigravityQuotaWindowMinutes,
   parseAntigravityQuotaSummary,
+  parseAntigravityTokenClaims,
+  resolveAntigravityPlan,
 } from "../src/providers/antigravity.ts";
 import { claude, parseClaudeCLIUsage, parseClaudeUsage } from "../src/providers/claude.ts";
 import type { ProviderContext, ProviderResponse } from "../src/types.ts";
@@ -18,6 +20,13 @@ const response = (json: unknown, status = 200): ProviderResponse => ({
   status,
   bodyText: JSON.stringify(json),
 });
+const jwt = (payload: Record<string, unknown>): string => {
+  const encoded = btoa(JSON.stringify(payload))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  return `header.${encoded}.signature`;
+};
 const context = (
   handler: (request: Request) => ProviderResponse,
   settings: Record<string, string> = {},
@@ -130,7 +139,10 @@ describe("Claude and Antigravity Swift-derived parity", () => {
         (request) => {
           calls.push(request);
           if (request.url.pathname.endsWith("loadCodeAssist"))
-            return response({ currentTier: { name: "pro" }, cloudaicompanionProject: "project-1" });
+            return response({
+              currentTier: { id: "free-tier", name: "pro" },
+              cloudaicompanionProject: "project-1",
+            });
           if (request.url.pathname.endsWith("fetchAvailableModels"))
             return response({ error: "denied" }, 403);
           return response({
@@ -140,7 +152,11 @@ describe("Claude and Antigravity Swift-derived parity", () => {
             ],
           });
         },
-        { ANTIGRAVITY_OAUTH_ACCESS_TOKEN: "fixture" },
+        {
+          ANTIGRAVITY_OAUTH_ACCESS_TOKEN: "fixture",
+          ANTIGRAVITY_ID_TOKEN: jwt({ email: "owner@example.com", hd: "example.com" }),
+          ANTIGRAVITY_ACCOUNT_EMAIL: "fallback@example.com",
+        },
       ),
     );
     expect(calls.map((call) => call.url.pathname)).toEqual([
@@ -158,8 +174,26 @@ describe("Claude and Antigravity Swift-derived parity", () => {
         { id: "antigravity-quota-summary-gemini", window: { usedPercent: 19.999999999999996 } },
         { id: "antigravity-quota-summary-claude", window: { usedPercent: 75 } },
       ],
-      identity: { providerId: "antigravity", loginMethod: "pro" },
+      identity: {
+        providerId: "antigravity",
+        accountEmail: "owner@example.com",
+        loginMethod: "Workspace",
+      },
     });
+  });
+
+  it("ports Antigravity OAuth claims and plan-tier resolution fail-soft", () => {
+    expect(parseAntigravityTokenClaims(jwt({ email: " person@example.com ", hd: "corp" }))).toEqual(
+      { email: "person@example.com", hostedDomain: "corp" },
+    );
+    expect(parseAntigravityTokenClaims("not-a-jwt")).toEqual({});
+    expect(resolveAntigravityPlan({ planInfo: { planType: "Ultra" } }, {})).toBe("Ultra");
+    expect(resolveAntigravityPlan({ currentTier: { id: "standard-tier" } }, {})).toBe("Paid");
+    expect(resolveAntigravityPlan({ currentTier: { id: "free-tier" } }, {})).toBe("Free");
+    expect(
+      resolveAntigravityPlan({ currentTier: { id: "free-tier" } }, { hostedDomain: "example.com" }),
+    ).toBe("Workspace");
+    expect(resolveAntigravityPlan({ currentTier: { id: "legacy-tier" } }, {})).toBe("Legacy");
   });
 
   it("ports the local quota-summary parser without exposing process or socket APIs", () => {

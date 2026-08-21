@@ -70,6 +70,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Port Claude snapshot-identity plan history ownership and legacy email migration.
     - [ ] Port Claude OAuth/token-account plan history ownership.
     - [x] Port Antigravity pinned Gemini family history, snapshot email/organization ownership, and legacy unscoped adoption.
+    - [x] Bind Antigravity remote OAuth history to ID-token/email claims and Swift-compatible plan tiers.
     - [ ] Connect Antigravity local GetUserStatus/token-account owner observation to the shared history policy.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.

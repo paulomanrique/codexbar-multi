@@ -211,9 +211,53 @@ const projectFrom = (payload: unknown): string | undefined => {
     string(object(root?.response)?.cloudaicompanionProject)
   );
 };
-const planFrom = (payload: unknown): string | undefined =>
-  string(object(object(payload)?.currentTier)?.name) ??
-  string(object(object(payload)?.currentTier)?.id);
+
+export interface AntigravityTokenClaims {
+  readonly email?: string;
+  readonly hostedDomain?: string;
+}
+
+/** Fail-soft JWT claim extraction matching the Swift OAuth credential path. */
+export const parseAntigravityTokenClaims = (
+  idToken: string | null | undefined,
+): AntigravityTokenClaims => {
+  const payload = idToken?.split(".")[1];
+  if (payload === undefined || payload.length === 0 || payload.length > 32_768) return {};
+  try {
+    const normalized = payload.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+    const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+    const claims = object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+    const email = string(claims?.email);
+    const hostedDomain = string(claims?.hd);
+    return {
+      ...(email === undefined ? {} : { email }),
+      ...(hostedDomain === undefined ? {} : { hostedDomain }),
+    };
+  } catch {
+    return {};
+  }
+};
+
+export const resolveAntigravityPlan = (
+  payload: unknown,
+  claims: AntigravityTokenClaims,
+): string | undefined => {
+  const root = object(payload);
+  const planType = string(object(root?.planInfo)?.planType);
+  if (planType !== undefined) return planType;
+  const currentTier = object(root?.currentTier);
+  switch (string(currentTier?.id)) {
+    case "standard-tier":
+      return "Paid";
+    case "free-tier":
+      return claims.hostedDomain === undefined ? "Free" : "Workspace";
+    case "legacy-tier":
+      return "Legacy";
+    default:
+      return string(currentTier?.name);
+  }
+};
 
 const headers = (token: string) => ({
   Authorization: `Bearer ${token}`,
@@ -288,14 +332,14 @@ const remoteUsage = async (ctx: ProviderContext, token: string) => {
       }
     }
   }
+  const claims = parseAntigravityTokenClaims(
+    ctx.settings.getSecret("ANTIGRAVITY_ID_TOKEN")?.trim(),
+  );
+  const accountEmail = claims.email ?? ctx.settings.get("ANTIGRAVITY_ACCOUNT_EMAIL")?.trim();
+  const accountPlan = resolveAntigravityPlan(load.json, claims);
   return snapshot(quotas, ctx, {
-    ...(ctx.settings.get("ANTIGRAVITY_ACCOUNT_EMAIL")?.trim()
-      ? { accountEmail: ctx.settings.get("ANTIGRAVITY_ACCOUNT_EMAIL")?.trim() }
-      : {}),
-    ...(ctx.settings.get("ANTIGRAVITY_ACCOUNT_PLAN")?.trim()
-      ? { loginMethod: ctx.settings.get("ANTIGRAVITY_ACCOUNT_PLAN")?.trim() }
-      : {}),
-    ...(planFrom(load.json) ? { loginMethod: planFrom(load.json) } : {}),
+    ...(accountEmail ? { accountEmail } : {}),
+    ...(accountPlan ? { loginMethod: accountPlan } : {}),
   });
 };
 
@@ -305,6 +349,8 @@ const definition: ProviderDefinition = {
   endpoints: ["https://cloudcode-pa.googleapis.com"],
   settings: [
     { key: "ANTIGRAVITY_OAUTH_ACCESS_TOKEN", title: "Google OAuth access token", type: "secure" },
+    { key: "ANTIGRAVITY_ID_TOKEN", title: "Google OpenID identity token", type: "secure" },
+    { key: "ANTIGRAVITY_ACCOUNT_EMAIL", title: "Google account email", type: "plain" },
     { key: "ANTIGRAVITY_PROJECT_ID", title: "Google Cloud project", type: "plain" },
     { key: "ANTIGRAVITY_LOCAL_QUOTA_JSON", title: "Local quota JSON", type: "secure" },
   ],
