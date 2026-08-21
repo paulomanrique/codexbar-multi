@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
-  root: new URL(".", import.meta.url).pathname,
+  root: fileURLToPath(new URL(".", import.meta.url)),
   build: {
     target: "node24",
     outDir: "dist-sea-child",

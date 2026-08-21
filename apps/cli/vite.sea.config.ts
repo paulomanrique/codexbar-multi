@@ -1,13 +1,14 @@
 import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
-  root: new URL(".", import.meta.url).pathname,
+  root: fileURLToPath(new URL(".", import.meta.url)),
   // SEA always takes the process.execPath branch. Defining this avoids a
   // misleading CJS import.meta warning for the normal-development fallback.
   define: { "import.meta.url": "undefined" },
   resolve: {
     alias: {
-      "@napi-rs/keyring": new URL("./src/sea-keyring.ts", import.meta.url).pathname,
+      "@napi-rs/keyring": fileURLToPath(new URL("./src/sea-keyring.ts", import.meta.url)),
     },
   },
   build: {
