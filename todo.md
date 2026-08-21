@@ -76,6 +76,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
       - [x] Port GetUserStatus email/tier parsing and merge a host-supplied bounded response into local quota usage.
       - [x] Wire native process/port/CSRF discovery through the platform broker.
       - [x] Connect selected token-account ownership to local observation and OAuth fallback without exposing raw account credentials.
+      - [x] Restrict external `agy` reuse to an explicitly selected, same-user binary in one-shot CLI hosts.
       - [ ] Port the warm `agy` CLI lifecycle, readiness polling, idle teardown, and one-shot reset policy.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.

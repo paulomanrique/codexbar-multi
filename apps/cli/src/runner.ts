@@ -725,7 +725,12 @@ export const makeNodeCLIProviderRuntime = (
           selectedFirstPartyAccountFromConfig(config, providerId),
         ),
     },
-    local: makeNodeFirstPartyLocalCapabilities({ environment }),
+    local: makeNodeFirstPartyLocalCapabilities({
+      environment,
+      ...(environment.ANTIGRAVITY_CLI_PATH?.trim()
+        ? { antigravityExternalCLIPath: environment.ANTIGRAVITY_CLI_PATH.trim() }
+        : {}),
+    }),
     settings: {
       read: (providerId, setting) => {
         if (

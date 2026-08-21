@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -7,9 +10,11 @@ import {
   extractNodeAntigravityFlag,
   fetchNodeAntigravityLocalSnapshot,
   makeNodeAntigravityLocalDependencies,
+  nodeAntigravityCommandMatchesBinary,
   nodeAntigravityConnectionCandidates,
   nodeAntigravitySocketInode,
   parseNodeAntigravityProcNetPorts,
+  parseNodeAntigravityProcUID,
   parseNodeAntigravityWindowsProcesses,
   requestNodeAntigravityLocalJSON,
   resolveNodeAntigravityProcesses,
@@ -76,6 +81,33 @@ describe("Node Antigravity local broker", () => {
     expect(extractNodeAntigravityFlag("binary --csrf_token token", "--csrf_token")).toBe("token");
   });
 
+  it("matches only an exact absolute external CLI binary path", () => {
+    expect(
+      nodeAntigravityCommandMatchesBinary(
+        "/usr/local/bin/agy -p hi",
+        "/usr/local/bin/agy",
+        "linux",
+      ),
+    ).toBe(true);
+    expect(
+      nodeAntigravityCommandMatchesBinary(
+        "/usr/local/bin/agy-old -p hi",
+        "/usr/local/bin/agy",
+        "linux",
+      ),
+    ).toBe(false);
+    expect(nodeAntigravityCommandMatchesBinary("agy -p hi", "/usr/local/bin/agy", "linux")).toBe(
+      false,
+    );
+    expect(
+      nodeAntigravityCommandMatchesBinary(
+        '"C:\\Program Files\\Antigravity\\agy.exe" -p hi',
+        "c:\\program files\\antigravity\\AGY.EXE",
+        "win32",
+      ),
+    ).toBe(true);
+  });
+
   it("parses only LISTEN ports owned by the process socket inodes", () => {
     expect(nodeAntigravitySocketInode("socket:[12345]")).toBe("12345");
     expect(nodeAntigravitySocketInode("pipe:[12345]")).toBeUndefined();
@@ -86,6 +118,169 @@ describe("Node Antigravity local broker", () => {
        2: 0100007F:2710 00000000:0000 0A 0:0 00:0 0 1000 0 99999
     `;
     expect(parseNodeAntigravityProcNetPorts(table, new Set(["12345"]))).toEqual([8080]);
+    expect(parseNodeAntigravityProcUID("Name:\tagy\nUid:\t1000\t1000\t1000\t1000\n")).toBe(1000);
+    expect(parseNodeAntigravityProcUID("Name:\tagy\n")).toBeUndefined();
+  });
+
+  it("excludes token-less CLI processes unless the host explicitly authorizes reuse", async () => {
+    let portReads = 0;
+    const base: NodeAntigravityLocalDependencies = {
+      processes: async () => [{ pid: 9, command: "/usr/local/bin/agy -p hi" }],
+      listeningPorts: async () => {
+        portReads += 1;
+        return [56_789];
+      },
+      request: async (_endpoint, path) =>
+        path.endsWith("GetUserStatus")
+          ? '{"userStatus":{"email":"warm@example.test"}}'
+          : '{"groups":[]}',
+    };
+    await expect(
+      fetchNodeAntigravityLocalSnapshot(base, {
+        signal: new AbortController().signal,
+        platform: "linux",
+      }),
+    ).rejects.toMatchObject({ code: "not-running" });
+    expect(portReads).toBe(0);
+
+    await expect(
+      fetchNodeAntigravityLocalSnapshot(
+        { ...base, canReuseCLIProcess: async () => true },
+        { signal: new AbortController().signal, platform: "linux" },
+      ),
+    ).resolves.toEqual({
+      quotaSummaryJson: '{"groups":[]}',
+      userStatusJson: '{"userStatus":{"email":"warm@example.test"}}',
+    });
+    expect(portReads).toBe(1);
+  });
+
+  it("keeps cancellation terminal while authorizing external CLI reuse", async () => {
+    const controller = new AbortController();
+    let portReads = 0;
+    const pending = fetchNodeAntigravityLocalSnapshot(
+      {
+        processes: async () => [{ pid: 9, command: "/usr/local/bin/agy -p hi" }],
+        canReuseCLIProcess: async (_processInfo, signal) => {
+          controller.abort(new DOMException("cancelled", "AbortError"));
+          throw signal.reason;
+        },
+        listeningPorts: async () => {
+          portReads += 1;
+          return [];
+        },
+        request: async () => "{}",
+      },
+      { signal: controller.signal, platform: "linux" },
+    );
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(portReads).toBe(0);
+  });
+
+  it("authorizes a Linux external CLI only for the exact binary and current uid", async () => {
+    if (typeof process.getuid !== "function") return;
+    const procRoot = await mkdtemp(join(tmpdir(), "codexbar-antigravity-proc-"));
+    try {
+      await mkdir(join(procRoot, "777"));
+      await writeFile(
+        join(procRoot, "777", "status"),
+        `Name:\tagy\nUid:\t${process.getuid()}\t0\t0\t0\n`,
+      );
+      const ownedDependencies = makeNodeAntigravityLocalDependencies({
+        platform: "linux",
+        procRoot,
+        externalCLIPath: "/usr/local/bin/agy",
+        processRunner: {
+          run: () => Effect.die(new Error("process runner must not be used by owner validation")),
+        },
+      });
+      const processInfo = resolveNodeAntigravityProcesses([
+        { pid: 777, command: "/usr/local/bin/agy -p hi" },
+      ])[0]!;
+      await expect(
+        ownedDependencies.canReuseCLIProcess?.(processInfo, new AbortController().signal),
+      ).resolves.toBe(true);
+      await expect(
+        ownedDependencies.canReuseCLIProcess?.(
+          { ...processInfo, command: "/opt/other/agy -p hi" },
+          new AbortController().signal,
+        ),
+      ).resolves.toBe(false);
+      await writeFile(
+        join(procRoot, "777", "status"),
+        `Name:\tagy\nUid:\t${process.getuid() + 1}\t0\t0\t0\n`,
+      );
+      await expect(
+        ownedDependencies.canReuseCLIProcess?.(processInfo, new AbortController().signal),
+      ).resolves.toBe(false);
+    } finally {
+      await rm(procRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses fixed native owner probes for macOS and Windows external CLI reuse", async () => {
+    const darwinCalls: unknown[] = [];
+    const darwin = makeNodeAntigravityLocalDependencies({
+      platform: "darwin",
+      externalCLIPath: "/opt/agy",
+      processRunner: {
+        run: (spec) => {
+          darwinCalls.push(spec);
+          return Effect.succeed({
+            exitCode: 0,
+            signal: undefined,
+            stdout: new TextEncoder().encode(String(process.getuid?.() ?? -1)),
+            stderr: new Uint8Array(),
+          });
+        },
+      },
+    });
+    const darwinProcess = resolveNodeAntigravityProcesses([
+      { pid: 123, command: "/opt/agy -p hi" },
+    ])[0]!;
+    await expect(
+      darwin.canReuseCLIProcess?.(darwinProcess, new AbortController().signal),
+    ).resolves.toBe(typeof process.getuid === "function");
+    if (typeof process.getuid === "function")
+      expect(darwinCalls).toEqual([
+        expect.objectContaining({ command: "/bin/ps", args: ["-o", "uid=", "-p", "123"] }),
+      ]);
+
+    const windowsCalls: unknown[] = [];
+    const windows = makeNodeAntigravityLocalDependencies({
+      platform: "win32",
+      environment: { SYSTEMROOT: "C:\\Windows", USERNAME: "Alice" },
+      externalCLIPath: "C:\\Program Files\\Antigravity\\agy.exe",
+      processRunner: {
+        run: (spec) => {
+          windowsCalls.push(spec);
+          return Effect.succeed({
+            exitCode: 0,
+            signal: undefined,
+            stdout: new TextEncoder().encode("alice\r\n"),
+            stderr: new Uint8Array(),
+          });
+        },
+      },
+    });
+    const windowsProcess = resolveNodeAntigravityProcesses([
+      { pid: 456, command: '"C:\\Program Files\\Antigravity\\agy.exe" -p hi' },
+    ])[0]!;
+    await expect(
+      windows.canReuseCLIProcess?.(windowsProcess, new AbortController().signal),
+    ).resolves.toBe(true);
+    expect(windowsCalls).toEqual([
+      expect.objectContaining({
+        command: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        args: [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          expect.stringContaining("ProcessId = 456"),
+        ],
+      }),
+    ]);
   });
 
   it("builds Swift-compatible endpoint order without duplicating extension credentials", () => {

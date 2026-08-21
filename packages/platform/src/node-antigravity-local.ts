@@ -1,7 +1,7 @@
 import { request as requestHTTP } from "node:http";
 import { request as requestHTTPS } from "node:https";
 import { open, readdir, readlink } from "node:fs/promises";
-import { win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import { Effect } from "effect";
 import type { ProcessRunnerService } from "@codexbar/core";
 import type { ProviderAntigravityLocalSnapshot } from "@codexbar/providers";
@@ -44,6 +44,15 @@ export interface NodeAntigravityLocalDependencies {
     timeoutMs: number,
     signal: AbortSignal,
   ) => Promise<string>;
+  /**
+   * Host-owned authorization for token-less external `agy` reuse. When this
+   * seam is absent CLI processes are excluded, so desktop/embedded hosts never
+   * inherit an ambient interactive session accidentally.
+   */
+  readonly canReuseCLIProcess?: (
+    process: NodeAntigravityProcessInfo,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   readonly now?: () => number;
 }
 
@@ -52,6 +61,8 @@ export interface NodeAntigravityLocalOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly platform?: NodeJS.Platform;
   readonly procRoot?: string;
+  /** One-shot CLI hosts opt in only with the exact resolved `agy` path. */
+  readonly externalCLIPath?: string;
 }
 
 export class NodeAntigravityLocalError extends Error {
@@ -137,8 +148,8 @@ const languageServer = (command: string): boolean =>
   /(^|[/\\])language(?:_|-)server(?:[_-][a-z0-9]+)*(?:\.exe)?(\s|$)/iu.test(command);
 
 const cli = (command: string): boolean =>
-  /(^|[/\\])(antigravity-cli|antigravity_cli)(?:\.exe)?([\s/\\]|$)/iu.test(command) ||
-  /(^|[/\\])agy(?:\.exe)?(\s|$)/iu.test(command);
+  /(^|[/\\])(antigravity-cli|antigravity_cli)(?:\.exe)?(["\s/\\]|$)/iu.test(command) ||
+  /(^|[/\\])agy(?:\.exe)?(["\s/\\]|$)/iu.test(command);
 
 const antigravityApp = (command: string): boolean => {
   const lower = command.toLowerCase();
@@ -173,6 +184,35 @@ export const classifyNodeAntigravityProcess = (
   if (languageServer(process.command) && antigravityApp(process.command))
     return antigravityIDE(process.command) ? "ide" : "app";
   return cli(process.command) ? "cli" : undefined;
+};
+
+const commandExecutable = (command: string): string | undefined => {
+  const trimmed = command.trimStart();
+  if (trimmed === "") return undefined;
+  if (trimmed.startsWith('"')) {
+    const end = trimmed.indexOf('"', 1);
+    return end > 1 ? trimmed.slice(1, end) : undefined;
+  }
+  return /^\S+/u.exec(trimmed)?.[0];
+};
+
+/** Conservative path match for externally owned CLI reuse. */
+export const nodeAntigravityCommandMatchesBinary = (
+  command: string,
+  expectedBinaryPath: string,
+  platform: NodeJS.Platform,
+): boolean => {
+  const executable = commandExecutable(command);
+  const expected = expectedBinaryPath.trim();
+  if (!executable || !expected || executable.includes("\u0000") || expected.includes("\u0000"))
+    return false;
+  const path = platform === "win32" ? win32 : posix;
+  if (!path.isAbsolute(executable) || !path.isAbsolute(expected)) return false;
+  const normalizedExecutable = path.normalize(executable);
+  const normalizedExpected = path.normalize(expected);
+  return platform === "win32"
+    ? normalizedExecutable.toLowerCase() === normalizedExpected.toLowerCase()
+    : normalizedExecutable === normalizedExpected;
 };
 
 export const resolveNodeAntigravityProcesses = (
@@ -229,6 +269,12 @@ export const parseNodeAntigravityProcNetPorts = (
     if (port !== undefined) ports.add(port);
   }
   return [...ports].sort((left, right) => left - right);
+};
+
+export const parseNodeAntigravityProcUID = (content: string): number | undefined => {
+  const raw = /^Uid:\s+(\d+)/mu.exec(content)?.[1];
+  const uid = raw === undefined ? undefined : Number(raw);
+  return uid !== undefined && Number.isSafeInteger(uid) && uid >= 0 ? uid : undefined;
 };
 
 const readBounded = async (path: string, signal: AbortSignal): Promise<string> => {
@@ -315,6 +361,68 @@ export const makeNodeAntigravityLocalDependencies = (
 ): NodeAntigravityLocalDependencies => {
   const platform = options.platform ?? process.platform;
   const environment = options.environment ?? process.env;
+  const externalCLIPath = options.externalCLIPath?.trim();
+  const currentUID = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const currentWindowsUser = environment.USERNAME?.trim().toLowerCase();
+  const sameUserCLI = async (
+    processInfo: NodeAntigravityProcessInfo,
+    signal: AbortSignal,
+  ): Promise<boolean> => {
+    if (
+      externalCLIPath === undefined ||
+      externalCLIPath === "" ||
+      !nodeAntigravityCommandMatchesBinary(processInfo.command, externalCLIPath, platform)
+    )
+      return false;
+    throwIfAborted(signal);
+    if (platform === "linux") {
+      if (currentUID === undefined) return false;
+      try {
+        return (
+          parseNodeAntigravityProcUID(
+            await readBounded(`${options.procRoot ?? "/proc"}/${processInfo.pid}/status`, signal),
+          ) === currentUID
+        );
+      } catch {
+        throwIfAborted(signal);
+        return false;
+      }
+    }
+    if (platform === "darwin") {
+      if (currentUID === undefined) return false;
+      try {
+        const result = await run(
+          options.processRunner,
+          "/bin/ps",
+          ["-o", "uid=", "-p", String(processInfo.pid)],
+          signal,
+        );
+        return result.exitCode === 0 && Number(result.stdout.trim()) === currentUID;
+      } catch {
+        throwIfAborted(signal);
+        return false;
+      }
+    }
+    if (platform === "win32") {
+      if (!currentWindowsUser) return false;
+      const script =
+        `(Invoke-CimMethod -InputObject (Get-CimInstance Win32_Process -Filter 'ProcessId = ${processInfo.pid}') ` +
+        "-MethodName GetOwner -ErrorAction Stop).User";
+      try {
+        const result = await run(
+          options.processRunner,
+          powershellPath(environment),
+          ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+          signal,
+        );
+        return result.exitCode === 0 && result.stdout.trim().toLowerCase() === currentWindowsUser;
+      } catch {
+        throwIfAborted(signal);
+        return false;
+      }
+    }
+    return false;
+  };
   return {
     processes: async (signal) => {
       if (platform === "win32") {
@@ -372,6 +480,7 @@ export const makeNodeAntigravityLocalDependencies = (
       return [];
     },
     request: requestNodeAntigravityLocalJSON,
+    ...(externalCLIPath ? { canReuseCLIProcess: sameUserCLI } : {}),
   };
 };
 
@@ -443,7 +552,23 @@ export const fetchNodeAntigravityLocalSnapshot = async (
       extractNodeAntigravityFlag(process.command, "--csrf_token") === undefined
     );
   });
-  const processes = resolveNodeAntigravityProcesses(rawProcesses);
+  const resolvedProcesses = resolveNodeAntigravityProcesses(rawProcesses);
+  const processes: NodeAntigravityProcessInfo[] = [];
+  for (const processInfo of resolvedProcesses) {
+    throwIfAborted(signal);
+    if (processInfo.kind !== "cli") {
+      processes.push(processInfo);
+      continue;
+    }
+    if (dependencies.canReuseCLIProcess === undefined) continue;
+    try {
+      if (await dependencies.canReuseCLIProcess(processInfo, signal)) processes.push(processInfo);
+    } catch {
+      throwIfAborted(signal);
+      // Ownership/path inspection is best-effort but fail-closed. A caller
+      // cancellation or deadline remains terminal; ordinary inspection failure excludes it.
+    }
+  }
   if (processes.length === 0)
     throw new NodeAntigravityLocalError(
       tokenless ? "missing-csrf" : "not-running",

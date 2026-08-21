@@ -569,6 +569,8 @@ export interface NodeFirstPartyLocalCapabilitiesOptions {
   readonly antigravityLocalFetch?: (
     signal: AbortSignal,
   ) => Promise<import("@codexbar/providers").ProviderAntigravityLocalSnapshot>;
+  /** One-shot CLI-only opt-in for a same-user external `agy` process. */
+  readonly antigravityExternalCLIPath?: string;
 }
 
 /**
@@ -598,6 +600,9 @@ export const makeNodeFirstPartyLocalCapabilities = (
                   processRunner,
                   environment,
                   platform: options.platform ?? process.platform,
+                  ...(options.antigravityExternalCLIPath === undefined
+                    ? {}
+                    : { externalCLIPath: options.antigravityExternalCLIPath }),
                 }),
                 { signal: operationSignal, platform: options.platform ?? process.platform },
               ))
