@@ -162,6 +162,7 @@ const claudeSwapAccount = (
     id: `${account.id.source}:${account.id.opaqueId}`,
     label,
     active: account.isActive,
+    canActivate: account.canActivate,
     ...(accountEmail === undefined
       ? {}
       : { identity: { providerId: "claude", accountEmail, loginMethod: "claude-swap" } }),
