@@ -1116,6 +1116,9 @@ providers:
         - packages/providers/test/grok-grpc-parity.test.ts
         - packages/providers/test/grok-local-session.test.ts
         - packages/platform/test/node-grok-local-session.test.ts
+        - packages/platform/test/node-grok-local-token-scan.test.ts
+        - packages/core/test/daily-spend-ingestion.test.ts
+        - apps/desktop/test/spend-overview.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Grok/**/*
     tsPaths:
@@ -1123,15 +1126,24 @@ providers:
         - packages/providers/src/providers/grok.ts
         - packages/providers/src/providers/grok-local-session.ts
         - packages/platform/src/node-grok-local-session.ts
+        - packages/platform/src/node-grok-local-token-scan.ts
+        - packages/core/src/daily-spend-ingestion.ts
+        - apps/desktop/src/main/spend-overview.ts
       real:
         - packages/providers/src/providers/grok.ts
         - packages/providers/src/providers/grok-local-session.ts
         - packages/platform/src/node-grok-local-session.ts
+        - packages/platform/src/node-grok-local-token-scan.ts
+        - packages/core/src/daily-spend-ingestion.ts
+        - apps/desktop/src/main/spend-overview.ts
     tsTestGlobs:
       - packages/providers/test/local-cli-oauth-providers.test.ts
       - packages/providers/test/grok-grpc-parity.test.ts
       - packages/providers/test/grok-local-session.test.ts
       - packages/platform/test/node-grok-local-session.test.ts
+      - packages/platform/test/node-grok-local-token-scan.test.ts
+      - packages/core/test/daily-spend-ingestion.test.ts
+      - apps/desktop/test/spend-overview.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 3bfbffdcea58c1314d91724c0c35e227bc8a0733
@@ -1433,15 +1445,24 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
         - packages/providers/test/xai-daily-spend.test.ts
+        - packages/core/test/daily-spend-ingestion.test.ts
+        - apps/desktop/test/spend-overview.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/XAI/**/*
     tsPaths:
-      expected: [packages/providers/src/providers/xai.ts]
+      expected:
+        - packages/providers/src/providers/xai.ts
+        - packages/core/src/daily-spend-ingestion.ts
+        - apps/desktop/src/main/spend-overview.ts
       real:
         - packages/providers/src/providers/xai.ts
+        - packages/core/src/daily-spend-ingestion.ts
+        - apps/desktop/src/main/spend-overview.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
       - packages/providers/test/xai-daily-spend.test.ts
+      - packages/core/test/daily-spend-ingestion.test.ts
+      - apps/desktop/test/spend-overview.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 3bfbffdcea58c1314d91724c0c35e227bc8a0733

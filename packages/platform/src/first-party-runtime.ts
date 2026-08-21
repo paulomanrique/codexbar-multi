@@ -457,7 +457,30 @@ const localFor = (
       (result.lastSessionAtMs !== undefined &&
         (!Number.isSafeInteger(result.lastSessionAtMs) ||
           result.lastSessionAtMs < 0 ||
-          result.lastSessionAtMs > 8_640_000_000_000_000))
+          result.lastSessionAtMs > 8_640_000_000_000_000)) ||
+      (result.today !== undefined && !/^\d{4}-\d{2}-\d{2}$/u.test(result.today)) ||
+      (result.truncated !== undefined && typeof result.truncated !== "boolean") ||
+      (result.daily !== undefined &&
+        (!Array.isArray(result.daily) ||
+          result.daily.length > 366 ||
+          result.daily.some(
+            (bucket: {
+              readonly date: string;
+              readonly totalTokens: number;
+              readonly sessionCount: number;
+              readonly models: readonly string[];
+            }) =>
+              !/^\d{4}-\d{2}-\d{2}$/u.test(bucket.date) ||
+              !Number.isSafeInteger(bucket.totalTokens) ||
+              bucket.totalTokens < 0 ||
+              !Number.isSafeInteger(bucket.sessionCount) ||
+              bucket.sessionCount < 0 ||
+              !Array.isArray(bucket.models) ||
+              bucket.models.length > 64 ||
+              bucket.models.some(
+                (model: string) => typeof model !== "string" || model.length > 256,
+              ),
+          )))
     )
       throw failure("api-failure", "Grok local-session enrichment is invalid.");
     return result;

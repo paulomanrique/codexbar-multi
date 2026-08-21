@@ -76,6 +76,17 @@ export interface DesktopSpendProjection {
   readonly dashboard: SpendDashboardDTO;
 }
 
+/** Narrow composition seam: disabled Grok must never trigger a local disk walk. */
+export const refreshGrokLocalTokensForSpend = async (
+  configuration: DesktopSpendConfiguration,
+  scanner: { readonly refresh: () => Promise<unknown> },
+): Promise<void> => {
+  if (!configuration.roster.some((source) => source.providerId === "grok")) return;
+  // Local profile failures are represented by the scanner's unavailable state
+  // when it can persist it. They never make the overview IPC fail.
+  await scanner.refresh().catch(() => undefined);
+};
+
 interface DesktopSpendInput extends SpendPublicationInput {
   readonly providerId: ProviderId;
   readonly role?: SpendSourceRole;
@@ -197,6 +208,21 @@ export class DesktopSpendPublisher {
                       ),
                       { signal: lease.signal },
                     );
+              // A source backed by a replaceable vendor/local ledger must
+              // explicitly publish state. In particular, an empty Grok local
+              // scan has no token snapshot; do not reinterpret that absence
+              // as a confirmed zero-token source.
+              if (state === undefined) {
+                return [
+                  {
+                    source,
+                    records: [],
+                    confirmedEmpty: false,
+                    failed: true,
+                    truncated: false,
+                  },
+                ];
+              }
               // An xAI prepaid balance without a usable analytics chart is
               // unavailable, not a confirmed $0 day. Retained rows remain
               // hidden until a successful chart replaces them.

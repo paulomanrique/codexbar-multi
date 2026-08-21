@@ -34,6 +34,15 @@ export interface ProviderGrokLocalSessionSummary {
   readonly lastSessionAtMs?: number;
   readonly primaryModel?: string;
   readonly models: readonly string[];
+  /** Optional host-only local history used by the spend publisher. */
+  readonly daily?: readonly {
+    readonly date: string;
+    readonly totalTokens: number;
+    readonly sessionCount: number;
+    readonly models: readonly string[];
+  }[];
+  readonly today?: string;
+  readonly truncated?: boolean;
 }
 
 /**

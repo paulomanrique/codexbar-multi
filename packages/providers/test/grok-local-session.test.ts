@@ -60,4 +60,46 @@ describe("Grok local session projection", () => {
       ]).totalTokens,
     ).toBe(GROK_LOCAL_SESSION_MAX_TOTAL_TOKENS);
   });
+
+  it("builds deterministic local-day buckets for the host-owned spend publisher", () => {
+    const at = Date.parse("2026-08-20T01:00:00.000Z");
+    const summary = summarizeGrokLocalSessions(
+      [
+        {
+          modifiedAtMs: at - 1,
+          totalTokensBeforeCompaction: 100,
+          contextTokensUsed: 0,
+          primaryModelId: "grok-code",
+          modelsUsed: ["grok-code"],
+        },
+        {
+          modifiedAtMs: at,
+          totalTokensBeforeCompaction: 200,
+          contextTokensUsed: 50,
+          modelsUsed: ["grok-4"],
+        },
+      ],
+      {
+        includeDaily: true,
+        scannedAtMs: at,
+        // A West-of-UTC local day proves this projection does not silently
+        // relabel local Grok activity with a UTC date.
+        dayKey: () => "2026-08-19",
+        truncated: true,
+      },
+    );
+    expect(summary).toMatchObject({
+      totalTokens: 350,
+      today: "2026-08-19",
+      truncated: true,
+      daily: [
+        {
+          date: "2026-08-19",
+          totalTokens: 350,
+          sessionCount: 2,
+          models: ["grok-code", "grok-4"],
+        },
+      ],
+    });
+  });
 });

@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -117,6 +117,7 @@ describe("Node first-party local capabilities", () => {
   it("returns bounded Grok local activity only through the named diagnostic capability", async () => {
     const root = await mkdtemp(join(tmpdir(), "codexbar-grok-local-capability-"));
     const sessions = join(root, "sessions");
+    const now = new Date("2026-08-20T12:00:00.000Z");
     try {
       await mkdir(join(sessions, "cwd", "session"), { recursive: true });
       await writeFile(
@@ -127,17 +128,26 @@ describe("Node first-party local capabilities", () => {
           primaryModelId: "grok-code",
         }),
       );
+      await utimes(join(sessions, "cwd", "session", "signals.json"), now, now);
       const local = makeNodeFirstPartyLocalCapabilities({
-        grokLocalSessionScan: { root: sessions },
+        grokLocalSessionScan: { root: sessions, now },
       });
       await expect(Effect.runPromise(local.fetchGrokLocalSessionSummary!("grok"))).resolves.toEqual(
-        {
+        expect.objectContaining({
           sessionCount: 1,
           totalTokens: 20,
           primaryModel: "grok-code",
           models: ["grok-code"],
-          lastSessionAtMs: expect.any(Number),
-        },
+          lastSessionAtMs: now.getTime(),
+          today: expect.stringMatching(/^2026-08-(20|21)$/u),
+          daily: [
+            expect.objectContaining({
+              totalTokens: 20,
+              sessionCount: 1,
+              models: ["grok-code"],
+            }),
+          ],
+        }),
       );
       await expect(
         Effect.runPromise(local.fetchGrokLocalSessionSummary!("openai")),

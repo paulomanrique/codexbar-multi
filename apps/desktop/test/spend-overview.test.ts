@@ -1,10 +1,20 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { createSpendPublication, type CostUsageRecord } from "@codexbar/core";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createSpendPublication,
+  type CostUsageRecord,
+  type DailyCostUsageReplacement,
+} from "@codexbar/core";
+import { makeNodeGrokLocalTokenScanner } from "@codexbar/platform/node";
+import { grok } from "@codexbar/providers";
 
 import {
   DesktopSpendPublisher,
   publishedSpendOverviewInputs,
+  refreshGrokLocalTokensForSpend,
   type DesktopSpendPersistence,
 } from "../src/main/spend-overview.ts";
 
@@ -15,6 +25,23 @@ const snapshot = {
 };
 
 describe("published desktop spend overview (Swift #3067 parity)", () => {
+  it("does not scan Grok local files when Grok is disabled from the spend roster", async () => {
+    let calls = 0;
+    await refreshGrokLocalTokensForSpend(
+      {
+        ownershipFingerprint: "no-grok",
+        requestedDays: 30,
+        roster: [{ id: "xai", providerId: "xai", displayName: "xAI" }],
+      },
+      {
+        refresh: async () => {
+          calls += 1;
+        },
+      },
+    );
+    expect(calls).toBe(0);
+  });
+
   it("keeps xAI analytics unavailable rather than publishing retained prepaid-era rows as zero spend", async () => {
     const persistence: DesktopSpendPersistence = {
       costs: {
@@ -91,6 +118,166 @@ describe("published desktop spend overview (Swift #3067 parity)", () => {
     ]);
     expect(JSON.stringify(projection)).not.toContain("vendor-daily-spend");
     expect(JSON.stringify(projection)).not.toContain("xai-private-account");
+  });
+
+  it("keeps Grok unavailable when its local session scan has no publishable daily tokens", async () => {
+    const persistence: DesktopSpendPersistence = {
+      costs: {
+        list: () => Effect.succeed([]),
+        dailySourceState: () => Effect.succeed({ availability: "unavailable", coverage: "exact" }),
+      },
+    };
+    const publisher = new DesktopSpendPublisher(
+      persistence,
+      () => new Date("2026-08-20T12:00:00.000Z"),
+    );
+    const projection = await publisher.refresh({
+      ownershipFingerprint: "grok-local-owner",
+      requestedDays: 30,
+      roster: [
+        {
+          id: "grok",
+          providerId: "grok",
+          displayName: "Grok",
+          dailySpendSourceKey: "local-session-tokens",
+        },
+      ],
+    });
+    expect(projection.overview.sources).toEqual([
+      expect.objectContaining({ provider: "grok", state: "unavailable" }),
+    ]);
+    expect(projection.overview.totals).toMatchObject({ totalTokens: 0, costUsd: 0 });
+  });
+
+  it("publishes Grok local tokens without attributing subscription credits as dollars", async () => {
+    const persistence: DesktopSpendPersistence = {
+      costs: {
+        list: () =>
+          Effect.succeed([
+            {
+              providerId: "grok",
+              recordedAt: Date.parse("2026-08-20T00:00:00.000Z"),
+              inputTokens: 250,
+              outputTokens: 0,
+              costUsd: 0,
+            },
+          ]),
+        dailySourceState: () => Effect.succeed({ availability: "available", coverage: "exact" }),
+      },
+    };
+    const publisher = new DesktopSpendPublisher(
+      persistence,
+      () => new Date("2026-08-20T12:00:00.000Z"),
+    );
+    const projection = await publisher.refresh({
+      ownershipFingerprint: "grok-local-owner",
+      requestedDays: 30,
+      roster: [
+        {
+          id: "grok-private-source",
+          providerId: "grok",
+          displayName: "Grok",
+          dailySpendSourceKey: "local-session-tokens",
+        },
+      ],
+    });
+    expect(projection.overview).toMatchObject({
+      totals: { totalTokens: 250, costUsd: 0 },
+      providers: [{ provider: "grok", totals: { totalTokens: 250, costUsd: 0 } }],
+    });
+    expect(JSON.stringify(projection)).not.toContain("grok-private-source");
+  });
+
+  it("keeps Grok local tokens publishable when remote billing fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-grok-spend-integration-"));
+    const root = join(directory, "sessions");
+    const signalPath = join(root, "cwd", "session", "signals.json");
+    let replacement: DailyCostUsageReplacement | undefined;
+    const now = new Date("2026-08-20T12:00:00.000Z");
+    try {
+      await mkdir(join(root, "cwd", "session"), { recursive: true });
+      await writeFile(signalPath, '{"totalTokensBeforeCompaction":200,"contextTokensUsed":50}');
+      await utimes(signalPath, now, now);
+      // The remote quota is unavailable, exactly as it would be after an
+      // expired/failed web billing probe. It must not gate the local scanner.
+      await expect(
+        grok.fetchUsage({
+          settings: { get: () => undefined, getSecret: () => "fixture-cookie" },
+          http: {
+            get: async () => ({ status: 500, bodyText: "" }),
+            getJSON: async () => ({ status: 500, bodyText: "", json: {} }),
+            postJSON: async () => ({ status: 500, bodyText: "", json: {} }),
+            postBinary: async () => ({ status: 503, headers: {}, body: new Uint8Array() }),
+          },
+          browser: { cookieHeader: async () => "" },
+          env: {},
+          date: {
+            now: () => now,
+            nowMillis: () => now.getTime(),
+            iso: (value) => new Date(value).toISOString(),
+            unixSeconds: (value) => new Date(value * 1_000).toISOString(),
+            unixMillis: (value) => new Date(value).toISOString(),
+            nextDailyReset: () => "2026-08-21T00:00:00.000Z",
+          },
+          format: { number: String, usd: (value) => `$${value}`, monthDay: () => "Aug 20" },
+          pct: (used, limit) => (used / limit) * 100,
+          amountFromPercent: (usedPercent, limit) => (usedPercent / 100) * limit,
+          fail: Object.fromEntries(
+            [
+              "authenticationExpired",
+              "missingCredential",
+              "permissionDenied",
+              "rateLimited",
+              "providerUnavailable",
+              "parseFailure",
+              "networkFailure",
+              "apiFailure",
+            ].map((name) => [name, (message: string) => new Error(`${name}: ${message}`)]),
+          ) as never,
+        }),
+      ).rejects.toThrow("providerUnavailable");
+
+      const scanner = makeNodeGrokLocalTokenScanner({
+        costs: {
+          replaceDaily: (next: DailyCostUsageReplacement) =>
+            Effect.sync(() => {
+              replacement = next;
+            }),
+        } as never,
+        scan: { root },
+        now: () => now,
+      });
+      await scanner.refresh();
+      const persistence: DesktopSpendPersistence = {
+        costs: {
+          list: () => Effect.succeed(replacement?.records ?? []),
+          dailySourceState: () =>
+            Effect.succeed(
+              replacement === undefined
+                ? undefined
+                : { availability: replacement.availability, coverage: replacement.coverage },
+            ),
+        },
+      };
+      const projection = await new DesktopSpendPublisher(persistence, () => now).refresh({
+        ownershipFingerprint: "grok-independent-local-source",
+        requestedDays: 30,
+        roster: [
+          {
+            id: "grok-private-source",
+            providerId: "grok",
+            displayName: "Grok",
+            dailySpendSourceKey: "local-session-tokens",
+          },
+        ],
+      });
+      expect(projection.overview).toMatchObject({
+        sources: [{ provider: "grok", state: "available" }],
+        totals: { totalTokens: 250, costUsd: 0 },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("reuses only current, available sources in the requested provider silo", () => {

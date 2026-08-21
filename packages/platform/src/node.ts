@@ -58,6 +58,7 @@ export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
 export * from "./node-local-cost-scan.ts";
 export * from "./node-grok-local-session.ts";
+export * from "./node-grok-local-token-scan.ts";
 export * from "./node-private-path-security.ts";
 
 /** Node's explicit equivalent of Swift's `NSString.expandingTildeInPath`. */
@@ -650,11 +651,15 @@ export const makeNodeFirstPartyLocalCapabilities = (
       Effect.tryPromise({
         try: async (signal) => {
           if (providerId !== "grok") throw new Error("Provider local activity is not allowlisted.");
+          // Preserve an injected scanner clock in tests and keep both the
+          // lookback cutoff and local-day publication tied to one instant.
+          const now = options.grokLocalSessionScan?.now ?? new Date();
           const scanned = await scanNodeGrokLocalSessions({
             ...options.grokLocalSessionScan,
             environment,
             homeDirectory: options.homeDirectory ?? homedir(),
             platform: options.platform ?? process.platform,
+            now,
             signal,
           });
           return summarizeGrokLocalSessions(
@@ -662,6 +667,7 @@ export const makeNodeFirstPartyLocalCapabilities = (
               const parsed = parseGrokLocalSessionSignal(entry.json, entry.modifiedAtMs);
               return parsed === undefined ? [] : [parsed];
             }),
+            { includeDaily: true, scannedAtMs: now.getTime(), truncated: scanned.truncated },
           );
         },
         catch: (error) =>
