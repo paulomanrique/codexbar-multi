@@ -61,6 +61,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Complete history JSON compatibility where SQLite parity does not apply.
   - [x] Port the per-provider schema-v1 codec, ISO8601 behavior, sorting, sanitization, accounts, and identity buckets.
   - [x] Persist/load the provider JSON files through a bounded, no-follow private platform adapter.
+  - [x] Port hourly peak/reset-segment coalescing, canonical window folding, and two-year sample retention.
   - [ ] Connect plan-utilization history persistence to desktop and CLI consumers.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.
