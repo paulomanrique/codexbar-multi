@@ -856,6 +856,63 @@ describe("first-party refresh runtime", () => {
     expect(requests.map((request) => request.url)).toEqual(["http://127.0.0.1:8088/healthz"]);
   });
 
+  it("allows only explicitly derived subdomains of a configured endpoint", async () => {
+    const target = { value: "https://api.enterprise.example:8443/usage" };
+    const requests: HttpRequest[] = [];
+    const probe: FirstPartyProvider = {
+      id: "ibmbob",
+      kind: "api",
+      descriptor: {
+        id: "ibmbob",
+        name: "Derived endpoint probe",
+        status: "partial",
+        endpoints: [
+          {
+            setting: "PROBE_ENDPOINT",
+            policy: "https",
+            subdomainPrefixes: ["api"],
+          },
+        ],
+        settings: [{ key: "PROBE_ENDPOINT", title: "Endpoint", type: "plain" }],
+      },
+      fetchUsage: async (context) => {
+        await context.http.get(target.value);
+        return { identity: { loginMethod: "probe" } };
+      },
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: {
+        read: (_provider, key) =>
+          Effect.succeed(key === "PROBE_ENDPOINT" ? "enterprise.example:8443" : undefined),
+      },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          return Effect.succeed(response({ ok: true }));
+        },
+      },
+    });
+
+    await Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "api", includeCredits: false }));
+    expect(requests.map((request) => request.url)).toEqual([
+      "https://api.enterprise.example:8443/usage",
+    ]);
+
+    target.value = "https://evil.enterprise.example:8443/usage";
+    await expect(
+      Effect.runPromise(runtime.fetch("ibmbob", { sourceMode: "api", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "api-failure" });
+    expect(requests).toHaveLength(1);
+  });
+
   it("falls back to an injected secret when the keyring is unavailable, but not without one", async () => {
     const seen: string[] = [];
     const probe: FirstPartyProvider = {

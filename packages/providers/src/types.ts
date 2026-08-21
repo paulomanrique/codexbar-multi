@@ -204,6 +204,8 @@ export type ProviderEndpoint =
       readonly policy: "https" | "https-or-loopback-http" | "https-or-private-network-http";
       /** Safe provider-owned default; renderer input never controls this value. */
       readonly default?: string;
+      /** Explicit provider-owned host labels derived from the validated configured origin. */
+      readonly subdomainPrefixes?: readonly string[];
     }
   | {
       /** Allow only this exact DNS suffix (or a direct host), never a wildcard. */

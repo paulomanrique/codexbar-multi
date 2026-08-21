@@ -297,7 +297,15 @@ const endpointOrigins = (
           ? "loopback-http"
           : "private-network-http";
     const normalized = normalizeEndpoint(configured, { transport });
-    if (normalized !== undefined) rules.push({ kind: "origin", origin: normalized.origin });
+    if (normalized !== undefined) {
+      rules.push({ kind: "origin", origin: normalized.origin });
+      for (const prefix of endpoint.subdomainPrefixes ?? []) {
+        if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(prefix)) continue;
+        const derived = new URL(normalized.origin);
+        derived.hostname = `${prefix}.${normalized.hostname}`;
+        rules.push({ kind: "origin", origin: derived.origin });
+      }
+    }
   }
   return rules;
 };

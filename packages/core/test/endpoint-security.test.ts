@@ -4,6 +4,9 @@ import { normalizeEndpoint, normalizeHttpRequest } from "../src/index.ts";
 describe("normalizeEndpoint", () => {
   it("normalizes a host without an explicit scheme to HTTPS", () => {
     expect(normalizeEndpoint("api.example.com/v1")?.href).toBe("https://api.example.com/v1");
+    expect(normalizeEndpoint("api.example.com:8443/v1")?.href).toBe(
+      "https://api.example.com:8443/v1",
+    );
   });
 
   it("rejects credential-bearing, encoded-authority, and public HTTP endpoints", () => {

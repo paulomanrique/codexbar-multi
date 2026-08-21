@@ -33,7 +33,7 @@ export const normalizeEndpoint = (raw: string, policy: EndpointPolicy = {}): URL
   });
   if (value.length === 0 || hasControlOrWhitespace) return undefined;
 
-  const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(value);
+  const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(value);
   const candidate = hasScheme ? value : `https://${value}`;
   let endpoint: URL;
   try {

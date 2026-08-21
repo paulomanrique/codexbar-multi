@@ -17,6 +17,23 @@ export const date = (value: unknown, ctx: ProviderContext): string | undefined =
   if (n !== undefined) return n > 10_000_000_000 ? ctx.date.unixMillis(n) : ctx.date.unixSeconds(n);
   return string(value) ? ctx.date.iso(string(value) as string) : undefined;
 };
+const classifiedFailureKinds = new Set([
+  "authentication-expired",
+  "missing-credential",
+  "permission-denied",
+  "rate-limited",
+  "provider-unavailable",
+  "parse-failure",
+  "network-failure",
+  "api-failure",
+]);
+
+const preservesTransportFailure = (error: unknown): boolean => {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error && error.name === "AbortError") return true;
+  if (typeof error !== "object" || error === null || !("kind" in error)) return false;
+  return typeof error.kind === "string" && classifiedFailureKinds.has(error.kind);
+};
 export async function get(
   ctx: ProviderContext,
   url: string,
@@ -25,6 +42,7 @@ export async function get(
   try {
     return await ctx.http.get(url, options);
   } catch (error) {
+    if (preservesTransportFailure(error)) throw error;
     throw ctx.fail.networkFailure(error instanceof Error ? error.message : String(error));
   }
 }

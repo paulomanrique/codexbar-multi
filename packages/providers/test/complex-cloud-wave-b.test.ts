@@ -162,7 +162,7 @@ describe("Swift-derived complex cloud provider wave B", () => {
           rows: [{ label: "Credits used", value: "75", secondaryValue: "Quota reset" }],
         },
       ],
-      identity: { loginMethod: "business" },
+      identity: { loginMethod: "Business" },
     });
   });
 
@@ -180,7 +180,7 @@ describe("Swift-derived complex cloud provider wave B", () => {
         { COPILOT_API_TOKEN: "oauth-token" },
       ),
     );
-    expect(snapshot).toEqual({ identity: { loginMethod: "business" } });
+    expect(snapshot).toEqual({ identity: { loginMethod: "Business" } });
   });
 
   it("retries the MiniMax China token-plan endpoint after global credential failure and maps weekly lanes", async () => {

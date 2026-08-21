@@ -357,20 +357,30 @@ providers:
   - id: copilot
     swiftGlobs:
       - Sources/CodexBar/Providers/Copilot/**/*.swift
+      - Sources/CodexBarCore/Providers/Copilot/**/*.swift
+      - Sources/CodexBarCore/CopilotUsageModels.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Copilot*Tests.swift
         - TestsLinux/*Copilot*Tests.swift
       tsGlobs:
         - packages/providers/test/complex-cloud-wave-b.test.ts
+        - packages/providers/test/copilot-parity.test.ts
     fixtures:
       - packages/providers/test/complex-cloud-wave-b.test.ts
+      - packages/providers/test/copilot-parity.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/copilot.ts]
+      expected:
+        - packages/providers/src/providers/copilot.ts
+        - packages/providers/src/providers/copilot-usage.ts
+        - packages/providers/src/providers/copilot-budgets.ts
       real:
         - packages/providers/src/providers/copilot.ts
+        - packages/providers/src/providers/copilot-usage.ts
+        - packages/providers/src/providers/copilot-budgets.ts
     tsTestGlobs:
       - packages/providers/test/complex-cloud-wave-b.test.ts
+      - packages/providers/test/copilot-parity.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
