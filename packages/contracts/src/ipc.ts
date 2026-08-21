@@ -307,6 +307,26 @@ export type UpdateProviderSettingsRequestDTO = Schema.Schema.Type<
   typeof UpdateProviderSettingsRequestDTO
 >;
 
+/**
+ * Global, non-sensitive notification preference. The renderer can read and
+ * replace this one Boolean, but never receives the persisted config document
+ * or any provider/account data used to produce a notification.
+ */
+export const SessionQuotaNotificationSettingsDTO = Schema.Struct({
+  enabled: Schema.Boolean,
+});
+export type SessionQuotaNotificationSettingsDTO = Schema.Schema.Type<
+  typeof SessionQuotaNotificationSettingsDTO
+>;
+
+/** A complete replacement keeps the desktop mutation unambiguous. */
+export const UpdateSessionQuotaNotificationSettingsRequestDTO = Schema.Struct({
+  enabled: Schema.Boolean,
+});
+export type UpdateSessionQuotaNotificationSettingsRequestDTO = Schema.Schema.Type<
+  typeof UpdateSessionQuotaNotificationSettingsRequestDTO
+>;
+
 export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-usage"), provider: Schema.optional(ProviderId) }),
   Schema.Struct({ type: Schema.Literal("refresh-provider"), request: RefreshProviderRequestDTO }),
@@ -318,6 +338,11 @@ export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-spend-dashboard") }),
   Schema.Struct({ type: Schema.Literal("get-config") }),
   Schema.Struct({ type: Schema.Literal("get-provider-settings") }),
+  Schema.Struct({ type: Schema.Literal("get-session-quota-notification-settings") }),
+  Schema.Struct({
+    type: Schema.Literal("update-session-quota-notification-settings"),
+    request: UpdateSessionQuotaNotificationSettingsRequestDTO,
+  }),
   Schema.Struct({
     type: Schema.Literal("set-provider-enabled"),
     provider: ProviderInstanceId,
@@ -341,6 +366,10 @@ export const IPCResponse = Schema.Union([
   Schema.Struct({ type: Schema.Literal("spend-dashboard"), payload: SpendDashboardDTO }),
   Schema.Struct({ type: Schema.Literal("config"), payload: Schema.Unknown }),
   Schema.Struct({ type: Schema.Literal("provider-settings"), payload: ProviderSettingsListDTO }),
+  Schema.Struct({
+    type: Schema.Literal("session-quota-notification-settings"),
+    payload: SessionQuotaNotificationSettingsDTO,
+  }),
   Schema.Struct({ type: Schema.Literal("error"), error: ProviderError }),
 ]);
 export type IPCResponse = Schema.Schema.Type<typeof IPCResponse>;

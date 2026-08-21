@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const root = new URL("../../../../Sources/CodexBar/Resources/", import.meta.url);
-const output = new URL("./locales/", import.meta.url);
+const output = new URL("../localization/locales/", import.meta.url);
 const locales = [
   "en",
   "de",

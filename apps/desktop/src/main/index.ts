@@ -34,6 +34,8 @@ import {
   LoginResultDTO,
   ActivateClaudeSwapAccountRequestDTO,
   ActivateClaudeSwapAccountResultDTO,
+  SessionQuotaNotificationSettingsDTO,
+  UpdateSessionQuotaNotificationSettingsRequestDTO,
 } from "@codexbar/contracts";
 import {
   makeCredentialBrowserSessions,
@@ -74,6 +76,10 @@ import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-
 import { loadPersistedOverview } from "./overview.js";
 import { DesktopClaudeSwapController } from "./claude-swap.js";
 import { makeDesktopSessionQuotaNotificationAdapter } from "./session-quota-notifications.js";
+import {
+  sessionQuotaNotificationSettingsProjection,
+  updateSessionQuotaNotificationSettings,
+} from "./session-quota-notification-settings.js";
 import {
   DesktopSpendPublisher,
   refreshGrokLocalTokensForSpend,
@@ -173,6 +179,7 @@ const sessionQuotaNotificationAdapter = makeDesktopSessionQuotaNotificationAdapt
     create: ({ title, body }) => new Notification({ title, body }),
   },
   providerName: sessionQuotaProviderName,
+  locale: () => app.getLocale(),
 });
 
 /**
@@ -430,6 +437,12 @@ void app
     const decodeUpdateProviderSettings = Schema.decodeUnknownPromise(
       UpdateProviderSettingsRequestDTO,
     );
+    const decodeSessionQuotaNotificationSettings = Schema.decodeUnknownPromise(
+      SessionQuotaNotificationSettingsDTO,
+    );
+    const decodeUpdateSessionQuotaNotificationSettings = Schema.decodeUnknownPromise(
+      UpdateSessionQuotaNotificationSettingsRequestDTO,
+    );
     const decodeInstallPlugin = Schema.decodeUnknownPromise(InstallPluginRequestDTO);
     const decodeInstalledPlugin = Schema.decodeUnknownPromise(InstalledPluginDTO);
     const decodePluginList = Schema.decodeUnknownPromise(PluginListResultDTO);
@@ -590,6 +603,30 @@ void app
         if (projected === undefined) throw new Error("Provider settings are not available");
         return decodeProviderSettings(projected);
       }),
+    );
+    ipcMain.handle(DesktopChannels.getSessionQuotaNotificationSettings, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        const current = desktopConfig;
+        if (current === undefined) throw new Error("Desktop config is not ready");
+        return decodeSessionQuotaNotificationSettings(
+          sessionQuotaNotificationSettingsProjection(current),
+        );
+      }),
+    );
+    ipcMain.handle(
+      DesktopChannels.updateSessionQuotaNotificationSettings,
+      (_event, input: unknown) =>
+        handleDesktopRequest(async () => {
+          const request = await decodeUpdateSessionQuotaNotificationSettings(input);
+          const saved = await mutateDesktopConfig(async (current) => {
+            const next = updateSessionQuotaNotificationSettings(current, request);
+            return { next, value: next };
+          });
+          return decodeSessionQuotaNotificationSettings(
+            sessionQuotaNotificationSettingsProjection(saved),
+          );
+        }),
     );
     ipcMain.handle(DesktopChannels.listPlugins, (_event, input: unknown) =>
       handleDesktopRequest(async () => {

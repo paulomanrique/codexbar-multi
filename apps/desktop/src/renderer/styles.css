@@ -301,6 +301,20 @@ h2 {
 .settings-toggle input {
   accent-color: #2dd4bf;
 }
+.global-settings {
+  gap: 9px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #293040;
+}
+.global-settings h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.global-settings p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  text-align: start;
+}
 .settings-source {
   display: grid;
   gap: 4px;

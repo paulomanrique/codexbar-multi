@@ -27,6 +27,8 @@ import type {
   ActivateClaudeSwapAccountResultDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
+  SessionQuotaNotificationSettingsDTO,
+  UpdateSessionQuotaNotificationSettingsRequestDTO,
   UpdateProviderSettingsRequestDTO,
 } from "@codexbar/contracts";
 
@@ -45,6 +47,9 @@ export const DesktopChannels = Object.freeze({
   activateClaudeSwapAccount: "codexbar-multi:activate-claude-swap-account",
   getProviderSettings: "codexbar-multi:get-provider-settings",
   updateProviderSettings: "codexbar-multi:update-provider-settings",
+  getSessionQuotaNotificationSettings: "codexbar-multi:get-session-quota-notification-settings",
+  updateSessionQuotaNotificationSettings:
+    "codexbar-multi:update-session-quota-notification-settings",
   listPlugins: "codexbar-multi:list-plugins",
   installPlugin: "codexbar-multi:install-plugin",
   previewPluginApproval: "codexbar-multi:preview-plugin-approval",
@@ -78,6 +83,11 @@ export interface CodexBarDesktopApi {
   readonly updateProviderSettings: (
     request: UpdateProviderSettingsRequestDTO,
   ) => Promise<ProviderSettingsDTO>;
+  /** Global non-sensitive preference only; never exposes the config document. */
+  readonly getSessionQuotaNotificationSettings: () => Promise<SessionQuotaNotificationSettingsDTO>;
+  readonly updateSessionQuotaNotificationSettings: (
+    request: UpdateSessionQuotaNotificationSettingsRequestDTO,
+  ) => Promise<SessionQuotaNotificationSettingsDTO>;
   readonly listPlugins: () => Promise<PluginListResultDTO>;
   readonly installPlugin: (request: InstallPluginRequestDTO) => Promise<InstalledPluginDTO>;
   readonly previewPluginApproval: (

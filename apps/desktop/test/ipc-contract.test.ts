@@ -10,6 +10,8 @@ import {
   PluginSecretRequestDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
+  SessionQuotaNotificationSettingsDTO,
+  UpdateSessionQuotaNotificationSettingsRequestDTO,
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
   ActivateClaudeSwapAccountRequestDTO,
@@ -141,6 +143,14 @@ describe("desktop IPC boundary", () => {
     const channels = Object.values(DesktopChannels);
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
+  });
+
+  it("allows only the bounded global quota-notification preference", () => {
+    const decodeSettings = Schema.decodeUnknownSync(SessionQuotaNotificationSettingsDTO);
+    const decodeUpdate = Schema.decodeUnknownSync(UpdateSessionQuotaNotificationSettingsRequestDTO);
+    expect(decodeSettings({ enabled: false, config: "not exposed" })).toEqual({ enabled: false });
+    expect(decodeUpdate({ enabled: true })).toEqual({ enabled: true });
+    expect(() => decodeUpdate({ enabled: "yes" })).toThrow();
   });
 
   it("projects spend without account identifiers, paths, or configuration fingerprints", () => {

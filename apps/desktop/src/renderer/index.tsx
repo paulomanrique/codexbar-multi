@@ -7,6 +7,8 @@ import type {
   HistoryQueryResultDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
+  SessionQuotaNotificationSettingsDTO,
+  UpdateSessionQuotaNotificationSettingsRequestDTO,
   SpendDashboardDTO,
   SpendOverviewDTO,
   UpdateProviderSettingsRequestDTO,
@@ -22,7 +24,10 @@ import {
   implementationPresentation,
   safeDateFromTimestamp,
 } from "./view-model.ts";
-import { isAvailableProviderSource } from "./settings-view-model.ts";
+import {
+  isAvailableProviderSource,
+  sessionQuotaNotificationSettingsViewState,
+} from "./settings-view-model.ts";
 import { SpendDashboard } from "./spend-dashboard.tsx";
 import "./styles.css";
 
@@ -418,10 +423,59 @@ function SettingsPanel({
   );
 }
 
+function SessionQuotaNotificationSettings({
+  settings,
+  pending,
+  error,
+  onUpdate,
+  copy,
+}: {
+  readonly settings: SessionQuotaNotificationSettingsDTO | undefined;
+  readonly pending: boolean;
+  readonly error: string | undefined;
+  readonly onUpdate: (request: UpdateSessionQuotaNotificationSettingsRequestDTO) => void;
+  readonly copy: {
+    readonly title: string;
+    readonly subtitle: string;
+    readonly enabled: string;
+    readonly disabled: string;
+    readonly refreshing: string;
+  };
+}) {
+  const state = sessionQuotaNotificationSettingsViewState(settings, pending, error);
+  return (
+    <section className="global-settings" aria-labelledby="session-quota-notifications-title">
+      <div>
+        <h3 id="session-quota-notifications-title">{copy.title}</h3>
+        <p className="muted">{copy.subtitle}</p>
+      </div>
+      <label className="settings-toggle">
+        <input
+          checked={state.enabled}
+          disabled={state.disabled}
+          type="checkbox"
+          onChange={(event) => onUpdate({ enabled: event.target.checked })}
+        />
+        <span>{state.enabled ? copy.enabled : copy.disabled}</span>
+      </label>
+      {state.status === "loading" || state.status === "pending" ? (
+        <p className="muted">{copy.refreshing}</p>
+      ) : null}
+      {state.status === "error" ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function App() {
   const localization = useMemo(() => createLocalization("system", navigator.languages), []);
   const [snapshot, setSnapshot] = useState<DashboardSnapshotDTO>();
   const [providerSettings, setProviderSettings] = useState<ProviderSettingsListDTO>();
+  const [sessionQuotaNotificationSettings, setSessionQuotaNotificationSettings] =
+    useState<SessionQuotaNotificationSettingsDTO>();
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<DashboardTab>("usage");
   const [selectedProviderId, setSelectedProviderId] = useState<string>();
@@ -433,6 +487,10 @@ function App() {
     readonly provider: string;
     readonly message: string;
   }>();
+  const [savingSessionQuotaNotificationSettings, setSavingSessionQuotaNotificationSettings] =
+    useState(false);
+  const [sessionQuotaNotificationSettingsError, setSessionQuotaNotificationSettingsError] =
+    useState<string>();
   const [history, setHistory] = useState<HistoryQueryResultDTO>();
   const [costs, setCosts] = useState<CostUsageQueryResultDTO>();
   const [activityLoading, setActivityLoading] = useState(false);
@@ -474,6 +532,17 @@ function App() {
       setError(localization.upstream("Unavailable"));
     }
   };
+  const loadSessionQuotaNotificationSettings = async (): Promise<void> => {
+    try {
+      const settings = await window.codexbar.getSessionQuotaNotificationSettings();
+      setSessionQuotaNotificationSettings(settings);
+      setSessionQuotaNotificationSettingsError(undefined);
+    } catch {
+      // This auxiliary control must never make overview/provider IPC look
+      // unavailable. Its error remains immediately beside the toggle.
+      setSessionQuotaNotificationSettingsError(localization.upstream("Unavailable"));
+    }
+  };
   const loadSpend = async (): Promise<void> => {
     setSpendLoading(true);
     setSpendError(false);
@@ -502,6 +571,9 @@ function App() {
   }, [localization]);
   useEffect(() => {
     void loadOverview();
+  }, []);
+  useEffect(() => {
+    void loadSessionQuotaNotificationSettings();
   }, []);
   useEffect(() => {
     void loadSpend();
@@ -572,6 +644,17 @@ function App() {
         }),
       )
       .finally(() => setSavingProviderId(undefined));
+  };
+  const updateSessionQuotaNotificationSettings = (
+    request: UpdateSessionQuotaNotificationSettingsRequestDTO,
+  ): void => {
+    setSavingSessionQuotaNotificationSettings(true);
+    setSessionQuotaNotificationSettingsError(undefined);
+    void window.codexbar
+      .updateSessionQuotaNotificationSettings(request)
+      .then((next) => setSessionQuotaNotificationSettings(next))
+      .catch(() => setSessionQuotaNotificationSettingsError(localization.upstream("Unavailable")))
+      .finally(() => setSavingSessionQuotaNotificationSettings(false));
   };
   const partialCount = snapshot?.providers.filter(
     (provider) => implementationPresentation(provider) === "parity-pending",
@@ -787,9 +870,21 @@ function App() {
         role="tabpanel"
         aria-labelledby="tab-settings"
       >
-        {selectedProvider === undefined ? (
-          <p className="muted">{copy.noUsageYet}</p>
-        ) : (
+        <SessionQuotaNotificationSettings
+          copy={{
+            title: localization.upstream("Session quota notifications"),
+            subtitle: localization.upstream("session_quota_notifications_subtitle"),
+            enabled: copy.enabled,
+            disabled: copy.disabled,
+            refreshing: copy.refreshing,
+          }}
+          error={sessionQuotaNotificationSettingsError}
+          pending={savingSessionQuotaNotificationSettings}
+          settings={sessionQuotaNotificationSettings}
+          onUpdate={updateSessionQuotaNotificationSettings}
+        />
+        {selectedProvider === undefined ? <p className="muted">{copy.noUsageYet}</p> : null}
+        {selectedProvider === undefined ? null : (
           <SettingsPanel
             provider={selectedProvider}
             settings={selectedProviderSettings}

@@ -18,6 +18,29 @@ describe("desktop session quota notification adapter", () => {
     });
   });
 
+  it("selects copy through the shared 23-locale catalog and falls back safely", () => {
+    expect(
+      sessionQuotaNotificationCopy(
+        { id: "session-claude-depleted", provider: "claude", transition: "depleted" },
+        "Claude",
+        "pt-BR",
+      ),
+    ).toEqual({
+      title: "Sessão do Claude esgotada",
+      body: "0% restante. Avisaremos quando estiver disponível novamente.",
+    });
+    expect(
+      sessionQuotaNotificationCopy(
+        { id: "session-claude-restored", provider: "claude", transition: "restored" },
+        "Claude",
+        "unavailable-locale",
+      ),
+    ).toEqual({
+      title: "Claude session restored",
+      body: "Session quota is available again.",
+    });
+  });
+
   it("does not need Electron, identity, a credential, or a raw snapshot to deliver", () => {
     const shown: { title: string; body: string }[] = [];
     const adapter = makeDesktopSessionQuotaNotificationAdapter({
@@ -25,6 +48,7 @@ describe("desktop session quota notification adapter", () => {
         create: (content) => ({ show: () => shown.push({ ...content }) }),
       },
       providerName: (provider) => (provider === "claude" ? "Claude" : "unexpected"),
+      locale: () => "en",
     });
     adapter.notify({ id: "session-claude-restored", provider: "claude", transition: "restored" });
     expect(shown).toEqual([
