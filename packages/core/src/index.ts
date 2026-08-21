@@ -9,6 +9,7 @@ export * from "./provider-fetch-pipeline.ts";
 export * from "./provider-refresh.ts";
 export * from "./refresh-coordinator.ts";
 export * from "./services.ts";
+export * from "./spend-publication.ts";
 export * from "./testing.ts";
 export * from "./quota.ts";
 export * from "./reset.ts";
