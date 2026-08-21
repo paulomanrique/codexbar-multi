@@ -70,6 +70,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Connect the explicit inspect/execute/rollback legacy import CLI with opt-in and mutation confirmation.
 - [x] Connect a ticketed native-picker legacy import UI without exposing paths, journals, or source data to the renderer.
 - [ ] Reconcile legacy plugin/config layouts and add a separately-approved native credential migration.
+  - [x] Import Swift's flat `providers/*.js|ts` layout and direct `config.json` path with ownership-safe rollback.
+  - [ ] Add a separately-approved native credential migration without copying browser sessions or approvals.
 
 ## Milestone 4 — untrusted plugin runtime
 
@@ -97,7 +99,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Port Grok auth.json ownership, OAuth proxy/gRPC, identity, and a bounded one-shot CLI billing probe.
   - [x] Replace the one-shot Grok CLI billing probe with a bounded streaming ACP session and deterministic teardown.
   - [ ] Complete Grok browser-session parity.
-- [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
+- [x] Require descriptor, strategy, config, resolving fixtures/goldens, tests, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate
 
