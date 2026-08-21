@@ -18,3 +18,4 @@ export * from "./reset.ts";
 export * from "./session-quota.ts";
 export * from "./session-quota-coordinator.ts";
 export * from "./usage-pace.ts";
+export * from "./plan-utilization-history.ts";
