@@ -1108,6 +1108,7 @@ providers:
         - TestsLinux/*Grok*Tests.swift
       tsGlobs:
         - packages/providers/test/local-cli-oauth-providers.test.ts
+        - packages/providers/test/grok-grpc-parity.test.ts
         - packages/providers/test/grok-local-session.test.ts
         - packages/platform/test/node-grok-local-session.test.ts
     fixtures:
@@ -1123,6 +1124,7 @@ providers:
         - packages/platform/src/node-grok-local-session.ts
     tsTestGlobs:
       - packages/providers/test/local-cli-oauth-providers.test.ts
+      - packages/providers/test/grok-grpc-parity.test.ts
       - packages/providers/test/grok-local-session.test.ts
       - packages/platform/test/node-grok-local-session.test.ts
     status: partial

@@ -89,7 +89,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.
-  - [x] Port Grok's bounded local `signals.json` session scanner and pure aggregation; RPC/status composition remains pending.
+  - [x] Port Grok's bounded local `signals.json` scanner and compose its aggregate only as non-quota diagnostics after successful billing.
+  - [ ] Complete Grok OAuth ownership, CLI-proxy/ACP RPC, identity, and browser-session parity.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate

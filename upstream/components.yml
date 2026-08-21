@@ -79,19 +79,24 @@ components:
       - Sources/CodexBar/UsageStore+LimitResetBoundary.swift
       - Sources/CodexBar/UsageStore+QuotaWarnings.swift
       - Sources/CodexBar/SessionQuotaNotifications.swift
+      - Sources/CodexBar/UsageStore+SessionQuotaTransition.swift
     tsPaths:
       - packages/core/src/quota.ts
       - packages/core/src/reset.ts
+      - packages/core/src/session-quota.ts
       - packages/core/src/usage-pace.ts
     tests:
       - Tests/CodexBarTests/UsagePaceTests.swift
       - Tests/CodexBarTests/ResetTimeBackfillTests.swift
       - Tests/CodexBarTests/UsageStoreResetBoundaryRefreshTests.swift
       - Tests/CodexBarTests/RateWindowSyntheticPlaceholderTests.swift
+      - Tests/CodexBarTests/SessionQuotaNotificationLogicTests.swift
+      - Tests/CodexBarTests/CodexSessionQuotaFalseRestoreTests.swift
       - packages/core/test/quota-reset-pace.test.ts
+      - packages/core/test/session-quota.test.ts
     fixtures: []
     status: partial
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 61fbe9fac50770bc3f7036e69003277aaed68162
 
   - id: http-security
     description: HTTP endpoint policy, bounded responses and platform-neutral security gates.
