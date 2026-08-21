@@ -185,6 +185,7 @@ components:
       - packages/contracts/src/ipc.ts
       - packages/platform/src/node-cost-jsonl.ts
       - packages/platform/src/node-local-cost-scan.ts
+      - packages/platform/src/node-codex-priority.ts
       - packages/platform/src/**/*.ts
       - apps/desktop/src/main/history-api.ts
       - apps/desktop/src/main/overview.ts
@@ -201,6 +202,7 @@ components:
       - packages/core/test/spend-dashboard.test.ts
       - packages/platform/test/node-cost-jsonl.test.ts
       - packages/platform/test/node-local-cost-scan.test.ts
+      - packages/platform/test/node-codex-priority.test.ts
       - apps/desktop/test/history-api.test.ts
       - apps/desktop/test/spend-overview.test.ts
       - apps/desktop/test/spend-dashboard.test.tsx
@@ -244,12 +246,16 @@ components:
     tsPaths:
       - packages/core/src/legacy-import.ts
       - packages/platform/src/legacy-import.ts
+      - apps/desktop/src/main/legacy-import.ts
+      - apps/desktop/src/preload/legacy-import-api.ts
     tests:
       - Tests/CodexBarTests/Config*.swift
       - Tests/CodexBarTests/CostUsage*Tests.swift
       - TestsPlugin/**/*.swift
       - packages/core/test/legacy-import.test.ts
       - packages/platform/test/legacy-import.test.ts
+      - apps/desktop/test/legacy-import.test.ts
+      - apps/desktop/test/preload-legacy-import.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/CostUsage/**/*
       - Tests/CodexBarTests/Fixtures/Config/*

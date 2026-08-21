@@ -30,7 +30,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Commit each local scanner cursor and its rows in one SQLite transaction, with checkpoint CAS across concurrent desktop/CLI processes and source-scoped reset.
   - [x] Connect bounded recursive Codex/Claude inventory to `cost --refresh`, with SIGINT/SIGTERM cancellation and explicit partial-coverage output.
   - [x] Reconcile Codex fork lineage/issue #2037 through one CAS-protected atomic family commit.
-  - [ ] Complete issue #2037 priority metadata and scanner cache parity.
+  - [x] Complete issue #2037 priority metadata and scanner cache parity; durable per-tier/model breakdown remains a schema migration.
 
 ## Milestone 2 — first vertical slice
 
@@ -66,7 +66,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Produce a host-native Node SEA CLI executable with a verified extracted keyring addon; cross-compilation and release archives remain disabled.
 - [x] Implement the data-only opt-in legacy import, report, rollback, no-clobber writes, and secret-safe behavior.
 - [x] Connect the explicit inspect/execute/rollback legacy import CLI with opt-in and mutation confirmation.
-- [ ] Connect legacy import UI and a separately-approved native credential migration.
+- [x] Connect a ticketed native-picker legacy import UI without exposing paths, journals, or source data to the renderer.
+- [ ] Reconcile legacy plugin/config layouts and add a separately-approved native credential migration.
 
 ## Milestone 4 — untrusted plugin runtime
 
@@ -91,7 +92,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.
   - [x] Port Grok's bounded local `signals.json` scanner and compose its aggregate only as non-quota diagnostics after successful billing.
-  - [ ] Complete Grok OAuth ownership, CLI-proxy/ACP RPC, identity, and browser-session parity.
+  - [x] Port Grok auth.json ownership, OAuth proxy/gRPC, identity, and a bounded one-shot CLI billing probe.
+  - [ ] Replace the one-shot Grok CLI billing probe with a streaming ACP session and complete browser-session parity.
 - [ ] Require descriptor, strategy, config, fixtures, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate
