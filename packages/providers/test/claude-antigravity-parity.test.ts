@@ -85,7 +85,11 @@ describe("Claude and Antigravity Swift-derived parity", () => {
       primary: { usedPercent: 7, windowMinutes: 300, resetDescription: "11am (Europe/Vienna)" },
       secondary: { usedPercent: 21, windowMinutes: 10_080 },
       tertiary: { usedPercent: 3, windowMinutes: 10_080 },
-      identity: { accountEmail: "user@example.com", loginMethod: "Claude Max" },
+      identity: {
+        providerId: "claude",
+        accountEmail: "user@example.com",
+        loginMethod: "Claude Max",
+      },
     });
   });
 
@@ -111,6 +115,7 @@ describe("Claude and Antigravity Swift-derived parity", () => {
       primary: { usedPercent: 30, resetsAt: "2026-08-20T15:00:00.000Z" },
       secondary: { usedPercent: 42 },
       providerCost: { used: 12.34, limit: 50, currencyCode: "USD" },
+      identity: { providerId: "claude" },
     });
   });
 
@@ -149,7 +154,7 @@ describe("Claude and Antigravity Swift-derived parity", () => {
         { id: "antigravity-quota-summary-gemini", window: { usedPercent: 19.999999999999996 } },
         { id: "antigravity-quota-summary-claude", window: { usedPercent: 75 } },
       ],
-      identity: { loginMethod: "pro" },
+      identity: { providerId: "antigravity", loginMethod: "pro" },
     });
   });
 
@@ -177,6 +182,7 @@ describe("Claude and Antigravity Swift-derived parity", () => {
     ).toMatchObject({
       primary: { usedPercent: 40 },
       extraRateWindows: [{ id: "antigravity-quota-summary-gemini-3", title: "Gemini: Gemini 3" }],
+      identity: { providerId: "antigravity" },
     });
   });
 

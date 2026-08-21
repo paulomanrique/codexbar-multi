@@ -70,6 +70,7 @@ export const parseClaudeUsage = (payload: unknown, ctx: ProviderContext) => {
         }
       : {}),
     identity: {
+      providerId: "claude",
       ...(string(root.account_email) ? { accountEmail: string(root.account_email) } : {}),
       ...(string(root.account_org) ? { accountOrganization: string(root.account_org) } : {}),
       ...(string(root.login_method) ? { loginMethod: string(root.login_method) } : {}),
@@ -126,6 +127,7 @@ const webUsage = async (ctx: ProviderContext, cookie: string) => {
     ...snapshot,
     identity: {
       ...object(snapshot.identity),
+      providerId: "claude",
       ...(string(selected?.name) ? { accountOrganization: string(selected?.name) } : {}),
       loginMethod: "Cookie",
     },

@@ -83,7 +83,7 @@ const snapshot = (
   return {
     ...(constrained ? { primary: constrained.window } : {}),
     extraRateWindows: windows,
-    identity,
+    identity: { providerId: "antigravity", ...identity },
   };
 };
 
