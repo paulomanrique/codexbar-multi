@@ -161,6 +161,7 @@ export { azureopenai } from "./providers/azureopenai.ts";
 export { bedrock } from "./providers/bedrock.ts";
 export { chutes } from "./providers/chutes.ts";
 export { claude } from "./providers/claude.ts";
+export * from "./providers/claude-swap-retention.ts";
 export { codex } from "./providers/codex.ts";
 export { clinepass } from "./providers/clinepass.ts";
 export { codebuff } from "./providers/codebuff.ts";
