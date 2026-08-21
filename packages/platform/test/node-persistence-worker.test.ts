@@ -7,7 +7,11 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { ProviderId } from "@codexbar/contracts";
-import { makeNodeSqliteWorkerPersistence } from "../src/node.ts";
+import {
+  makeNodeSqlitePersistence,
+  makeNodeSqliteWorkerPersistence,
+  NODE_PERSISTENCE_MIGRATIONS,
+} from "../src/node.ts";
 
 const snapshot = (updatedAt: string) => ({ details: [], updatedAt });
 
@@ -270,6 +274,84 @@ describe("Node SQLite worker persistence", () => {
       await expect(Effect.runPromise(persistence.costs.list("codex", 0))).resolves.toEqual([]);
     } finally {
       await Effect.runPromise(persistence.close).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves history and keeps the worker live after a SQLite full write failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-worker-full-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const retained = {
+      providerId: "codex" as ProviderId,
+      recordedAt: 1,
+      snapshot: snapshot("2026-01-01T00:00:01Z"),
+    };
+    try {
+      // Create a retained artifact before imposing the capacity cap. The
+      // custom migration is then run by the worker's own SQLite writer.
+      const seedPersistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+      try {
+        await Effect.runPromise(seedPersistence.history.append(retained));
+      } finally {
+        await Effect.runPromise(seedPersistence.close);
+      }
+
+      // SQLite persists max_page_count in its database state. Assigning one
+      // clamps it to the current non-shrinkable footprint, so the opaque 128
+      // KiB snapshot below requires a new page and produces SQLITE_FULL. The
+      // direct persistence test asserts SQLite's primary result code (13);
+      // this worker test intentionally checks only the data-only IPC result.
+      const persistence = await Effect.runPromise(
+        makeNodeSqliteWorkerPersistence({
+          databasePath,
+          migrations: [
+            ...NODE_PERSISTENCE_MIGRATIONS,
+            { version: 4, sql: "PRAGMA max_page_count = 1;" },
+          ],
+        }),
+      );
+      try {
+        await expect(
+          Effect.runPromise(
+            persistence.history.append({
+              providerId: "codex",
+              recordedAt: 2,
+              snapshot: {
+                ...snapshot("2026-01-01T00:00:02Z"),
+                openAIAPIUsage: { payload: "x".repeat(128 * 1024) },
+              },
+            }),
+          ),
+        ).rejects.toMatchObject({
+          _tag: "InfrastructureError",
+          operation: "append history record",
+        });
+
+        // Failed requests cross the wire without terminating the worker or
+        // causing the host to rebuild its database. The retained row remains
+        // readable, and the same worker can commit a page-fitting record.
+        await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([
+          retained,
+        ]);
+        await Effect.runPromise(
+          persistence.history.append({
+            providerId: "codex",
+            recordedAt: 3,
+            snapshot: snapshot("2026-01-01T00:00:03Z"),
+          }),
+        );
+        await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([
+          retained,
+          {
+            providerId: "codex",
+            recordedAt: 3,
+            snapshot: snapshot("2026-01-01T00:00:03Z"),
+          },
+        ]);
+      } finally {
+        await Effect.runPromise(persistence.close).catch(() => undefined);
+      }
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });

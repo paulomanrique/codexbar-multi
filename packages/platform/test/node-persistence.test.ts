@@ -612,6 +612,101 @@ describe("Node SQLite persistence", () => {
     }
   });
 
+  it("preserves the database and live connection after a genuine SQLite full write failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-sqlite-full-"));
+    const databasePath = join(directory, "usage.sqlite");
+    const retained = {
+      providerId: "codex" as ProviderId,
+      recordedAt: 1,
+      snapshot: snapshot("2026-01-01T00:00:01Z"),
+    };
+    try {
+      // Seed a valid retained artifact before capping its page count. A fresh
+      // connection then runs the cap migration below, so the same writer that
+      // executes the append sees SQLite's real capacity limit.
+      const seedPersistence = await Effect.runPromise(makeNodeSqlitePersistence({ databasePath }));
+      try {
+        await Effect.runPromise(seedPersistence.history.append(retained));
+      } finally {
+        await Effect.runPromise(seedPersistence.close);
+      }
+
+      // `max_page_count` is enforced by SQLite itself: assigning one asks it
+      // to use the current (non-shrinkable) page count. This is a deterministic
+      // portable analogue of a full filesystem, unlike a trigger/constraint
+      // surrogate. We intentionally do not exhaust the shared test host's
+      // filesystem. The cap is persisted in the database header, and applying
+      // it through the persistence migration guarantees the writer under test
+      // is already open when the capacity boundary is established.
+      const persistence = await Effect.runPromise(
+        makeNodeSqlitePersistence({
+          databasePath,
+          migrations: [
+            ...NODE_PERSISTENCE_MIGRATIONS,
+            { version: 4, sql: "PRAGMA max_page_count = 1;" },
+          ],
+        }),
+      );
+      try {
+        let failure: unknown;
+        try {
+          await Effect.runPromise(
+            persistence.history.append({
+              providerId: "codex",
+              recordedAt: 2,
+              snapshot: {
+                ...snapshot("2026-01-01T00:00:02Z"),
+                // This is deliberately opaque provider payload, matching the
+                // persisted UsageSnapshot contract rather than bypassing it.
+                openAIAPIUsage: { payload: "x".repeat(128 * 1024) },
+              },
+            }),
+          );
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toMatchObject({
+          _tag: "InfrastructureError",
+          operation: "append history record",
+        });
+        const sqliteFailure = (failure as { readonly causeValue?: unknown }).causeValue as {
+          readonly errcode?: unknown;
+          readonly message?: unknown;
+        };
+        // SQLite's primary SQLITE_FULL result code is 13. node:sqlite exposes
+        // it as `errcode` while the JavaScript error code stays generic.
+        expect(sqliteFailure.errcode).toBe(13);
+        expect(sqliteFailure.message).toMatch(/database or disk is full/i);
+
+        // The failed BEGIN IMMEDIATE transaction is rolled back, not rebuilt
+        // or pruned. A small write fits the existing B-tree page, proving the
+        // same live persistence connection recovers without reopening the DB.
+        await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([
+          retained,
+        ]);
+        await Effect.runPromise(
+          persistence.history.append({
+            providerId: "codex",
+            recordedAt: 3,
+            snapshot: snapshot("2026-01-01T00:00:03Z"),
+          }),
+        );
+        await expect(Effect.runPromise(persistence.history.list("codex", 0))).resolves.toEqual([
+          retained,
+          {
+            providerId: "codex",
+            recordedAt: 3,
+            snapshot: snapshot("2026-01-01T00:00:03Z"),
+          },
+        ]);
+      } finally {
+        await Effect.runPromise(persistence.close);
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps user-plugin history isolated and removes only the requested instance", async () => {
     const directory = await mkdtemp(join(tmpdir(), "codexbar-plugin-history-"));
     const databasePath = join(directory, "usage.sqlite");
