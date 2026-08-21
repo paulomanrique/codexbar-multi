@@ -72,10 +72,12 @@ import {
   rollbackNodeLegacyImport,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
+import { makeNodePlanUtilizationHistoryStore } from "@codexbar/platform";
 import {
   Clock,
   CostUsageRepository,
   HistoryRepository,
+  PlanUtilizationHistoryCoordinator,
   SessionQuotaCoordinator,
   makeDefaultCodexBarConfig,
   refreshProviderAndPersist,
@@ -116,6 +118,7 @@ import {
   updateSupportedFirstPartyProviderSettings,
 } from "./provider-settings.js";
 import { DesktopLegacyImportController } from "./legacy-import.js";
+import { recordDesktopPlanUtilization } from "./plan-utilization-history.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -135,6 +138,7 @@ let claudeSwap: DesktopClaudeSwapController | undefined;
 let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | undefined;
 let legacyImport: DesktopLegacyImportController | undefined;
 let adaptiveRefresh: DesktopAdaptiveRefreshController | undefined;
+let planUtilizationHistory: PlanUtilizationHistoryCoordinator | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
@@ -180,6 +184,11 @@ const activeGrokLocalTokenScanner = (): ReturnType<typeof makeNodeGrokLocalToken
 const activeLegacyImport = (): DesktopLegacyImportController => {
   if (legacyImport === undefined) throw new Error("Legacy import is not ready");
   return legacyImport;
+};
+const activePlanUtilizationHistory = (): PlanUtilizationHistoryCoordinator => {
+  if (planUtilizationHistory === undefined)
+    throw new Error("Plan-utilization history is not ready");
+  return planUtilizationHistory;
 };
 
 const overviewProviders = () => {
@@ -262,7 +271,16 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
             ),
             { signal },
           );
-          if (!signal.aborted) publishSessionQuotaNotification(provider.id, outcome.snapshot);
+          if (!signal.aborted) {
+            publishSessionQuotaNotification(provider.id, outcome.snapshot);
+            await recordDesktopPlanUtilization({
+              coordinator: activePlanUtilizationHistory(),
+              providerId: provider.id,
+              snapshot: outcome.snapshot,
+              capturedAt: new Date(),
+              signal,
+            });
+          }
         } catch {
           // The provider refresh path owns classified errors. Avoid retaining
           // transport text here because it can contain sensitive context.
@@ -359,6 +377,12 @@ void app
   .then(async () => {
     const userDataPath = app.getPath("userData");
     const databasePath = join(userDataPath, "usage.sqlite");
+    planUtilizationHistory = new PlanUtilizationHistoryCoordinator(
+      makeNodePlanUtilizationHistoryStore({
+        directoryPath: join(userDataPath, "history"),
+      }),
+    );
+    await Effect.runPromise(planUtilizationHistory.load);
     persistence = await Effect.runPromise(
       makeNodeSqliteWorkerPersistence({
         databasePath,
@@ -689,6 +713,12 @@ void app
           ),
         );
         publishSessionQuotaNotification(request.provider, outcome.snapshot);
+        await recordDesktopPlanUtilization({
+          coordinator: activePlanUtilizationHistory(),
+          providerId: request.provider,
+          snapshot: outcome.snapshot,
+          capturedAt: new Date(),
+        });
         return decodeRefreshResult({
           provider: request.provider,
           strategyId: outcome.strategyId,
