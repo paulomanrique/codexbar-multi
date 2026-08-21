@@ -21,6 +21,37 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("Claude Swap retained at-limit usage (#3081)", () => {
+  it("keeps unique emails as the label and never copies organization names into identity", () => {
+    const accounts = projectClaudeSwapAccounts(
+      {
+        accounts: [
+          row({
+            number: 1,
+            email: "work@example.com",
+            organizationName: "Sendbird",
+            isActive: false,
+          }),
+          row({
+            number: 2,
+            email: "personal@example.com",
+            organizationName: "Acme",
+            isActive: true,
+          }),
+        ],
+        activeAccountNumber: 2,
+      },
+      { now },
+    );
+    expect(accounts.map((account) => account.displayLabel)).toEqual([
+      "personal@example.com",
+      "work@example.com",
+    ]);
+    expect(accounts.map((account) => account.snapshot?.identity?.accountOrganization)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("projects an unavailable at-limit payload, prunes reset lanes, and retains the limit note", () => {
     const accounts = projectClaudeSwapAccounts(
       {
@@ -139,6 +170,37 @@ describe("Claude Swap retained at-limit usage (#3081)", () => {
       },
     ]);
     expect(new Set(accounts.map((account) => account.id.opaqueId))).toEqual(new Set(["1", "2"]));
+  });
+
+  it("appends the source slot when shared email and organization also collide", () => {
+    const accounts = projectClaudeSwapAccounts(
+      {
+        activeAccountNumber: 4,
+        accounts: [
+          row({
+            number: 1,
+            email: "shared@example.com",
+            organizationName: "Sendbird",
+            isActive: false,
+          }),
+          row({
+            number: 4,
+            email: "SHARED@example.com",
+            organizationName: "Sendbird",
+            isActive: true,
+          }),
+        ],
+      },
+      { now },
+    );
+    expect(accounts.map((account) => account.displayLabel)).toEqual([
+      "SHARED@example.com · Sendbird · Account 4",
+      "shared@example.com · Sendbird · Account 1",
+    ]);
+    expect(accounts.map((account) => account.snapshot?.identity?.accountOrganization)).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 
   it("never fingerprints an email-shaped alias when the source mailbox is empty", () => {

@@ -211,6 +211,63 @@ describe("Alibaba and Qwen Cloud Swift parity", () => {
     });
   });
 
+  it("keeps the OneConsole token fallback compatible with lower-case and missing shells", async () => {
+    const cases = [
+      {
+        name: "lower-case sec_token",
+        shell: "<script>var x = { sec_token: 'lower-token' };</script>",
+        token: "lower-token",
+      },
+      {
+        name: "token-less shell",
+        shell: "<html><body>no token here</body></html>",
+        token: undefined,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const requests: Request[] = [];
+      await alibabatokenplan.fetchUsage(
+        context(
+          (request) => {
+            if (request.method === "GET") return { status: 200, bodyText: testCase.shell };
+            const body = decodeURIComponent(String(request.options?.body));
+            if (
+              body.includes('"Api":"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/subscription"')
+            )
+              return response({});
+            if (
+              body.includes('"Api":"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/quota-config"')
+            )
+              return response({});
+            expect(
+              body.includes(testCase.token ? `sec_token=${testCase.token}` : "sec_token="),
+            ).toBe(testCase.token !== undefined);
+            return response({ data: { per5HourPercentage: 0.03 } });
+          },
+          {
+            settings: {
+              ALIBABA_TOKEN_PLAN_REGION: "cn-personal",
+              ALIBABA_TOKEN_PLAN_COOKIE: "sid=fixture",
+            },
+            requests,
+          },
+        ),
+      );
+      expect(requests[0]?.options).toMatchObject({
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Referer: "https://bailian.console.aliyun.com/",
+          "Sec-Fetch-Site": "same-origin",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Dest": "document",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
+      });
+      expect(testCase.name).toBeTruthy();
+    }
+  });
+
   it("parses Qwen Cloud current personal windows and classifies login payloads", async () => {
     const raw = await qwencloud.fetchUsage(
       context(
