@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ProviderFetchOutcome, UsageSnapshot } from "@codexbar/core";
+import {
+  makeDefaultCodexBarConfig,
+  type ProviderFetchOutcome,
+  type UsageSnapshot,
+} from "@codexbar/core";
+import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
+import { claudeSwapProcessEnvironment } from "../src/claude-swap.ts";
 import { CLIExitCode, runCLI, type CLIIO, type CLIProviderRuntime } from "../src/runner.ts";
 
 const snapshot: UsageSnapshot = {
@@ -51,6 +57,38 @@ const runtime = (fetch: CLIProviderRuntime["fetch"] = async () => outcome): CLIP
 });
 
 describe("CodexBar Multi cards CLI", () => {
+  const claudeSwapConfig = () => {
+    const base = makeDefaultCodexBarConfig();
+    return {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id !== "claude"
+          ? provider
+          : {
+              ...provider,
+              extensions: {
+                ...provider.extensions,
+                claudeSwapEnabled: true,
+                claudeSwapExecutablePath: "  '/safe/cswap' ",
+              },
+            },
+      ),
+    };
+  };
+
+  it("does not pass provider credentials to the Claude Swap helper", () => {
+    expect(
+      claudeSwapProcessEnvironment({
+        PATH: "/safe/bin",
+        HOME: "/safe/home",
+        SYSTEMROOT: "C:\\Windows",
+        OPENAI_API_KEY: "secret-openai",
+        ANTHROPIC_API_KEY: "secret-claude",
+        CODEX_ACCESS_TOKEN: "secret-codex",
+      }),
+    ).toEqual({ PATH: "/safe/bin", HOME: "/safe/home", SYSTEMROOT: "C:\\Windows" });
+  });
+
   it("renders a deterministic JSON card from the shared usage snapshot", async () => {
     const output = capture();
     const result = await runCLI({
@@ -88,6 +126,108 @@ describe("CodexBar Multi cards CLI", () => {
     });
     expect(result.exitCode).toBe(CLIExitCode.failure);
     expect(output.stderr[0]).toContain("status probes are not connected");
+  });
+
+  it("renders eligible Claude Swap accounts in active-slot order without ambient Claude", async () => {
+    const output = capture();
+    const accounts: readonly ClaudeSwapAccountSnapshot[] = [
+      {
+        id: { source: "claude-swap", opaqueId: "2" },
+        provider: "claude",
+        displayLabel: "active@example.test",
+        isActive: true,
+        canActivate: false,
+        snapshot: {
+          primary: { usedPercent: 20, windowMinutes: 300 },
+          details: [],
+          updatedAt: "2026-03-10T12:00:00Z",
+        },
+        sourceLabel: "claude-swap",
+      },
+      {
+        id: { source: "claude-swap", opaqueId: "1" },
+        provider: "claude",
+        displayLabel: "work@example.test",
+        isActive: false,
+        canActivate: true,
+        error: "Token expired. Switch to this account in claude-swap to refresh it.",
+        sourceLabel: "claude-swap",
+      },
+    ];
+    const result = await runCLI({
+      argv: ["cards", "--provider", "claude", "--format", "json"],
+      io: output.io,
+      runtime: {
+        ...runtime(async () => {
+          throw new Error("ambient Claude must not run");
+        }),
+        config: {
+          path: "/tmp/codexbar-multi/config.json",
+          load: async () => claudeSwapConfig(),
+          save: async () => undefined,
+        },
+        claudeSwap: {
+          list: async ({ executablePath }) => {
+            expect(executablePath).toBe("/safe/cswap");
+            return accounts;
+          },
+        },
+      },
+    });
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject([
+      {
+        provider: "claude",
+        sourceLabel: "claude-swap",
+        accountLine: "active@example.test",
+        isActive: true,
+      },
+      {
+        accountLine: "work@example.test",
+        statusLine: "Token expired. Switch to this account in claude-swap to refresh it.",
+      },
+    ]);
+  });
+
+  it("keeps the ambient Claude path for explicit source intent and reports adapter failure separately", async () => {
+    const sourceOutput = capture();
+    let adapterCalls = 0;
+    await runCLI({
+      argv: ["cards", "--provider", "claude", "--source", "oauth", "--format", "json"],
+      io: sourceOutput.io,
+      runtime: {
+        ...runtime(),
+        config: {
+          path: "/tmp/codexbar-multi/config.json",
+          load: async () => claudeSwapConfig(),
+          save: async () => undefined,
+        },
+        claudeSwap: { list: async () => ((adapterCalls += 1), []) },
+      },
+    });
+    expect(adapterCalls).toBe(0);
+
+    const errorOutput = capture();
+    const result = await runCLI({
+      argv: ["cards", "--provider", "claude", "--format", "json"],
+      io: errorOutput.io,
+      runtime: {
+        ...runtime(),
+        config: {
+          path: "/tmp/codexbar-multi/config.json",
+          load: async () => claudeSwapConfig(),
+          save: async () => undefined,
+        },
+        claudeSwap: { list: async () => Promise.reject(new Error("\u001b[31mreader failed")) },
+      },
+    });
+    expect(result.exitCode).toBe(CLIExitCode.failure);
+    expect(JSON.parse(errorOutput.stdout[0] ?? "")).toContainEqual(
+      expect.objectContaining({
+        account: "claude-swap",
+        error: expect.objectContaining({ message: "reader failed" }),
+      }),
+    );
   });
 
   it("supports brief text output and forwards source/account options to the runtime", async () => {

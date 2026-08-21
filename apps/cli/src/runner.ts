@@ -19,16 +19,20 @@ import {
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
   makeNodeProcessRunner,
+  makeNodePrivateFileStore,
+  resolveNodeClaudeSwapExecutablePath,
   makeNodeConfigRepository,
   makeNodeSqlitePersistence,
   makeSystemClock,
   type NodeSqlitePersistence,
 } from "@codexbar/platform/node";
+import { CLAUDE_SWAP_MAX_OUTPUT_BYTES, refreshClaudeSwapAccounts } from "@codexbar/platform";
 import { discoverCodexCredential } from "./codex-credential.ts";
 import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config.ts";
 import { resolveCLIConfigPath } from "./config-path.ts";
 import { runCost, type CLICostStore } from "./cost.ts";
 import { runCards } from "./cards.ts";
+import { claudeSwapProcessEnvironment, type CLIClaudeSwapAdapter } from "./claude-swap.ts";
 import { runCache, type CLICacheStore } from "./cache.ts";
 import { runDashboard } from "./dashboard.ts";
 import { runDiagnose } from "./diagnose.ts";
@@ -111,6 +115,8 @@ export interface CLIProviderRuntime {
   readonly runHook?: (request: HookProcessRequest) => Promise<{ readonly stdout: string }>;
   readonly cookies?: CLICookieStore;
   readonly plugins?: CLIPluginStore;
+  /** Opt-in Claude multi-account adapter; it remains a host-owned subprocess capability. */
+  readonly claudeSwap?: CLIClaudeSwapAdapter;
   /** Optional host lifecycle cleanup; the renderer never receives this capability. */
   readonly dispose?: () => void | Promise<void>;
   readonly now?: () => number;
@@ -642,6 +648,12 @@ export const makeNodeCLIProviderRuntime = (
     ),
   );
   const hookProcessRunner = makeNodeProcessRunner({ environment: hookEnvironment });
+  const claudeSwapProcessRunner = makeNodeProcessRunner({
+    environment: claudeSwapProcessEnvironment(environment),
+    maximumOutputBytes: CLAUDE_SWAP_MAX_OUTPUT_BYTES,
+  });
+  const claudeSwapFiles = makeNodePrivateFileStore();
+  const claudeSwapRetentionPath = join(dirname(configPath), "claude-swap-retained-usage.json");
   const environmentSettings = makeEnvironmentProviderSettings(environment);
   const codexCredential = discoverCodexCredential({ environment });
   const runtime: ProviderRuntimeService = makeFirstPartyProviderRuntime({
@@ -696,6 +708,23 @@ export const makeNodeCLIProviderRuntime = (
     removeBrowserCookie: (pluginId, domain) =>
       Effect.runPromise(credentials.remove(pluginBrowserCredentialKey(pluginId, domain))),
   });
+  const claudeSwap: CLIClaudeSwapAdapter = {
+    list: async ({ executablePath, signal }) => {
+      const result = await Effect.runPromise(
+        refreshClaudeSwapAccounts({
+          processes: claudeSwapProcessRunner,
+          files: claudeSwapFiles,
+          executablePath: resolveNodeClaudeSwapExecutablePath(executablePath),
+          retentionPath: claudeSwapRetentionPath,
+          // The CLI has no mutable settings generation; cancellation is its
+          // freshness boundary and prevents stale cache publication.
+          isFresh: () => signal?.aborted !== true,
+        }),
+        signal === undefined ? {} : { signal },
+      );
+      return result.accounts;
+    },
+  };
   return {
     providers: PROVIDERS.map(({ id, name, status, isPrimaryProvider }) => ({
       id,
@@ -739,6 +768,7 @@ export const makeNodeCLIProviderRuntime = (
       clearCost: async () => ({ cleared: 0 }),
     },
     ...(plugins === undefined ? {} : { plugins }),
+    claudeSwap,
     dispose: () => plugins?.dispose(),
     runHook: async (request) => {
       const input = new TextEncoder().encode(request.input);

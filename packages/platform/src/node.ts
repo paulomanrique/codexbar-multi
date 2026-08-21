@@ -35,6 +35,7 @@ import type {
   FirstPartySettings,
 } from "./first-party-runtime.ts";
 import type { ProviderLocalCommand } from "@codexbar/providers";
+import { resolveClaudeSwapExecutablePath } from "./claude-swap.ts";
 import {
   makeNodePrivateDirectoryRestriction,
   makeNodePrivateFileRestriction,
@@ -47,6 +48,15 @@ export * from "./first-party-runtime.ts";
 export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
 export * from "./node-private-path-security.ts";
+
+/** Node's explicit equivalent of Swift's `NSString.expandingTildeInPath`. */
+export const resolveNodeClaudeSwapExecutablePath = (configuredPath: string): string => {
+  const resolved = resolveClaudeSwapExecutablePath(configuredPath);
+  if (resolved === "~") return homedir();
+  if (resolved.startsWith("~/") || resolved.startsWith("~\\"))
+    return join(homedir(), resolved.slice(2));
+  return resolved;
+};
 
 /**
  * Node exposes POSIX modes but no safe, dependency-free API for editing a

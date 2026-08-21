@@ -1,10 +1,18 @@
 import {
   makeDefaultCodexBarConfig,
+  type PersistedCodexBarConfig,
   type ProviderFetchContext,
   type ProviderFetchOutcome,
 } from "@codexbar/core";
 import type { ProviderId, RateWindow, UsageSnapshot } from "@codexbar/contracts";
 import { serializeUsageSnapshot } from "@codexbar/contracts";
+import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
+import {
+  claudeSwapCLISettings,
+  isClaudeSwapCardsEligible,
+  sanitizeClaudeSwapCLIText,
+  shouldPresentClaudeSwapAccounts,
+} from "./claude-swap.ts";
 import type {
   CLICommandResult,
   CLIExitCode,
@@ -271,14 +279,18 @@ type CardModel = {
   readonly title: string;
   readonly sourceLabel: string;
   readonly accountLine?: string;
-  readonly isActive: false;
+  readonly isActive: boolean;
   readonly infoLines: readonly string[];
   readonly metrics: readonly CardMetric[];
   readonly extraLines: readonly string[];
   readonly statusLine?: string;
 };
 
-type CardFailure = { readonly provider: string; readonly message: string };
+type CardFailure = {
+  readonly provider: string;
+  readonly message: string;
+  readonly accountLabel?: string;
+};
 
 const metricEntries = (snapshot: UsageSnapshot): readonly [string, RateWindow][] => [
   ...(snapshot.primary === undefined
@@ -331,6 +343,35 @@ const cardFrom = (descriptor: CLIProviderDescriptor, outcome: ProviderFetchOutco
     infoLines,
     metrics,
     extraLines,
+  };
+};
+
+const cardFromClaudeSwap = (
+  descriptor: CLIProviderDescriptor,
+  account: ClaudeSwapAccountSnapshot,
+): CardModel => {
+  const snapshot = account.snapshot;
+  const metrics =
+    snapshot === undefined
+      ? []
+      : metricEntries(snapshot).map(([label, window]) => ({
+          label,
+          remainingPercent: Math.max(0, Math.min(100, 100 - window.usedPercent)),
+          ...(window.resetDescription === undefined ? {} : { resetText: window.resetDescription }),
+          ...(window.resetsAt === undefined ? {} : { resetAt: window.resetsAt }),
+        }));
+  return {
+    provider: descriptor.id,
+    title: descriptor.name,
+    sourceLabel: account.sourceLabel,
+    accountLine: sanitizeClaudeSwapCLIText(account.displayLabel, 256),
+    isActive: account.isActive,
+    infoLines: [],
+    metrics,
+    extraLines: [],
+    ...(account.error === undefined
+      ? {}
+      : { statusLine: sanitizeClaudeSwapCLIText(account.error, 512) }),
   };
 };
 
@@ -394,6 +435,7 @@ const selection = (
 const failurePayload = (failure: CardFailure) => ({
   provider: failure.provider,
   source: "auto",
+  ...(failure.accountLabel === undefined ? {} : { account: failure.accountLabel }),
   error: { code: 1, message: failure.message, kind: "provider" as const },
 });
 
@@ -425,10 +467,11 @@ export const runCards = async (
     return { exitCode: 1 };
   }
   let configured: readonly ProviderId[] | undefined;
+  let persistedConfig: PersistedCodexBarConfig | undefined;
   if (runtime.config !== undefined) {
     try {
-      const config = (await runtime.config.load()) ?? makeDefaultCodexBarConfig();
-      configured = config.providers
+      persistedConfig = (await runtime.config.load()) ?? makeDefaultCodexBarConfig();
+      configured = persistedConfig.providers
         .filter((entry) => entry.enabled ?? entry.id === "codex")
         .map((entry) => entry.id as ProviderId);
     } catch {
@@ -476,6 +519,48 @@ export const runCards = async (
             },
           }),
     };
+    const claudeSwapSettings =
+      descriptor.id === "claude" && persistedConfig !== undefined
+        ? claudeSwapCLISettings(persistedConfig)
+        : undefined;
+    const claudeSwapEligible =
+      runtime.claudeSwap !== undefined &&
+      claudeSwapSettings !== undefined &&
+      isClaudeSwapCardsEligible({
+        providerId: descriptor.id,
+        settings: claudeSwapSettings,
+        sourceMode: parsed.value.sourceMode,
+        hasExplicitAccountSelection:
+          parsed.value.account !== undefined ||
+          parsed.value.accountIndex !== undefined ||
+          parsed.value.allAccounts,
+      });
+    if (
+      claudeSwapEligible &&
+      claudeSwapSettings !== undefined &&
+      runtime.claudeSwap !== undefined
+    ) {
+      try {
+        const accounts = await runtime.claudeSwap.list({
+          executablePath: claudeSwapSettings.executablePath,
+        });
+        if (shouldPresentClaudeSwapAccounts(accounts, claudeSwapSettings.showSingleAccount)) {
+          cards.push(...accounts.map((account) => cardFromClaudeSwap(descriptor, account)));
+          continue;
+        }
+      } catch (error) {
+        exitCode = 1;
+        failures.push({
+          provider: "claude",
+          accountLabel: "claude-swap",
+          message:
+            sanitizeClaudeSwapCLIText(
+              error instanceof Error ? error.message : String(error),
+              512,
+            ) || "claude-swap list failed.",
+        });
+      }
+    }
     try {
       cards.push(cardFrom(descriptor, await runtime.fetch(descriptor.id, context)));
     } catch (error) {
