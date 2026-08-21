@@ -2,6 +2,9 @@ packages:
   - apps/*
   - packages/*
   - scripts
+  # Git checks out upstream `Scripts/` and port tooling `scripts/` into one
+  # case-insensitive directory on Windows. Match that physical casing too.
+  - Scripts
 
 allowBuilds:
   electron: true
