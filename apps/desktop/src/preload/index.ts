@@ -39,6 +39,7 @@ import {
 
 import { DesktopChannels, type CodexBarDesktopApi } from "../ipc/api.js";
 import { makeProviderSettingsApi } from "./provider-settings-api.js";
+import { makeClaudeSwapApi } from "./claude-swap-api.js";
 
 const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
 const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -103,6 +104,7 @@ const api: CodexBarDesktopApi = Object.freeze({
         await decodeRefreshRequest(request),
       ),
     ),
+  ...makeClaudeSwapApi((channel, input) => ipcRenderer.invoke(channel, input)),
   ...makeProviderSettingsApi((channel, input) => ipcRenderer.invoke(channel, input)),
   listPlugins: async () => decodePluginList(await ipcRenderer.invoke(DesktopChannels.listPlugins)),
   installPlugin: async (request: InstallPluginRequest) =>

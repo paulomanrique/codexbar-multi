@@ -1,4 +1,9 @@
-import type { CostUsageRecordDTO, DashboardProviderDTO, ProviderId } from "@codexbar/contracts";
+import type {
+  CostUsageRecordDTO,
+  DashboardAccountDTO,
+  DashboardProviderDTO,
+  ProviderId,
+} from "@codexbar/contracts";
 import { PROVIDER_IDS } from "@codexbar/contracts";
 
 export type ProviderImplementationPresentation = "parity-pending" | "unported";
@@ -32,6 +37,15 @@ export const safeDateFromTimestamp = (timestamp: number): Date | undefined => {
 /** A dashboard instance can be a user plugin; only the closed first-party IDs may be refreshed. */
 export const firstPartyProviderId = (id: string): ProviderId | undefined =>
   (PROVIDER_IDS as readonly string[]).includes(id) ? (id as ProviderId) : undefined;
+
+/** The renderer can submit only the opaque ID from the current Claude account card. */
+export const claudeSwapActivationRequest = (
+  provider: Pick<DashboardProviderDTO, "id">,
+  account: Pick<DashboardAccountDTO, "id" | "active" | "canActivate">,
+): { readonly provider: "claude"; readonly accountId: string } | undefined =>
+  provider.id === "claude" && !account.active && account.canActivate
+    ? { provider: "claude", accountId: account.id }
+    : undefined;
 
 export const historySince = (days: number, now: number = Date.now()): number =>
   Math.max(0, now - Math.max(1, Math.floor(days)) * 24 * 60 * 60 * 1000);

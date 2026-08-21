@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type {
+  DashboardAccountDTO,
   DashboardProviderDTO,
   DashboardSnapshotDTO,
   UsageSnapshot,
@@ -72,12 +73,19 @@ export const loadPersistedOverview = async (
   persistence: Persistence,
   now: () => Date = () => new Date(),
   providers: readonly OverviewProvider[] = PROVIDERS,
+  claudeSwapAccounts: readonly DashboardAccountDTO[] | undefined = undefined,
 ): Promise<DashboardSnapshotDTO> => {
   const generatedAt = now();
   const providerSnapshots = await Promise.all(
     providers.map(async (provider) => {
       const latest = await Effect.runPromise(persistence.history.latest(provider.id));
-      return toDashboardProvider(provider, latest?.snapshot ?? emptySnapshot(generatedAt));
+      const dashboard = toDashboardProvider(
+        provider,
+        latest?.snapshot ?? emptySnapshot(generatedAt),
+      );
+      return provider.id === "claude" && claudeSwapAccounts !== undefined
+        ? { ...dashboard, accounts: claudeSwapAccounts }
+        : dashboard;
     }),
   );
   return {

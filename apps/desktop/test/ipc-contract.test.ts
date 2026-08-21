@@ -12,6 +12,7 @@ import {
   ProviderSettingsListDTO,
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
+  ActivateClaudeSwapAccountRequestDTO,
   SpendDashboardDTO,
   SpendOverviewDTO,
 } from "@codexbar/contracts";
@@ -66,6 +67,16 @@ describe("desktop IPC boundary", () => {
       provider: "openai",
       source: "api",
     });
+  });
+
+  it("accepts only the Claude-scoped opaque account activation request", () => {
+    const decode = Schema.decodeUnknownSync(ActivateClaudeSwapAccountRequestDTO);
+    expect(decode({ provider: "claude", accountId: "source-account" })).toEqual({
+      provider: "claude",
+      accountId: "source-account",
+    });
+    expect(() => decode({ provider: "openai", accountId: "source-account" })).toThrow();
+    expect(() => decode({ provider: "claude", accountId: "../../2" })).toThrow();
   });
 
   it("allows only a bounded first-party provider settings projection", () => {

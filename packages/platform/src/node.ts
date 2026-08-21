@@ -59,6 +59,41 @@ export const resolveNodeClaudeSwapExecutablePath = (configuredPath: string): str
   return resolved;
 };
 
+const claudeSwapEnvironmentKeys = [
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "SYSTEMROOT",
+  "WINDIR",
+  "COMSPEC",
+  "PATHEXT",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+] as const;
+
+/**
+ * The Claude Swap helper inherits only the OS/session values it needs to find
+ * its own credential store. Provider tokens and arbitrary parent environment
+ * values are deliberately excluded.
+ */
+export const claudeSwapProcessEnvironment = (
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    claudeSwapEnvironmentKeys.flatMap((key) =>
+      environment[key] === undefined ? [] : ([[key, environment[key]]] as const),
+    ),
+  );
+
 /**
  * Node exposes POSIX modes but no safe, dependency-free API for editing a
  * Windows DACL. Hosts that own a native Windows ACL adapter can inject it

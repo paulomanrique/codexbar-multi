@@ -34,6 +34,8 @@ export const DashboardAccountDTO = Schema.Struct({
   id: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(160))),
   label: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
   active: Schema.Boolean,
+  /** Host-projected eligibility; it is not a credential slot or command argument. */
+  canActivate: Schema.Boolean,
   identity: Schema.optional(ProviderIdentity),
   windows: Schema.Array(DashboardWindowDTO).pipe(Schema.check(Schema.isMaxLength(32))),
   error: Schema.optional(Schema.String.pipe(Schema.check(Schema.isMaxLength(512)))),
@@ -243,6 +245,36 @@ export const RefreshProviderResultDTO = Schema.Struct({
   snapshot: UsageSnapshot,
 });
 export type RefreshProviderResultDTO = Schema.Schema.Type<typeof RefreshProviderResultDTO>;
+
+/**
+ * An account identifier issued by a host-owned Claude Swap listing. The
+ * renderer treats this value as opaque and the desktop host rechecks it
+ * against a fresh eligible listing before any credential mutation.
+ */
+export const ClaudeSwapAccountIdDTO = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/u)),
+);
+export type ClaudeSwapAccountIdDTO = Schema.Schema.Type<typeof ClaudeSwapAccountIdDTO>;
+
+/** Explicitly scoped credential mutation; no executable, slot, args, or source can cross IPC. */
+export const ActivateClaudeSwapAccountRequestDTO = Schema.Struct({
+  provider: Schema.Literal("claude"),
+  accountId: ClaudeSwapAccountIdDTO,
+});
+export type ActivateClaudeSwapAccountRequestDTO = Schema.Schema.Type<
+  typeof ActivateClaudeSwapAccountRequestDTO
+>;
+
+/** Deliberately omits helper output, paths, and all credential-bearing details. */
+export const ActivateClaudeSwapAccountResultDTO = Schema.Struct({
+  provider: Schema.Literal("claude"),
+  accountId: ClaudeSwapAccountIdDTO,
+  switched: Schema.Boolean,
+});
+export type ActivateClaudeSwapAccountResultDTO = Schema.Schema.Type<
+  typeof ActivateClaudeSwapAccountResultDTO
+>;
 
 /**
  * The deliberately small settings projection available to the desktop UI.

@@ -32,6 +32,8 @@ import {
   HistoryQueryDTO,
   HistoryQueryResultDTO,
   LoginResultDTO,
+  ActivateClaudeSwapAccountRequestDTO,
+  ActivateClaudeSwapAccountResultDTO,
 } from "@codexbar/contracts";
 import {
   makeCredentialBrowserSessions,
@@ -44,6 +46,9 @@ import {
   makeNodeConfigRepository,
   makeSystemClock,
   makeNodeSqliteWorkerPersistence,
+  claudeSwapProcessEnvironment,
+  makeNodePrivateFileStore,
+  makeNodeProcessRunner,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
 import {
@@ -64,6 +69,7 @@ import { DesktopChannels } from "../ipc/api.js";
 import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./browser-session.js";
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
+import { DesktopClaudeSwapController } from "./claude-swap.js";
 import {
   DesktopSpendPublisher,
   type DesktopSpendConfiguration,
@@ -94,6 +100,7 @@ let desktopConfig: PersistedCodexBarConfig | undefined;
 let pluginManager: DesktopPluginManager | undefined;
 let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
 let spendPublisher: DesktopSpendPublisher | undefined;
+let claudeSwap: DesktopClaudeSwapController | undefined;
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
   id: provider.descriptor.id,
@@ -124,6 +131,10 @@ const activePluginManager = (): DesktopPluginManager => {
 const activeSpendPublisher = (): DesktopSpendPublisher => {
   if (spendPublisher === undefined) throw new Error("Desktop spend publication is not ready");
   return spendPublisher;
+};
+const activeClaudeSwap = (): DesktopClaudeSwapController => {
+  if (claudeSwap === undefined) throw new Error("Claude Swap is not ready");
+  return claudeSwap;
 };
 
 const overviewProviders = () => {
@@ -328,6 +339,12 @@ void app
       desktopConfig = makeDefaultCodexBarConfig();
       await Effect.runPromise(configRepository.save(desktopConfig));
     }
+    claudeSwap = new DesktopClaudeSwapController({
+      config: () => desktopConfig,
+      processes: makeNodeProcessRunner({ environment: claudeSwapProcessEnvironment(process.env) }),
+      files: makeNodePrivateFileStore(),
+      retentionPath: join(app.getPath("userData"), "claude-swap-retained.json"),
+    });
     const decodeVoid = Schema.decodeUnknownPromise(Schema.Void);
     const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
     const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -342,6 +359,12 @@ void app
     const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
+    const decodeActivateClaudeSwapAccount = Schema.decodeUnknownPromise(
+      ActivateClaudeSwapAccountRequestDTO,
+    );
+    const decodeActivateClaudeSwapAccountResult = Schema.decodeUnknownPromise(
+      ActivateClaudeSwapAccountResultDTO,
+    );
     const decodeProviderSettings = Schema.decodeUnknownPromise(ProviderSettingsDTO);
     const decodeProviderSettingsList = Schema.decodeUnknownPromise(ProviderSettingsListDTO);
     const decodeUpdateProviderSettings = Schema.decodeUnknownPromise(
@@ -363,8 +386,14 @@ void app
     ipcMain.handle(DesktopChannels.overview, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         await decodeVoid(input);
+        const accounts = await activeClaudeSwap().refreshForOverview();
         return decodeOverview(
-          await loadPersistedOverview(activePersistence(), () => new Date(), overviewProviders()),
+          await loadPersistedOverview(
+            activePersistence(),
+            () => new Date(),
+            overviewProviders(),
+            accounts,
+          ),
         );
       }),
     );
@@ -439,6 +468,31 @@ void app
           strategyId: outcome.strategyId,
           source: outcome.source,
           snapshot: outcome.snapshot,
+        });
+      }),
+    );
+    ipcMain.handle(DesktopChannels.activateClaudeSwapAccount, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeActivateClaudeSwapAccount(input);
+        const result = await activeClaudeSwap().activate(request.accountId);
+        // The external tool owns the credential. Refreshing the ambient Claude
+        // snapshot is best effort; the subsequent account listing is already
+        // verified and replaces any stale active-row presentation.
+        await Effect.runPromise(
+          refreshProviderAndPersist(activeProviderRuntime(), "claude", {
+            sourceMode: "auto",
+            includeCredits: true,
+          }).pipe(
+            Effect.provideService(Clock, providerClock),
+            Effect.provideService(HistoryRepository, activePersistence().history),
+            Effect.provideService(CostUsageRepository, activePersistence().costs),
+            Effect.orElseSucceed(() => undefined),
+          ),
+        );
+        return decodeActivateClaudeSwapAccountResult({
+          provider: "claude",
+          accountId: result.accountId,
+          switched: result.switched,
         });
       }),
     );

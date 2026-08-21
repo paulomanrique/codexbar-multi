@@ -23,6 +23,8 @@ import type {
   TestPluginResultDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
+  ActivateClaudeSwapAccountRequestDTO,
+  ActivateClaudeSwapAccountResultDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
   UpdateProviderSettingsRequestDTO,
@@ -40,6 +42,7 @@ export const DesktopChannels = Object.freeze({
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
   refreshProvider: "codexbar-multi:refresh-provider",
+  activateClaudeSwapAccount: "codexbar-multi:activate-claude-swap-account",
   getProviderSettings: "codexbar-multi:get-provider-settings",
   updateProviderSettings: "codexbar-multi:update-provider-settings",
   listPlugins: "codexbar-multi:list-plugins",
@@ -66,6 +69,10 @@ export interface CodexBarDesktopApi {
   readonly refreshProvider: (
     request: RefreshProviderRequestDTO,
   ) => Promise<RefreshProviderResultDTO>;
+  /** Activates only a host-listed Claude Swap account ID. */
+  readonly activateClaudeSwapAccount: (
+    request: ActivateClaudeSwapAccountRequestDTO,
+  ) => Promise<ActivateClaudeSwapAccountResultDTO>;
   /** First-party enablement/source projection only; no config document or secrets. */
   readonly getProviderSettings: () => Promise<ProviderSettingsListDTO>;
   readonly updateProviderSettings: (

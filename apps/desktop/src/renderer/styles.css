@@ -219,6 +219,19 @@ progress {
   justify-content: space-between;
   gap: 10px;
 }
+.provider-accounts {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid #202532;
+  padding-top: 9px;
+}
+.provider-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
 button.compact {
   padding: 5px 8px;
   font-size: 12px;

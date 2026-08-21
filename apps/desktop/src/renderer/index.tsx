@@ -15,6 +15,7 @@ import type {
 import { createLocalization } from "./localization.ts";
 import {
   costTotals,
+  claudeSwapActivationRequest,
   displayPercent,
   firstPartyProviderId,
   historySince,
@@ -62,17 +63,21 @@ function ProviderCard({
   provider,
   selected,
   refreshing,
+  activatingAccountId,
   locale,
   onSelect,
   onRefresh,
+  onActivateClaudeSwap,
   copy,
 }: {
   readonly provider: DashboardProviderDTO;
   readonly selected: boolean;
   readonly refreshing: boolean;
+  readonly activatingAccountId: string | undefined;
   readonly locale: string;
   readonly onSelect: () => void;
   readonly onRefresh: () => void;
+  readonly onActivateClaudeSwap: (accountId: string) => void;
   readonly copy: {
     readonly unavailable: string;
     readonly parityPending: string;
@@ -81,6 +86,9 @@ function ProviderCard({
     readonly disabled: string;
     readonly usageUsed: string;
     readonly usageRemaining: string;
+    readonly activate: string;
+    readonly activating: string;
+    readonly active: string;
   };
 }) {
   const refreshable = provider.enabled && firstPartyProviderId(provider.id) !== undefined;
@@ -137,6 +145,29 @@ function ProviderCard({
           {refreshing ? copy.refreshing : copy.refresh}
         </button>
       </div>
+      {provider.accounts === undefined || provider.accounts.length === 0 ? null : (
+        <div className="provider-accounts" aria-label={`${provider.name} accounts`}>
+          {provider.accounts.map((account) => {
+            const request = claudeSwapActivationRequest(provider, account);
+            const activating = activatingAccountId === account.id;
+            return (
+              <div className="provider-account" key={account.id}>
+                <span>{account.label}</span>
+                {account.active ? <small>{copy.active}</small> : null}
+                {request === undefined ? null : (
+                  <button
+                    className="secondary compact"
+                    disabled={activatingAccountId !== undefined}
+                    onClick={() => onActivateClaudeSwap(request.accountId)}
+                  >
+                    {activating ? copy.activating : copy.activate}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </article>
   );
 }
@@ -396,6 +427,7 @@ function App() {
   const [selectedProviderId, setSelectedProviderId] = useState<string>();
   const [providerSearch, setProviderSearch] = useState("");
   const [refreshingProviderId, setRefreshingProviderId] = useState<string>();
+  const [activatingClaudeSwapAccountId, setActivatingClaudeSwapAccountId] = useState<string>();
   const [savingProviderId, setSavingProviderId] = useState<string>();
   const [settingsError, setSettingsError] = useState<{
     readonly provider: string;
@@ -517,6 +549,16 @@ function App() {
       .catch(() => setError(localization.upstream("Unavailable")))
       .finally(() => setRefreshingProviderId(undefined));
   };
+  const activateClaudeSwap = (accountId: string): void => {
+    setActivatingClaudeSwapAccountId(accountId);
+    setError(undefined);
+    void window.codexbar
+      .activateClaudeSwapAccount({ provider: "claude", accountId })
+      .then(loadOverview)
+      .then(() => setActivityVersion((version) => version + 1))
+      .catch(() => setError(localization.upstream("Unavailable")))
+      .finally(() => setActivatingClaudeSwapAccountId(undefined));
+  };
   const updateProviderSettings = (request: UpdateProviderSettingsRequestDTO): void => {
     setSavingProviderId(request.provider);
     setSettingsError(undefined);
@@ -539,6 +581,9 @@ function App() {
     parityPending: localization.t("awaitingParity"),
     refresh: localization.upstream("Refresh"),
     refreshing: localization.upstream("Refreshing"),
+    activate: localization.upstream("Activate"),
+    activating: localization.upstream("Activating"),
+    active: localization.upstream("Active"),
     disabled: localization.upstream("Disabled"),
     enabled: localization.upstream("Enabled"),
     provider: localization.upstream("Provider"),
@@ -815,8 +860,10 @@ function App() {
               locale={localization.locale}
               provider={provider}
               refreshing={refreshingProviderId === provider.id}
+              activatingAccountId={activatingClaudeSwapAccountId}
               selected={selectedProvider?.id === provider.id}
               onRefresh={() => refreshProvider(provider)}
+              onActivateClaudeSwap={activateClaudeSwap}
               onSelect={() => setSelectedProviderId(provider.id)}
             />
           ))}

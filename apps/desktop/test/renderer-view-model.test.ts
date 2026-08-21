@@ -6,10 +6,31 @@ import {
   firstPartyProviderId,
   historySince,
   implementationPresentation,
+  claudeSwapActivationRequest,
   safeDateFromTimestamp,
 } from "../src/renderer/view-model.ts";
 
 describe("desktop renderer view model", () => {
+  it("forwards only an eligible opaque Claude account ID", () => {
+    expect(
+      claudeSwapActivationRequest(
+        { id: "claude" },
+        { id: "source-account", active: false, canActivate: true },
+      ),
+    ).toEqual({ provider: "claude", accountId: "source-account" });
+    expect(
+      claudeSwapActivationRequest(
+        { id: "claude" },
+        { id: "source-account", active: true, canActivate: true },
+      ),
+    ).toBeUndefined();
+    expect(
+      claudeSwapActivationRequest(
+        { id: "openai" },
+        { id: "source-account", active: false, canActivate: true },
+      ),
+    ).toBeUndefined();
+  });
   it("never represents a partial implementation as release-ready", () => {
     expect(implementationPresentation({ implementationStatus: "partial" })).toBe("parity-pending");
     expect(implementationPresentation({ implementationStatus: "unported" })).toBe("unported");
