@@ -42,6 +42,7 @@ import {
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
+  makeNodeGrokLocalTokenScanner,
   discoverNodeCodexCredential,
   makeNodeConfigRepository,
   makeSystemClock,
@@ -58,6 +59,7 @@ import {
   SessionQuotaCoordinator,
   makeDefaultCodexBarConfig,
   refreshProviderAndPersist,
+  GROK_LOCAL_SESSION_TOKEN_SOURCE,
   XAI_DAILY_SPEND_SOURCE,
   type PersistedCodexBarConfig,
   type ProviderRuntimeService,
@@ -74,6 +76,7 @@ import { DesktopClaudeSwapController } from "./claude-swap.js";
 import { makeDesktopSessionQuotaNotificationAdapter } from "./session-quota-notifications.js";
 import {
   DesktopSpendPublisher,
+  refreshGrokLocalTokensForSpend,
   type DesktopSpendConfiguration,
   type DesktopSpendProjection,
 } from "./spend-overview.js";
@@ -103,6 +106,7 @@ let pluginManager: DesktopPluginManager | undefined;
 let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
 let spendPublisher: DesktopSpendPublisher | undefined;
 let claudeSwap: DesktopClaudeSwapController | undefined;
+let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
@@ -140,6 +144,10 @@ const activeSpendPublisher = (): DesktopSpendPublisher => {
 const activeClaudeSwap = (): DesktopClaudeSwapController => {
   if (claudeSwap === undefined) throw new Error("Claude Swap is not ready");
   return claudeSwap;
+};
+const activeGrokLocalTokenScanner = (): ReturnType<typeof makeNodeGrokLocalTokenScanner> => {
+  if (grokLocalTokenScanner === undefined) throw new Error("Grok local token scanner is not ready");
+  return grokLocalTokenScanner;
 };
 
 const overviewProviders = () => {
@@ -216,6 +224,7 @@ const spendConfiguration = (): DesktopSpendConfiguration => {
       providerId: provider.id,
       displayName: provider.name,
       ...(provider.id === "xai" ? { dailySpendSourceKey: XAI_DAILY_SPEND_SOURCE } : {}),
+      ...(provider.id === "grok" ? { dailySpendSourceKey: GROK_LOCAL_SESSION_TOKEN_SOURCE } : {}),
     })),
     requestedDays: 30,
   };
@@ -224,6 +233,11 @@ const spendConfiguration = (): DesktopSpendConfiguration => {
 const loadSpendProjection = async (refresh: boolean): Promise<DesktopSpendProjection> => {
   const configuration = spendConfiguration();
   const publisher = activeSpendPublisher();
+  // Grok local tokens are independent of the remote billing request. Refresh
+  // them whenever this call will build a fresh spend projection, but never
+  // let an unreadable local profile fail an IPC request or expose its path.
+  if (refresh || publisher.current(configuration) === undefined)
+    await refreshGrokLocalTokensForSpend(configuration, activeGrokLocalTokenScanner());
   return refresh
     ? publisher.refresh(configuration)
     : (publisher.current(configuration) ?? publisher.refresh(configuration));
@@ -283,6 +297,7 @@ void app
       }),
     );
     spendPublisher = new DesktopSpendPublisher(persistence);
+    grokLocalTokenScanner = makeNodeGrokLocalTokenScanner({ costs: persistence.costs });
     // The config adapter retains only registered plugin IDs. Populate this
     // mutable set from the hardened discovery pass before decoding a config,
     // so deleting one plugin cannot discard a sibling plugin's config entry.
@@ -498,6 +513,13 @@ void app
     ipcMain.handle(DesktopChannels.refreshProvider, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         const request = await decodeRefresh(input);
+        // Persist local Grok token activity before the remote billing request:
+        // a web/session failure must not erase independently readable logs.
+        if (request.provider === "grok") {
+          await activeGrokLocalTokenScanner()
+            .refresh()
+            .catch(() => undefined);
+        }
         const outcome = await Effect.runPromise(
           refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
             sourceMode: request.source ?? "auto",
