@@ -8,6 +8,7 @@ import {
 import type { UsageSnapshot } from "@codexbar/contracts";
 import { runCost } from "./cost.ts";
 import type { CLICommandResult, CLIIO, CLIProviderRuntime } from "./runner.ts";
+import { providerIconSvg, renderServeWebUI } from "./serve-web-ui.ts";
 
 const maximumRequestBodyBytes = 4_096;
 const maximumResponseBodyBytes = 1_048_576;
@@ -837,9 +838,6 @@ const costPayload = async (
   return JSON.parse(text) as unknown;
 };
 
-const webUi =
-  '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CodexBar Multi</title><main><h1>CodexBar Multi</h1><p>Use the authenticated JSON endpoints to retrieve usage.</p></main></html>';
-
 // URLComponents in the Swift oracle resolves duplicate keys by retaining the
 // last value; keep that small compatibility detail without ever looking for
 // credentials in the query string.
@@ -875,12 +873,27 @@ export const makeServeHandler = (options: ServeOptions, runtime: ServeRuntime): 
         contentType: "text/html; charset=utf-8",
         headers: {
           "Content-Security-Policy":
-            "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+            "default-src 'none'; connect-src 'self'; img-src 'self' data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
           "X-Content-Type-Options": "nosniff",
           "Referrer-Policy": "no-referrer",
         },
-        body: webUi,
+        body: renderServeWebUI(),
       };
+    const iconMatch = /^\/icons\/([A-Za-z0-9-]+)\.svg$/u.exec(request.path);
+    if (iconMatch !== null) {
+      const icon = providerIconSvg(iconMatch[1] ?? "");
+      return icon === undefined
+        ? errorResponse(404, "not found")
+        : {
+            status: 200,
+            contentType: "image/svg+xml",
+            headers: {
+              "Cache-Control": "public, max-age=86400, immutable",
+              "X-Content-Type-Options": "nosniff",
+            },
+            body: icon,
+          };
+    }
     if (request.path === "/health")
       return jsonResponse({
         status: "ok",

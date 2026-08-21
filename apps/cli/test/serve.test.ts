@@ -15,6 +15,7 @@ import {
   type ServeRequest,
   type ServeRuntime,
 } from "../src/serve.ts";
+import { providerIconUrls } from "../src/serve-web-ui.ts";
 
 const snapshot: UsageSnapshot = {
   primary: { usedPercent: 25, windowMinutes: 300, resetsAt: "2026-08-20T15:00:00Z" },
@@ -334,6 +335,49 @@ describe("CLI serve", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers?.["Cache-Control"]).toBe("no-store");
+  });
+
+  it("serves the upstream-compatible web UI and immutable provider icons", async () => {
+    const parsed = parseServeArguments([]);
+    if (!parsed.ok) throw new Error(parsed.message);
+    const handler = makeServeHandler(parsed.value, runtime());
+    const page = await handler(request("/"));
+    expect(page.status).toBe(200);
+    expect(page.contentType).toBe("text/html; charset=utf-8");
+    expect(page.headers?.["Content-Security-Policy"]).toContain("script-src 'unsafe-inline'");
+    expect(page.body).toContain("function renderAccountCard(provider, account)");
+    expect(page.body).toContain("function renderCostChart(history)");
+    expect(page.body).toContain("/dashboard/v1/snapshot?detail=shell");
+    expect(page.body).not.toContain("__PROVIDER_ICON_URLS__");
+
+    const icon = await handler(request("/icons/ProviderIcon-claude.svg"));
+    expect(icon.status).toBe(200);
+    expect(icon.contentType).toBe("image/svg+xml");
+    expect(icon.headers?.["Cache-Control"]).toBe("public, max-age=86400, immutable");
+    expect(icon.headers?.["X-Content-Type-Options"]).toBe("nosniff");
+    expect(icon.body).toContain("<svg");
+    for (const path of Object.values(providerIconUrls)) {
+      const response = await handler(request(path));
+      expect(response.status, path).toBe(200);
+      expect(response.body, path).toContain("<svg");
+      expect(response.body, path).not.toMatch(/<script\b/iu);
+    }
+    await expect(handler(request("/icons/../etc/passwd"))).resolves.toMatchObject({ status: 404 });
+    await expect(handler(request("/icons/ProviderIcon-nonexistent.svg"))).resolves.toMatchObject({
+      status: 404,
+    });
+  });
+
+  it("rejects non-GET requests before serving public routes", async () => {
+    const parsed = parseServeArguments([]);
+    if (!parsed.ok) throw new Error(parsed.message);
+    const handler = makeServeHandler(parsed.value, runtime());
+    await expect(handler(request("/", { method: "POST" }))).resolves.toMatchObject({ status: 405 });
+    await expect(
+      handler(request("/icons/ProviderIcon-claude.svg", { method: "POST" })),
+    ).resolves.toMatchObject({
+      status: 405,
+    });
   });
 
   it("gates every data route on a non-loopback bind while health remains open", async () => {
