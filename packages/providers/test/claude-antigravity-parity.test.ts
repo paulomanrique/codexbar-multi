@@ -5,6 +5,7 @@ import {
   antigravityQuotaWindowMinutes,
   parseAntigravityQuotaSummary,
   parseAntigravityTokenClaims,
+  parseAntigravityUserStatusIdentity,
   resolveAntigravityPlan,
 } from "../src/providers/antigravity.ts";
 import { claude, parseClaudeCLIUsage, parseClaudeUsage } from "../src/providers/claude.ts";
@@ -194,6 +195,50 @@ describe("Claude and Antigravity Swift-derived parity", () => {
       resolveAntigravityPlan({ currentTier: { id: "free-tier" } }, { hostedDomain: "example.com" }),
     ).toBe("Workspace");
     expect(resolveAntigravityPlan({ currentTier: { id: "legacy-tier" } }, {})).toBe("Legacy");
+  });
+
+  it("ports local GetUserStatus identity precedence and merges it into quota usage", async () => {
+    const userStatus = {
+      userStatus: {
+        email: " local@example.com ",
+        userTier: { name: " Ultra " },
+        planStatus: { planInfo: { planDisplayName: "Pro" } },
+      },
+    };
+    expect(parseAntigravityUserStatusIdentity(userStatus)).toEqual({
+      accountEmail: "local@example.com",
+      loginMethod: "Ultra",
+    });
+    expect(
+      parseAntigravityUserStatusIdentity({
+        userStatus: { planStatus: { planInfo: { productName: "Workspace" } } },
+      }),
+    ).toEqual({ loginMethod: "Workspace" });
+
+    const raw = await antigravity.fetchUsage(
+      context(() => response({}), {
+        ANTIGRAVITY_LOCAL_QUOTA_JSON: JSON.stringify({
+          groups: [
+            {
+              displayName: "Gemini",
+              buckets: [
+                {
+                  bucketId: "gemini-session",
+                  displayName: "5-hour",
+                  remainingFraction: 0.75,
+                },
+              ],
+            },
+          ],
+        }),
+        ANTIGRAVITY_LOCAL_USER_STATUS_JSON: JSON.stringify(userStatus),
+      }),
+    );
+    expect(raw.identity).toEqual({
+      providerId: "antigravity",
+      accountEmail: "local@example.com",
+      loginMethod: "Ultra",
+    });
   });
 
   it("ports the local quota-summary parser without exposing process or socket APIs", () => {

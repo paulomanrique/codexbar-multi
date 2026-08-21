@@ -97,7 +97,11 @@ const quota = (id: string, value: unknown): Quota | undefined => {
 };
 
 /** Port of the local RetrieveUserQuotaSummary shape. No socket/process discovery occurs here. */
-export const parseAntigravityQuotaSummary = (payload: unknown, ctx: ProviderContext) => {
+export const parseAntigravityQuotaSummary = (
+  payload: unknown,
+  ctx: ProviderContext,
+  identity: Record<string, unknown> = {},
+) => {
   const root = object(payload);
   const summary = object(root?.response) ?? object(root?.summary) ?? root;
   const groups = (Array.isArray(summary?.groups) ? summary.groups : [])
@@ -144,10 +148,14 @@ export const parseAntigravityQuotaSummary = (payload: unknown, ctx: ProviderCont
   });
   if (!quotas.length)
     throw ctx.fail.parseFailure("Antigravity local quota response has no usable buckets.");
-  return quotaSummarySnapshot(quotas, ctx);
+  return quotaSummarySnapshot(quotas, ctx, identity);
 };
 
-const quotaSummarySnapshot = (quotas: readonly QuotaSummaryBucket[], ctx: ProviderContext) => {
+const quotaSummarySnapshot = (
+  quotas: readonly QuotaSummaryBucket[],
+  ctx: ProviderContext,
+  identity: Record<string, unknown>,
+) => {
   const windows = quotas.map((item) => ({
     id: `antigravity-quota-summary-${item.id}`,
     title: item.label,
@@ -173,7 +181,34 @@ const quotaSummarySnapshot = (quotas: readonly QuotaSummaryBucket[], ctx: Provid
     ...(primary ? { primary } : {}),
     ...(secondary ? { secondary } : {}),
     extraRateWindows: windows,
-    identity: { providerId: "antigravity" },
+    identity: { providerId: "antigravity", ...identity },
+  };
+};
+
+/** Parses the identity half of Swift's local GetUserStatus response. */
+export const parseAntigravityUserStatusIdentity = (
+  payload: unknown,
+): { readonly accountEmail?: string; readonly loginMethod?: string } => {
+  const root = object(payload);
+  const userStatus = object(root?.userStatus) ?? object(object(root?.response)?.userStatus);
+  if (userStatus === undefined) return {};
+  const accountEmail = string(userStatus.email);
+  const userTier = string(object(userStatus.userTier)?.name);
+  const planInfo = object(object(userStatus.planStatus)?.planInfo);
+  const loginMethod =
+    userTier ??
+    [
+      planInfo?.planDisplayName,
+      planInfo?.displayName,
+      planInfo?.productName,
+      planInfo?.planName,
+      planInfo?.planShortName,
+    ]
+      .map(string)
+      .find((candidate) => candidate !== undefined);
+  return {
+    ...(accountEmail === undefined ? {} : { accountEmail }),
+    ...(loginMethod === undefined ? {} : { loginMethod }),
   };
 };
 
@@ -353,17 +388,35 @@ const definition: ProviderDefinition = {
     { key: "ANTIGRAVITY_ACCOUNT_EMAIL", title: "Google account email", type: "plain" },
     { key: "ANTIGRAVITY_PROJECT_ID", title: "Google Cloud project", type: "plain" },
     { key: "ANTIGRAVITY_LOCAL_QUOTA_JSON", title: "Local quota JSON", type: "secure" },
+    {
+      key: "ANTIGRAVITY_LOCAL_USER_STATUS_JSON",
+      title: "Local user status JSON",
+      type: "secure",
+    },
   ],
   fetchUsage: async (ctx) => {
     const local = ctx.settings.getSecret("ANTIGRAVITY_LOCAL_QUOTA_JSON")?.trim();
     if (local) {
+      let quotaPayload: unknown;
       try {
-        return parseAntigravityQuotaSummary(JSON.parse(local) as unknown, ctx);
+        quotaPayload = JSON.parse(local) as unknown;
       } catch (error) {
         if (error instanceof SyntaxError)
           throw ctx.fail.parseFailure("Antigravity local quota output was not valid JSON.");
         throw error;
       }
+      const userStatus = ctx.settings.getSecret("ANTIGRAVITY_LOCAL_USER_STATUS_JSON")?.trim();
+      let identity: Record<string, unknown> = {};
+      if (userStatus !== undefined) {
+        try {
+          identity = parseAntigravityUserStatusIdentity(JSON.parse(userStatus) as unknown);
+        } catch (error) {
+          if (error instanceof SyntaxError)
+            throw ctx.fail.parseFailure("Antigravity local user status was not valid JSON.");
+          throw error;
+        }
+      }
+      return parseAntigravityQuotaSummary(quotaPayload, ctx, identity);
     }
     const token = ctx.settings.getSecret("ANTIGRAVITY_OAUTH_ACCESS_TOKEN")?.trim();
     if (!token)

@@ -72,6 +72,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Port Antigravity pinned Gemini family history, snapshot email/organization ownership, and legacy unscoped adoption.
     - [x] Bind Antigravity remote OAuth history to ID-token/email claims and Swift-compatible plan tiers.
     - [ ] Connect Antigravity local GetUserStatus/token-account owner observation to the shared history policy.
+      - [x] Port GetUserStatus email/tier parsing and merge a host-supplied bounded response into local quota usage.
+      - [ ] Wire native process/port/CSRF discovery and selected token-account ownership through the platform broker.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.
   - [ ] Add persistent snapshot/cache TTL, status probes, real low-power/thermal/activity adapters, plugin refresh, and CLI orchestration.
