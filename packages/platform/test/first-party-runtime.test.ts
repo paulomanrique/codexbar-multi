@@ -128,6 +128,216 @@ describe("first-party refresh runtime", () => {
     ).rejects.toMatchObject({ kind: "api-failure" });
   });
 
+  it("falls back on an ambient account mismatch and scopes OAuth to the selected account", async () => {
+    const requests: HttpRequest[] = [];
+    let localCalls = 0;
+    let selectedAccountResolutions = 0;
+    let ambientAccessReads = 0;
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: {
+        read: (_provider, key) => {
+          if (key === "ANTIGRAVITY_OAUTH_ACCESS_TOKEN") ambientAccessReads += 1;
+          return Effect.succeed(
+            key === "ANTIGRAVITY_OAUTH_ACCESS_TOKEN" ? "ambient-value" : undefined,
+          );
+        },
+      },
+      selectedAccounts: {
+        resolve: () => {
+          selectedAccountResolutions += 1;
+          return Effect.succeed({
+            id: "account-1",
+            accountEmail: "selected@example.com",
+            secureSettings: {
+              ANTIGRAVITY_OAUTH_ACCESS_TOKEN: "selected-access",
+              ANTIGRAVITY_ID_TOKEN: "header.eyJlbWFpbCI6InNlbGVjdGVkQGV4YW1wbGUuY29tIn0.signature",
+            },
+            plainSettings: {
+              ANTIGRAVITY_ACCOUNT_EMAIL: "stored@example.com",
+              ANTIGRAVITY_PROJECT_ID: "selected-project",
+            },
+          });
+        },
+      },
+      credentials: {
+        read: (key) => {
+          if (key.endsWith("/ANTIGRAVITY_OAUTH_ACCESS_TOKEN")) ambientAccessReads += 1;
+          return Effect.succeed(
+            key.endsWith("/ANTIGRAVITY_OAUTH_ACCESS_TOKEN") ? "ambient-keyring-value" : undefined,
+          );
+        },
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () => {
+          localCalls += 1;
+          return Effect.succeed({
+            quotaSummaryJson: JSON.stringify({
+              groups: [
+                {
+                  displayName: "Gemini",
+                  buckets: [
+                    { bucketId: "session", displayName: "5-hour", remainingFraction: 0.75 },
+                  ],
+                },
+              ],
+            }),
+            userStatusJson: JSON.stringify({ userStatus: { email: "ambient@example.com" } }),
+          });
+        },
+      },
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          const body = request.url.endsWith("loadCodeAssist")
+            ? { currentTier: { id: "standard-tier" } }
+            : {
+                models: {
+                  gemini: {
+                    displayName: "Gemini",
+                    quotaInfo: { remainingFraction: 0.5 },
+                  },
+                },
+              };
+          return Effect.succeed(response(body));
+        },
+      },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(
+        runtime.fetch("antigravity", { sourceMode: "auto", includeCredits: false }),
+      ),
+    ).resolves.toMatchObject({
+      strategyId: "antigravity.oauth",
+      snapshot: { identity: { accountEmail: "selected@example.com" } },
+    });
+    expect(requests).toHaveLength(2);
+    expect(localCalls).toBe(1);
+    expect(selectedAccountResolutions).toBe(1);
+    expect(ambientAccessReads).toBe(0);
+    expect(requests[0]?.headers?.Authorization).toBe("Bearer selected-access");
+    expect(new TextDecoder().decode(requests[1]?.body ?? new Uint8Array())).toContain(
+      "selected-project",
+    );
+    expect(JSON.stringify(requests)).not.toContain("ambient-keyring-value");
+  });
+
+  it("keeps explicit Antigravity CLI authoritative despite a selected account mismatch", async () => {
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: { read: () => Effect.succeed(undefined) },
+      selectedAccounts: {
+        resolve: () => Effect.succeed({ id: "account-1", accountEmail: "selected@example.com" }),
+      },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () =>
+          Effect.succeed({
+            quotaSummaryJson: JSON.stringify({
+              groups: [
+                {
+                  displayName: "Gemini",
+                  buckets: [
+                    { bucketId: "session", displayName: "5-hour", remainingFraction: 0.75 },
+                  ],
+                },
+              ],
+            }),
+            userStatusJson: JSON.stringify({ userStatus: { email: "ambient@example.com" } }),
+          }),
+      },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("antigravity", { sourceMode: "cli", includeCredits: false })),
+    ).resolves.toMatchObject({
+      strategyId: "antigravity.local",
+      snapshot: { identity: { accountEmail: "ambient@example.com" } },
+    });
+  });
+
+  it("does not reuse ambient OAuth credentials for an invalid selected account", async () => {
+    let httpCalls = 0;
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [antigravity],
+      settings: {
+        read: (_provider, key) =>
+          Effect.succeed(key === "ANTIGRAVITY_OAUTH_ACCESS_TOKEN" ? "ambient-env" : undefined),
+      },
+      selectedAccounts: {
+        resolve: () =>
+          Effect.succeed({
+            id: "account-1",
+            secureSettings: {
+              ANTIGRAVITY_OAUTH_ACCESS_TOKEN: null,
+              ANTIGRAVITY_ID_TOKEN: null,
+            },
+            plainSettings: {
+              ANTIGRAVITY_ACCOUNT_EMAIL: null,
+              ANTIGRAVITY_PROJECT_ID: null,
+            },
+          }),
+      },
+      credentials: {
+        read: (key) =>
+          Effect.succeed(
+            key.endsWith("/ANTIGRAVITY_OAUTH_ACCESS_TOKEN") ? "ambient-keyring" : undefined,
+          ),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      local: {
+        run: () => Effect.die("not used"),
+        readData: () => Effect.succeed(undefined),
+        fetchAntigravityLocalSnapshot: () =>
+          Effect.succeed({
+            quotaSummaryJson: JSON.stringify({
+              groups: [
+                {
+                  displayName: "Gemini",
+                  buckets: [
+                    { bucketId: "session", displayName: "5-hour", remainingFraction: 0.75 },
+                  ],
+                },
+              ],
+            }),
+            userStatusJson: JSON.stringify({ userStatus: { email: "ambient@example.com" } }),
+          }),
+      },
+      http: {
+        execute: () => {
+          httpCalls += 1;
+          return Effect.succeed(response({}));
+        },
+      },
+      clock: { now: Effect.succeed(1_786_809_600_000), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(
+        runtime.fetch("antigravity", { sourceMode: "auto", includeCredits: false }),
+      ),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+    expect(httpCalls).toBe(0);
+  });
+
   it("never falls through to Antigravity OAuth after caller cancellation", async () => {
     const controller = new AbortController();
     let startedResolve: (() => void) | undefined;

@@ -32,6 +32,7 @@ import type {
   ProviderLocalDataResult,
   ProviderLocalProcessResult,
   ProviderResponse,
+  ProviderSelectedAccount,
   ProviderStrategy,
 } from "@codexbar/providers";
 
@@ -58,6 +59,22 @@ export interface FirstPartySettings {
 /** Browser sessions stay host-owned: providers receive only their declared cookie header. */
 export interface FirstPartyBrowserSessions {
   readonly cookieHeader: (providerId: ProviderId, domain: string) => Effect.Effect<string, unknown>;
+}
+
+/**
+ * Saved-account material resolved by a trusted host. `null` explicitly
+ * suppresses ambient environment/keyring values for a selected account.
+ */
+export interface FirstPartySelectedAccount extends ProviderSelectedAccount {
+  readonly plainSettings?: Readonly<Record<string, string | null>>;
+  readonly secureSettings?: Readonly<Record<string, string | null>>;
+}
+
+export interface FirstPartySelectedAccounts {
+  readonly resolve: (
+    providerId: ProviderId,
+    context: ProviderFetchContext,
+  ) => Effect.Effect<FirstPartySelectedAccount | undefined, unknown>;
 }
 
 /**
@@ -102,6 +119,8 @@ export interface FirstPartyProviderRuntimeOptions {
   readonly providers: readonly FirstPartyProvider[];
   readonly settings: FirstPartySettings;
   readonly browserSessions: FirstPartyBrowserSessions;
+  /** Optional account resolver; omitted hosts retain ambient single-account behavior. */
+  readonly selectedAccounts?: FirstPartySelectedAccounts;
   /** Omitted hosts fail closed when a provider asks for local integration. */
   readonly local?: FirstPartyLocalCapabilities;
   readonly http: HttpTransportService;
@@ -148,6 +167,50 @@ const runtimeTimeZone = (configured: string | undefined): string => {
   } catch {
     return "UTC";
   }
+};
+
+const ownSetting = (
+  values: Readonly<Record<string, string | null>> | undefined,
+  key: string,
+): { readonly present: boolean; readonly value: string | undefined } =>
+  values !== undefined && Object.prototype.hasOwnProperty.call(values, key)
+    ? { present: true, value: values[key] ?? undefined }
+    : { present: false, value: undefined };
+
+const validateSelectedAccount = (
+  descriptor: ProviderDescriptor,
+  selected: FirstPartySelectedAccount | undefined,
+): FirstPartySelectedAccount | undefined => {
+  if (selected === undefined) return undefined;
+  if (
+    selected.id.trim() === "" ||
+    selected.id.length > 256 ||
+    selected.id.includes("\u0000") ||
+    (selected.accountEmail !== undefined &&
+      (selected.accountEmail.length > 1_024 || selected.accountEmail.includes("\u0000")))
+  ) {
+    throw failure("api-failure", "Selected provider account is invalid.");
+  }
+  const declared = new Map(descriptor.settings.map((setting) => [setting.key, setting.type]));
+  if (descriptor.auth !== undefined && !declared.has(descriptor.auth.secret))
+    declared.set(descriptor.auth.secret, "secure");
+  for (const [type, values] of [
+    ["plain", selected.plainSettings],
+    ["secure", selected.secureSettings],
+  ] as const) {
+    for (const [key, value] of Object.entries(values ?? {})) {
+      if (
+        declared.get(key) !== type ||
+        (value !== null &&
+          (typeof value !== "string" ||
+            value.length > maximumResponseBytes ||
+            value.includes("\u0000")))
+      ) {
+        throw failure("api-failure", "Selected provider account settings are invalid.");
+      }
+    }
+  }
+  return selected;
 };
 
 const dateParts = (timeZone: string, value: Date): Record<string, number> => {
@@ -588,6 +651,7 @@ export const makeFirstPartyProviderRuntime = (
   const strategyFor = (
     providerId: ProviderId,
     context: ProviderFetchContext,
+    selectedAccount: FirstPartySelectedAccount | undefined,
   ): Effect.Effect<readonly ProviderFetchStrategy[], never> => {
     const provider = byId.get(providerId);
     if (provider === undefined) return Effect.succeed([]);
@@ -599,7 +663,8 @@ export const makeFirstPartyProviderRuntime = (
             id: strategy.id,
             source: sourceFor(strategy),
             isAvailable: () => Effect.succeed(true),
-            fetch: () => executeProvider(provider, strategy, context, options, keyFor),
+            fetch: () =>
+              executeProvider(provider, strategy, context, selectedAccount, options, keyFor),
             shouldFallback: (error, fetchContext) =>
               fetchContext.sourceMode === "auto" &&
               error instanceof ClassifiedFetchFailure &&
@@ -608,18 +673,47 @@ export const makeFirstPartyProviderRuntime = (
         ),
     );
   };
-
-  const pipeline = makeProviderFetchPipeline({ resolveStrategies: strategyFor });
   return {
     fetch: (providerId, context) =>
-      pipeline.fetch(providerId, context).pipe(Effect.provideService(Clock, options.clock)),
+      resolveSelectedAccount(options, byId.get(providerId)?.descriptor, providerId, context).pipe(
+        Effect.flatMap((selectedAccount) =>
+          makeProviderFetchPipeline({
+            resolveStrategies: (resolvedProviderId, resolvedContext) =>
+              strategyFor(resolvedProviderId, resolvedContext, selectedAccount),
+          }).fetch(providerId, context),
+        ),
+        Effect.provideService(Clock, options.clock),
+      ),
   };
+};
+
+const resolveSelectedAccount = (
+  options: FirstPartyProviderRuntimeOptions,
+  descriptor: ProviderDescriptor | undefined,
+  providerId: ProviderId,
+  context: ProviderFetchContext,
+): Effect.Effect<FirstPartySelectedAccount | undefined, ClassifiedFetchFailure> => {
+  if (options.selectedAccounts === undefined || descriptor === undefined)
+    return Effect.succeed(undefined);
+  return options.selectedAccounts.resolve(providerId, context).pipe(
+    Effect.mapError(() => failure("api-failure", "Unable to resolve the selected account.")),
+    Effect.flatMap((selected) =>
+      Effect.try({
+        try: () => validateSelectedAccount(descriptor, selected),
+        catch: (error) =>
+          error instanceof ClassifiedFetchFailure
+            ? error
+            : failure("api-failure", "Selected provider account is invalid."),
+      }),
+    ),
+  );
 };
 
 const executeProvider = (
   provider: FirstPartyProvider,
   strategy: ProviderStrategy,
   fetchContext: ProviderFetchContext,
+  selectedAccount: FirstPartySelectedAccount | undefined,
   options: FirstPartyProviderRuntimeOptions,
   keyFor: (providerId: ProviderId, setting: string) => string,
 ): Effect.Effect<UsageSnapshot, ClassifiedFetchFailure> => {
@@ -639,44 +733,58 @@ const executeProvider = (
       );
       if (descriptor.auth !== undefined) secureKeys.add(descriptor.auth.secret);
       for (const setting of descriptor.settings) {
-        const injected = await Effect.runPromise(
-          options.settings.read(descriptor.id, setting.key),
-          {
-            signal: operationSignal,
-          },
+        const selectedOverride = ownSetting(
+          secureKeys.has(setting.key)
+            ? selectedAccount?.secureSettings
+            : selectedAccount?.plainSettings,
+          setting.key,
         );
+        const injected = selectedOverride.present
+          ? undefined
+          : await Effect.runPromise(options.settings.read(descriptor.id, setting.key), {
+              signal: operationSignal,
+            });
         if (secureKeys.has(setting.key)) {
           let stored: string | undefined;
+          if (!selectedOverride.present) {
+            try {
+              stored = await Effect.runPromise(
+                options.credentials.read(keyFor(descriptor.id, setting.key)),
+                { signal: operationSignal },
+              );
+            } catch (error) {
+              if (injected === undefined) throw error;
+            }
+          }
+          const secret = selectedOverride.present ? selectedOverride.value : (stored ?? injected);
+          secrets.set(setting.key, secret);
+          if (secret !== undefined) redactionValues.add(secret);
+        } else {
+          settings.set(setting.key, selectedOverride.present ? selectedOverride.value : injected);
+        }
+      }
+      if (descriptor.auth !== undefined && !secrets.has(descriptor.auth.secret)) {
+        const selectedOverride = ownSetting(
+          selectedAccount?.secureSettings,
+          descriptor.auth.secret,
+        );
+        const injected = selectedOverride.present
+          ? undefined
+          : await Effect.runPromise(options.settings.read(descriptor.id, descriptor.auth.secret), {
+              signal: operationSignal,
+            });
+        let stored: string | undefined;
+        if (!selectedOverride.present) {
           try {
             stored = await Effect.runPromise(
-              options.credentials.read(keyFor(descriptor.id, setting.key)),
+              options.credentials.read(keyFor(descriptor.id, descriptor.auth.secret)),
               { signal: operationSignal },
             );
           } catch (error) {
             if (injected === undefined) throw error;
           }
-          const secret = stored ?? injected;
-          secrets.set(setting.key, secret);
-          if (secret !== undefined) redactionValues.add(secret);
-        } else {
-          settings.set(setting.key, injected);
         }
-      }
-      if (descriptor.auth !== undefined && !secrets.has(descriptor.auth.secret)) {
-        const injected = await Effect.runPromise(
-          options.settings.read(descriptor.id, descriptor.auth.secret),
-          { signal: operationSignal },
-        );
-        let stored: string | undefined;
-        try {
-          stored = await Effect.runPromise(
-            options.credentials.read(keyFor(descriptor.id, descriptor.auth.secret)),
-            { signal: operationSignal },
-          );
-        } catch (error) {
-          if (injected === undefined) throw error;
-        }
-        const secret = stored ?? injected;
+        const secret = selectedOverride.present ? selectedOverride.value : (stored ?? injected);
         secrets.set(descriptor.auth.secret, secret);
         if (secret !== undefined) redactionValues.add(secret);
       }
@@ -796,6 +904,16 @@ const executeProvider = (
           },
         },
         local: localFor(descriptor.id, options.local, operationSignal),
+        ...(selectedAccount === undefined
+          ? {}
+          : {
+              selectedAccount: {
+                id: selectedAccount.id,
+                ...(selectedAccount.accountEmail === undefined
+                  ? {}
+                  : { accountEmail: selectedAccount.accountEmail }),
+              },
+            }),
         env: { timeZone },
         sourceMode: fetchContext.sourceMode,
         date: {

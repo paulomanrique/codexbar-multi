@@ -33,6 +33,7 @@ import {
   type NodeLegacyImportOptions,
   type NodeSqlitePersistence,
 } from "@codexbar/platform/node";
+import { selectedFirstPartyAccountFromConfig } from "@codexbar/platform";
 import {
   CLAUDE_SWAP_MAX_OUTPUT_BYTES,
   makeNodeAgentSessionRuntime,
@@ -718,6 +719,12 @@ export const makeNodeCLIProviderRuntime = (
     credentials,
     clock: makeSystemClock(),
     browserSessions: makeCredentialBrowserSessions(credentials),
+    selectedAccounts: {
+      resolve: (providerId) =>
+        Effect.map(configRepository.load, (config) =>
+          selectedFirstPartyAccountFromConfig(config, providerId),
+        ),
+    },
     local: makeNodeFirstPartyLocalCapabilities({ environment }),
     settings: {
       read: (providerId, setting) => {

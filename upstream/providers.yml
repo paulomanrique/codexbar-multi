@@ -334,19 +334,23 @@ providers:
         - packages/providers/test/claude-antigravity-parity.test.ts
         - packages/platform/test/node-antigravity-local.test.ts
         - packages/platform/test/first-party-runtime.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
     fixtures:
       - packages/providers/test/claude-antigravity-parity.test.ts
     tsPaths:
       expected:
         - packages/providers/src/providers/antigravity.ts
         - packages/platform/src/node-antigravity-local.ts
+        - packages/platform/src/first-party-selected-account.ts
       real:
         - packages/providers/src/providers/antigravity.ts
         - packages/platform/src/node-antigravity-local.ts
+        - packages/platform/src/first-party-selected-account.ts
     tsTestGlobs:
       - packages/providers/test/claude-antigravity-parity.test.ts
       - packages/platform/test/node-antigravity-local.test.ts
       - packages/platform/test/first-party-runtime.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

@@ -5,8 +5,10 @@ import {
   antigravityQuotaSummaryHasUsableBucket,
   antigravityQuotaWindowMinutes,
   parseAntigravityQuotaSummary,
+  parseAntigravityOAuthCredentialValue,
   parseAntigravityTokenClaims,
   parseAntigravityUserStatusIdentity,
+  resolveAntigravityCredentialEmail,
   resolveAntigravityPlan,
 } from "../src/providers/antigravity.ts";
 import { claude, parseClaudeCLIUsage, parseClaudeUsage } from "../src/providers/claude.ts";
@@ -82,6 +84,84 @@ describe("Claude and Antigravity Swift-derived parity", () => {
     ]);
     expect(claude.descriptor.cookieDomains).toEqual(["claude.ai"]);
     expect(antigravity.descriptor.endpoints).toContain("https://cloudcode-pa.googleapis.com");
+  });
+
+  it("decodes only refresh-safe Antigravity token-account fields and prefers the id-token email", () => {
+    const credentials = parseAntigravityOAuthCredentialValue(
+      JSON.stringify({
+        access_token: "access",
+        refresh_token: "must-stay-host-owned",
+        id_token: jwt({ email: "jwt@example.com" }),
+        email: "stored@example.com",
+        project_id: "project",
+        client_secret: "must-stay-host-owned",
+      }),
+    );
+    expect(credentials).toEqual({
+      accessToken: "access",
+      idToken: expect.any(String),
+      email: "stored@example.com",
+      projectID: "project",
+    });
+    expect(resolveAntigravityCredentialEmail(credentials)).toBe("jwt@example.com");
+    expect(parseAntigravityOAuthCredentialValue("not-json")).toBeUndefined();
+  });
+
+  it("rejects a mismatched ambient Antigravity account only for selected auto refreshes", async () => {
+    const localSettings = {
+      ANTIGRAVITY_LOCAL_QUOTA_JSON: JSON.stringify({
+        groups: [
+          {
+            displayName: "Gemini",
+            buckets: [{ bucketId: "session", displayName: "5-hour", remainingFraction: 0.5 }],
+          },
+        ],
+      }),
+      ANTIGRAVITY_LOCAL_USER_STATUS_JSON: JSON.stringify({
+        userStatus: { email: "ambient@example.com" },
+      }),
+    };
+    const auto = {
+      ...context(() => response({}), localSettings),
+      sourceMode: "auto" as const,
+      selectedAccount: { id: "selected", accountEmail: "selected@example.com" },
+    };
+    await expect(antigravity.fetchUsage(auto)).rejects.toThrow(
+      "provider-unavailable: Antigravity local usage does not match the selected account.",
+    );
+
+    await expect(
+      antigravity.fetchUsage({ ...auto, sourceMode: "cli" as const }),
+    ).resolves.toMatchObject({ identity: { accountEmail: "ambient@example.com" } });
+    await expect(
+      antigravity.fetchUsage({
+        ...auto,
+        selectedAccount: { id: "selected", accountEmail: "AMBIENT@example.com" },
+      }),
+    ).resolves.toMatchObject({ identity: { accountEmail: "ambient@example.com" } });
+  });
+
+  it("fails closed when a selected Antigravity account has no resolvable email", async () => {
+    const selected = {
+      ...context(() => response({}), {
+        ANTIGRAVITY_LOCAL_QUOTA_JSON: JSON.stringify({
+          groups: [
+            {
+              displayName: "Gemini",
+              buckets: [{ bucketId: "session", displayName: "5-hour", remainingFraction: 0.5 }],
+            },
+          ],
+        }),
+        ANTIGRAVITY_LOCAL_USER_STATUS_JSON: JSON.stringify({
+          userStatus: { email: "ambient@example.com" },
+        }),
+      }),
+      sourceMode: "auto" as const,
+      selectedAccount: { id: "selected" },
+    };
+    await expect(antigravity.fetchUsage(selected)).rejects.toThrow(
+      "provider-unavailable: Antigravity local usage does not match the selected account.",
+    );
   });
 
   it("maps the Claude CLI fixture's session, weekly and scoped weekly windows", () => {

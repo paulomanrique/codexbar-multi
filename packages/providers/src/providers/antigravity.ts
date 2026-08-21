@@ -269,6 +269,51 @@ export interface AntigravityTokenClaims {
   readonly hostedDomain?: string;
 }
 
+export interface AntigravityOAuthCredentialValue {
+  readonly accessToken?: string;
+  readonly idToken?: string;
+  readonly email?: string;
+  readonly projectID?: string;
+}
+
+const credentialString = (
+  record: Record<string, unknown>,
+  snake: string,
+  camel: string,
+): string | undefined => {
+  const value = string(record[snake]) ?? string(record[camel]);
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+/**
+ * Decodes only fields required by a provider refresh. Refresh tokens and OAuth
+ * client credentials deliberately remain host-owned even when present in the
+ * saved Swift-compatible token-account value.
+ */
+export const parseAntigravityOAuthCredentialValue = (
+  value: string,
+): AntigravityOAuthCredentialValue | undefined => {
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed.length > 1024 * 1024) return undefined;
+  try {
+    const record = object(JSON.parse(trimmed) as unknown);
+    if (record === undefined) return undefined;
+    const accessToken = credentialString(record, "access_token", "accessToken");
+    const idToken = credentialString(record, "id_token", "idToken");
+    const email = credentialString(record, "email", "email");
+    const projectID = credentialString(record, "project_id", "projectId");
+    return {
+      ...(accessToken === undefined ? {} : { accessToken }),
+      ...(idToken === undefined ? {} : { idToken }),
+      ...(email === undefined ? {} : { email }),
+      ...(projectID === undefined ? {} : { projectID }),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 /** Fail-soft JWT claim extraction matching the Swift OAuth credential path. */
 export const parseAntigravityTokenClaims = (
   idToken: string | null | undefined,
@@ -288,6 +333,43 @@ export const parseAntigravityTokenClaims = (
     };
   } catch {
     return {};
+  }
+};
+
+export const resolveAntigravityCredentialEmail = (
+  credentials: AntigravityOAuthCredentialValue | undefined,
+): string | undefined => {
+  const tokenEmail = parseAntigravityTokenClaims(credentials?.idToken).email?.trim();
+  return tokenEmail || credentials?.email?.trim() || undefined;
+};
+
+export const antigravitySelectedAccountMatches = (
+  snapshotAccountEmail: string | undefined,
+  expectedAccountEmail: string | undefined,
+): boolean => {
+  const expected = expectedAccountEmail?.trim();
+  if (!expected) return true;
+  const found = snapshotAccountEmail?.trim();
+  return found !== undefined && found !== "" && found.toLowerCase() === expected.toLowerCase();
+};
+
+/** Mirrors Swift's ambient-account guard without exposing credential material. */
+export const validateAntigravitySelectedAccount = (
+  usage: Record<string, unknown>,
+  ctx: ProviderContext,
+): void => {
+  if (ctx.sourceMode !== "auto" || ctx.selectedAccount === undefined) return;
+  const expected = ctx.selectedAccount.accountEmail?.trim() || undefined;
+  const identity = object(usage.identity);
+  const found = string(identity?.accountEmail)?.trim() || undefined;
+  if (
+    expected === undefined ||
+    found === undefined ||
+    found.localeCompare(expected, undefined, { sensitivity: "accent" }) !== 0
+  ) {
+    throw ctx.fail.providerUnavailable(
+      "Antigravity local usage does not match the selected account.",
+    );
   }
 };
 
@@ -430,7 +512,9 @@ const configuredLocalUsage = async (ctx: ProviderContext) => {
       throw error;
     }
   }
-  return parseAntigravityQuotaSummary(quotaPayload, ctx, identity);
+  const usage = parseAntigravityQuotaSummary(quotaPayload, ctx, identity);
+  validateAntigravitySelectedAccount(usage, ctx);
+  return usage;
 };
 
 const oauthUsage = async (ctx: ProviderContext) => {

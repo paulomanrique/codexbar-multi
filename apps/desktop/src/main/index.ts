@@ -72,6 +72,7 @@ import {
   rollbackNodeLegacyImport,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
+import { selectedFirstPartyAccountFromConfig } from "@codexbar/platform";
 import { makeNodePlanUtilizationHistoryStore } from "@codexbar/platform";
 import {
   Clock,
@@ -434,6 +435,10 @@ void app
       },
       credentials,
       browserSessions: makeCredentialBrowserSessions(credentials),
+      selectedAccounts: {
+        resolve: (providerId) =>
+          Effect.sync(() => selectedFirstPartyAccountFromConfig(desktopConfig, providerId)),
+      },
       local: makeNodeFirstPartyLocalCapabilities(),
       http: makeFetchHttpTransport(),
       clock: providerClock,

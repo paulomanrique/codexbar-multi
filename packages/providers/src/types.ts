@@ -75,6 +75,12 @@ export interface ProviderAntigravityLocalSnapshot {
   readonly userStatusJson?: string;
 }
 
+/** Host-resolved account identity. Raw token material never crosses this boundary. */
+export interface ProviderSelectedAccount {
+  readonly id: string;
+  readonly accountEmail?: string;
+}
+
 /**
  * Deliberately narrow local capability broker. It is not a process or
  * filesystem API: every command and data source is an allowlisted symbolic
@@ -128,6 +134,8 @@ export interface ProviderContext {
   readonly browser: { cookieHeader(domain: string): Promise<string> };
   /** Omitted in direct parser tests; composed runtimes always provide a fail-closed broker. */
   readonly local?: ProviderLocalCapabilities;
+  /** Present only when the host has selected a saved account for this refresh. */
+  readonly selectedAccount?: ProviderSelectedAccount;
   readonly env: { timeZone?: string };
   /**
    * The host-selected source mode. Providers use it only to choose between

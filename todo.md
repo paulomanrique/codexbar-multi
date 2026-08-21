@@ -40,6 +40,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add the Electron main/preload/React shell with typed high-level IPC.
 - [x] Add the first `codexbar-multi usage` CLI path.
 - [x] Add native keyring-backed credentials with explicit failure and no plaintext fallback.
+- [ ] Migrate legacy inline token-account payloads to the native credential store, retaining only account IDs and metadata in config.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
 - [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.
 - [x] Wire provider refresh results into persisted overview/history records.
@@ -74,7 +75,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [ ] Connect Antigravity local GetUserStatus/token-account owner observation to the shared history policy.
       - [x] Port GetUserStatus email/tier parsing and merge a host-supplied bounded response into local quota usage.
       - [x] Wire native process/port/CSRF discovery through the platform broker.
-      - [ ] Connect selected token-account ownership and warm CLI lifecycle to the local observation.
+      - [x] Connect selected token-account ownership to local observation and OAuth fallback without exposing raw account credentials.
+      - [ ] Port the warm `agy` CLI lifecycle, readiness polling, idle teardown, and one-shot reset policy.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.
   - [ ] Add persistent snapshot/cache TTL, status probes, real low-power/thermal/activity adapters, plugin refresh, and CLI orchestration.
