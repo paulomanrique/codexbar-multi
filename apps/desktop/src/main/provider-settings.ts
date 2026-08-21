@@ -17,9 +17,15 @@ export interface ProviderSettingsCapability {
 }
 
 export const providerSettingsSourcesForKind = (
-  kind: "api" | "web" | "cli" | "local",
+  kind: "api" | "web" | "cli" | "local" | "oauth",
 ): readonly ProviderSourceMode[] =>
-  kind === "api" ? ["auto", "api"] : kind === "web" ? ["auto", "web"] : ["auto", "cli"];
+  kind === "api"
+    ? ["auto", "api"]
+    : kind === "web"
+      ? ["auto", "web"]
+      : kind === "oauth"
+        ? ["auto"]
+        : ["auto", "cli"];
 
 /**
  * A first-party provider may deliberately declare more than one host strategy.
@@ -27,7 +33,7 @@ export const providerSettingsSourcesForKind = (
  * infers a source from a renderer value.
  */
 export const providerSettingsSourcesForStrategies = (
-  strategies: readonly { readonly kind: "api" | "web" | "cli" | "local" }[],
+  strategies: readonly { readonly kind: "api" | "web" | "cli" | "local" | "oauth" }[],
 ): readonly ProviderSourceMode[] => {
   const sources = new Set<ProviderSourceMode>(["auto"]);
   for (const strategy of strategies) {

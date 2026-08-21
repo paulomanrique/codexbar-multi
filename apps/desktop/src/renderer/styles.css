@@ -315,6 +315,27 @@ h2 {
   font-size: 12px;
   text-align: start;
 }
+.legacy-import-settings {
+  margin-top: 14px;
+}
+.legacy-import-candidates {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.legacy-import-candidates li,
+.legacy-import-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.legacy-import-candidates li span:last-child {
+  color: #9ca3af;
+  font-size: 12px;
+}
 .settings-source {
   display: grid;
   gap: 4px;

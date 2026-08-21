@@ -287,7 +287,7 @@ export const ProviderSettingsDTO = Schema.Struct({
   source: ProviderSourceMode,
   /** `auto` plus the single runtime-backed explicit mode for this provider. */
   availableSources: Schema.Array(ProviderSourceMode).pipe(
-    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(2)),
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(3)),
   ),
 });
 export type ProviderSettingsDTO = Schema.Schema.Type<typeof ProviderSettingsDTO>;
@@ -327,6 +327,102 @@ export type UpdateSessionQuotaNotificationSettingsRequestDTO = Schema.Schema.Typ
   typeof UpdateSessionQuotaNotificationSettingsRequestDTO
 >;
 
+/** Opaque host-issued capability for one inspected legacy source selection. */
+export const LegacyImportTicketDTO = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  Schema.check(Schema.isPattern(/^[a-z0-9-]+$/u)),
+);
+export type LegacyImportTicketDTO = Schema.Schema.Type<typeof LegacyImportTicketDTO>;
+
+export const LegacyImportIdDTO = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  Schema.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/u)),
+);
+export type LegacyImportIdDTO = Schema.Schema.Type<typeof LegacyImportIdDTO>;
+
+export const LegacyImportCandidateDTO = Schema.Struct({
+  kind: Schema.Union([
+    Schema.Literal("config"),
+    Schema.Literal("history"),
+    Schema.Literal("cost"),
+    Schema.Literal("plugins"),
+  ]),
+  state: Schema.Union([
+    Schema.Literal("ready"),
+    Schema.Literal("missing"),
+    Schema.Literal("invalid"),
+    Schema.Literal("excluded"),
+  ]),
+  itemCount: Schema.Natural,
+  byteCount: Schema.Natural,
+});
+export type LegacyImportCandidateDTO = Schema.Schema.Type<typeof LegacyImportCandidateDTO>;
+
+const LegacyImportCountsDTO = Schema.Struct({
+  config: Schema.Natural,
+  history: Schema.Natural,
+  cost: Schema.Natural,
+  plugins: Schema.Natural,
+});
+
+/** Data-free inspection result: selected paths and parser details stay in Electron main. */
+export const LegacyImportInspectionResultDTO = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("cancelled") }),
+  Schema.Struct({
+    status: Schema.Literal("ready"),
+    ticket: LegacyImportTicketDTO,
+    candidates: Schema.Array(LegacyImportCandidateDTO).pipe(Schema.check(Schema.isMaxLength(4))),
+    excludedFeatures: Schema.Array(
+      Schema.Union([
+        Schema.Literal("icloud"),
+        Schema.Literal("widgetkit"),
+        Schema.Literal("sparkle"),
+        Schema.Literal("approvals"),
+      ]),
+    ).pipe(Schema.check(Schema.isMaxLength(4))),
+    sqliteCompatibility: Schema.Literal("not-attempted"),
+  }),
+]);
+export type LegacyImportInspectionResultDTO = Schema.Schema.Type<
+  typeof LegacyImportInspectionResultDTO
+>;
+
+export const ExecuteLegacyImportRequestDTO = Schema.Struct({ ticket: LegacyImportTicketDTO });
+export type ExecuteLegacyImportRequestDTO = Schema.Schema.Type<
+  typeof ExecuteLegacyImportRequestDTO
+>;
+
+export const LegacyImportExecutionResultDTO = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("cancelled") }),
+  Schema.Struct({
+    status: Schema.Union([Schema.Literal("completed"), Schema.Literal("already-completed")]),
+    importId: LegacyImportIdDTO,
+    imported: LegacyImportCountsDTO,
+    skippedCount: Schema.Natural,
+  }),
+]);
+export type LegacyImportExecutionResultDTO = Schema.Schema.Type<
+  typeof LegacyImportExecutionResultDTO
+>;
+
+export const RollbackLegacyImportRequestDTO = Schema.Struct({ importId: LegacyImportIdDTO });
+export type RollbackLegacyImportRequestDTO = Schema.Schema.Type<
+  typeof RollbackLegacyImportRequestDTO
+>;
+
+export const LegacyImportRollbackResultDTO = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("cancelled") }),
+  Schema.Struct({
+    status: Schema.Literal("completed"),
+    importId: LegacyImportIdDTO,
+    removed: LegacyImportCountsDTO,
+    skippedCount: Schema.Natural,
+  }),
+]);
+export type LegacyImportRollbackResultDTO = Schema.Schema.Type<
+  typeof LegacyImportRollbackResultDTO
+>;
+
 export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-usage"), provider: Schema.optional(ProviderId) }),
   Schema.Struct({ type: Schema.Literal("refresh-provider"), request: RefreshProviderRequestDTO }),
@@ -351,6 +447,15 @@ export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("start-login"), request: LoginRequestDTO }),
   Schema.Struct({ type: Schema.Literal("cancel-login"), request: LoginRequestDTO }),
   Schema.Struct({ type: Schema.Literal("logout"), request: LoginRequestDTO }),
+  Schema.Struct({ type: Schema.Literal("inspect-legacy-import") }),
+  Schema.Struct({
+    type: Schema.Literal("execute-legacy-import"),
+    request: ExecuteLegacyImportRequestDTO,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("rollback-legacy-import"),
+    request: RollbackLegacyImportRequestDTO,
+  }),
 ]);
 export type IPCRequest = Schema.Schema.Type<typeof IPCRequest>;
 
@@ -369,6 +474,18 @@ export const IPCResponse = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("session-quota-notification-settings"),
     payload: SessionQuotaNotificationSettingsDTO,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("legacy-import-inspection"),
+    payload: LegacyImportInspectionResultDTO,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("legacy-import-execution"),
+    payload: LegacyImportExecutionResultDTO,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("legacy-import-rollback"),
+    payload: LegacyImportRollbackResultDTO,
   }),
   Schema.Struct({ type: Schema.Literal("error"), error: ProviderError }),
 ]);

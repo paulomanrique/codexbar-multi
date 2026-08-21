@@ -12,6 +12,11 @@ import {
   ProviderSettingsListDTO,
   SessionQuotaNotificationSettingsDTO,
   UpdateSessionQuotaNotificationSettingsRequestDTO,
+  ExecuteLegacyImportRequestDTO,
+  LegacyImportExecutionResultDTO,
+  LegacyImportInspectionResultDTO,
+  LegacyImportRollbackResultDTO,
+  RollbackLegacyImportRequestDTO,
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
   ActivateClaudeSwapAccountRequestDTO,
@@ -151,6 +156,62 @@ describe("desktop IPC boundary", () => {
     expect(decodeSettings({ enabled: false, config: "not exposed" })).toEqual({ enabled: false });
     expect(decodeUpdate({ enabled: true })).toEqual({ enabled: true });
     expect(() => decodeUpdate({ enabled: "yes" })).toThrow();
+  });
+
+  it("keeps legacy import paths, reasons, journals, and source content out of IPC", () => {
+    const decodeInspection = Schema.decodeUnknownSync(LegacyImportInspectionResultDTO);
+    const decodeExecute = Schema.decodeUnknownSync(ExecuteLegacyImportRequestDTO);
+    const decodeExecution = Schema.decodeUnknownSync(LegacyImportExecutionResultDTO);
+    const decodeRollbackRequest = Schema.decodeUnknownSync(RollbackLegacyImportRequestDTO);
+    const decodeRollback = Schema.decodeUnknownSync(LegacyImportRollbackResultDTO);
+    expect(
+      decodeInspection({
+        status: "ready",
+        ticket: "ticket-safe",
+        candidates: [
+          {
+            kind: "config",
+            state: "ready",
+            itemCount: 1,
+            byteCount: 20,
+            path: "/private/legacy/config.json",
+            reason: "token value",
+          },
+        ],
+        excludedFeatures: ["icloud", "approvals"],
+        sqliteCompatibility: "not-attempted",
+      }),
+    ).toEqual({
+      status: "ready",
+      ticket: "ticket-safe",
+      candidates: [{ kind: "config", state: "ready", itemCount: 1, byteCount: 20 }],
+      excludedFeatures: ["icloud", "approvals"],
+      sqliteCompatibility: "not-attempted",
+    });
+    expect(decodeExecute({ ticket: "ticket-safe", legacyRoot: "/private/legacy" })).toEqual({
+      ticket: "ticket-safe",
+    });
+    expect(() => decodeExecute({ ticket: "../../private" })).toThrow();
+    expect(
+      decodeExecution({
+        status: "completed",
+        importId: "legacy-safe",
+        imported: { config: 1, history: 2, cost: 3, plugins: 0 },
+        skippedCount: 1,
+        skipped: ["private detail"],
+      }),
+    ).not.toHaveProperty("skipped");
+    expect(decodeRollbackRequest({ importId: "legacy-safe", root: "/private/new" })).toEqual({
+      importId: "legacy-safe",
+    });
+    expect(
+      decodeRollback({
+        status: "completed",
+        importId: "legacy-safe",
+        removed: { config: 1, history: 2, cost: 3, plugins: 0 },
+        skippedCount: 0,
+      }),
+    ).toMatchObject({ status: "completed", importId: "legacy-safe" });
   });
 
   it("projects spend without account identifiers, paths, or configuration fingerprints", () => {

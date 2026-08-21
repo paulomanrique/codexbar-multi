@@ -30,6 +30,11 @@ import type {
   SessionQuotaNotificationSettingsDTO,
   UpdateSessionQuotaNotificationSettingsRequestDTO,
   UpdateProviderSettingsRequestDTO,
+  ExecuteLegacyImportRequestDTO,
+  LegacyImportExecutionResultDTO,
+  LegacyImportInspectionResultDTO,
+  LegacyImportRollbackResultDTO,
+  RollbackLegacyImportRequestDTO,
 } from "@codexbar/contracts";
 
 export const DesktopChannels = Object.freeze({
@@ -50,6 +55,9 @@ export const DesktopChannels = Object.freeze({
   getSessionQuotaNotificationSettings: "codexbar-multi:get-session-quota-notification-settings",
   updateSessionQuotaNotificationSettings:
     "codexbar-multi:update-session-quota-notification-settings",
+  inspectLegacyImport: "codexbar-multi:inspect-legacy-import",
+  executeLegacyImport: "codexbar-multi:execute-legacy-import",
+  rollbackLegacyImport: "codexbar-multi:rollback-legacy-import",
   listPlugins: "codexbar-multi:list-plugins",
   installPlugin: "codexbar-multi:install-plugin",
   previewPluginApproval: "codexbar-multi:preview-plugin-approval",
@@ -88,6 +96,14 @@ export interface CodexBarDesktopApi {
   readonly updateSessionQuotaNotificationSettings: (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
   ) => Promise<SessionQuotaNotificationSettingsDTO>;
+  /** Native-picker, ticketed migration API. No path or source content crosses preload. */
+  readonly inspectLegacyImport: () => Promise<LegacyImportInspectionResultDTO>;
+  readonly executeLegacyImport: (
+    request: ExecuteLegacyImportRequestDTO,
+  ) => Promise<LegacyImportExecutionResultDTO>;
+  readonly rollbackLegacyImport: (
+    request: RollbackLegacyImportRequestDTO,
+  ) => Promise<LegacyImportRollbackResultDTO>;
   readonly listPlugins: () => Promise<PluginListResultDTO>;
   readonly installPlugin: (request: InstallPluginRequestDTO) => Promise<InstalledPluginDTO>;
   readonly previewPluginApproval: (

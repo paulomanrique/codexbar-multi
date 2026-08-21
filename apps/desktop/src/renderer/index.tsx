@@ -12,6 +12,9 @@ import type {
   SpendDashboardDTO,
   SpendOverviewDTO,
   UpdateProviderSettingsRequestDTO,
+  LegacyImportExecutionResultDTO,
+  LegacyImportInspectionResultDTO,
+  LegacyImportRollbackResultDTO,
 } from "@codexbar/contracts";
 
 import { createLocalization } from "./localization.ts";
@@ -470,6 +473,98 @@ function SessionQuotaNotificationSettings({
   );
 }
 
+function LegacyImportSettings({
+  inspection,
+  execution,
+  rollback,
+  busy,
+  error,
+  onInspect,
+  onExecute,
+  onRollback,
+  copy,
+}: {
+  readonly inspection: LegacyImportInspectionResultDTO | undefined;
+  readonly execution: LegacyImportExecutionResultDTO | undefined;
+  readonly rollback: LegacyImportRollbackResultDTO | undefined;
+  readonly busy: "inspect" | "execute" | "rollback" | undefined;
+  readonly error: string | undefined;
+  readonly onInspect: () => void;
+  readonly onExecute: (ticket: string) => void;
+  readonly onRollback: (importId: string) => void;
+  readonly copy: {
+    readonly title: string;
+    readonly description: string;
+    readonly inspect: string;
+    readonly execute: string;
+    readonly rollback: string;
+    readonly cancelled: string;
+    readonly ready: string;
+    readonly completed: string;
+    readonly unavailable: string;
+  };
+}) {
+  const ready = inspection?.status === "ready" ? inspection : undefined;
+  const completed =
+    execution?.status === "completed" || execution?.status === "already-completed"
+      ? execution
+      : undefined;
+  return (
+    <section
+      className="global-settings legacy-import-settings"
+      aria-labelledby="legacy-import-title"
+    >
+      <div>
+        <h3 id="legacy-import-title">{copy.title}</h3>
+        <p className="muted">{copy.description}</p>
+      </div>
+      <div className="provider-actions">
+        <button className="secondary" disabled={busy !== undefined} onClick={onInspect}>
+          {copy.inspect}
+        </button>
+        {ready === undefined ||
+        !ready.candidates.some((candidate) => candidate.state === "ready") ? null : (
+          <button disabled={busy !== undefined} onClick={() => onExecute(ready.ticket)}>
+            {copy.execute}
+          </button>
+        )}
+      </div>
+      {inspection?.status === "cancelled" ? <p className="muted">{copy.cancelled}</p> : null}
+      {ready === undefined ? null : (
+        <ul className="legacy-import-candidates">
+          {ready.candidates.map((candidate) => (
+            <li key={candidate.kind}>
+              <span>{candidate.kind}</span>
+              <span>{`${candidate.state} · ${candidate.itemCount}`}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {completed === undefined ? null : (
+        <div className="legacy-import-result">
+          <p role="status">{`${copy.completed}: ${Object.values(completed.imported).reduce((sum, count) => sum + count, 0)}`}</p>
+          <button
+            className="secondary"
+            disabled={busy !== undefined}
+            onClick={() => onRollback(completed.importId)}
+          >
+            {copy.rollback}
+          </button>
+        </div>
+      )}
+      {rollback?.status === "completed" ? (
+        <p role="status">{`${copy.rollback}: ${Object.values(rollback.removed).reduce((sum, count) => sum + count, 0)}`}</p>
+      ) : null}
+      {busy === undefined ? null : <p className="muted">{copy.ready}</p>}
+      {error === undefined ? null : (
+        <p className="error" role="alert">
+          {copy.unavailable}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function App() {
   const localization = useMemo(() => createLocalization("system", navigator.languages), []);
   const [snapshot, setSnapshot] = useState<DashboardSnapshotDTO>();
@@ -491,6 +586,13 @@ function App() {
     useState(false);
   const [sessionQuotaNotificationSettingsError, setSessionQuotaNotificationSettingsError] =
     useState<string>();
+  const [legacyImportInspection, setLegacyImportInspection] =
+    useState<LegacyImportInspectionResultDTO>();
+  const [legacyImportExecution, setLegacyImportExecution] =
+    useState<LegacyImportExecutionResultDTO>();
+  const [legacyImportRollback, setLegacyImportRollback] = useState<LegacyImportRollbackResultDTO>();
+  const [legacyImportBusy, setLegacyImportBusy] = useState<"inspect" | "execute" | "rollback">();
+  const [legacyImportError, setLegacyImportError] = useState<string>();
   const [history, setHistory] = useState<HistoryQueryResultDTO>();
   const [costs, setCosts] = useState<CostUsageQueryResultDTO>();
   const [activityLoading, setActivityLoading] = useState(false);
@@ -655,6 +757,41 @@ function App() {
       .then((next) => setSessionQuotaNotificationSettings(next))
       .catch(() => setSessionQuotaNotificationSettingsError(localization.upstream("Unavailable")))
       .finally(() => setSavingSessionQuotaNotificationSettings(false));
+  };
+  const inspectLegacyImport = (): void => {
+    setLegacyImportBusy("inspect");
+    setLegacyImportError(undefined);
+    setLegacyImportExecution(undefined);
+    setLegacyImportRollback(undefined);
+    void window.codexbar
+      .inspectLegacyImport()
+      .then(setLegacyImportInspection)
+      .catch(() => setLegacyImportError(copy.unavailable))
+      .finally(() => setLegacyImportBusy(undefined));
+  };
+  const executeLegacyImport = (ticket: string): void => {
+    setLegacyImportBusy("execute");
+    setLegacyImportError(undefined);
+    void window.codexbar
+      .executeLegacyImport({ ticket })
+      .then((result) => {
+        setLegacyImportExecution(result);
+        if (result.status !== "cancelled") setActivityVersion((version) => version + 1);
+      })
+      .catch(() => setLegacyImportError(copy.unavailable))
+      .finally(() => setLegacyImportBusy(undefined));
+  };
+  const rollbackLegacyImport = (importId: string): void => {
+    setLegacyImportBusy("rollback");
+    setLegacyImportError(undefined);
+    void window.codexbar
+      .rollbackLegacyImport({ importId })
+      .then((result) => {
+        setLegacyImportRollback(result);
+        if (result.status !== "cancelled") setActivityVersion((version) => version + 1);
+      })
+      .catch(() => setLegacyImportError(copy.unavailable))
+      .finally(() => setLegacyImportBusy(undefined));
   };
   const partialCount = snapshot?.providers.filter(
     (provider) => implementationPresentation(provider) === "parity-pending",
@@ -882,6 +1019,29 @@ function App() {
           pending={savingSessionQuotaNotificationSettings}
           settings={sessionQuotaNotificationSettings}
           onUpdate={updateSessionQuotaNotificationSettings}
+        />
+        <LegacyImportSettings
+          busy={legacyImportBusy}
+          copy={{
+            title: localization.upstream("Import legacy CodexBar data"),
+            description: localization.upstream(
+              "Select a copied Swift installation. Credentials and approvals are never imported.",
+            ),
+            inspect: localization.upstream("Inspect"),
+            execute: localization.upstream("Import"),
+            rollback: localization.upstream("Roll Back"),
+            cancelled: localization.upstream("Cancelled"),
+            ready: copy.refreshing,
+            completed: localization.upstream("Imported"),
+            unavailable: copy.unavailable,
+          }}
+          error={legacyImportError}
+          execution={legacyImportExecution}
+          inspection={legacyImportInspection}
+          rollback={legacyImportRollback}
+          onExecute={executeLegacyImport}
+          onInspect={inspectLegacyImport}
+          onRollback={rollbackLegacyImport}
         />
         {selectedProvider === undefined ? <p className="muted">{copy.noUsageYet}</p> : null}
         {selectedProvider === undefined ? null : (

@@ -1,5 +1,15 @@
-import { app, BrowserWindow, ipcMain, nativeImage, Notification, Tray } from "electron";
-import { createHash } from "node:crypto";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  Notification,
+  Tray,
+  type MessageBoxOptions,
+  type OpenDialogOptions,
+} from "electron";
+import { createHash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +46,11 @@ import {
   ActivateClaudeSwapAccountResultDTO,
   SessionQuotaNotificationSettingsDTO,
   UpdateSessionQuotaNotificationSettingsRequestDTO,
+  ExecuteLegacyImportRequestDTO,
+  LegacyImportExecutionResultDTO,
+  LegacyImportInspectionResultDTO,
+  LegacyImportRollbackResultDTO,
+  RollbackLegacyImportRequestDTO,
 } from "@codexbar/contracts";
 import {
   makeCredentialBrowserSessions,
@@ -52,6 +67,9 @@ import {
   claudeSwapProcessEnvironment,
   makeNodePrivateFileStore,
   makeNodeProcessRunner,
+  inspectNodeLegacyImport,
+  executeNodeLegacyImport,
+  rollbackNodeLegacyImport,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
 import {
@@ -96,6 +114,7 @@ import {
   providerSettingsSourcesForStrategies,
   updateSupportedFirstPartyProviderSettings,
 } from "./provider-settings.js";
+import { DesktopLegacyImportController } from "./legacy-import.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -113,6 +132,7 @@ let pluginSandbox: ReturnType<typeof makeElectronPluginSandbox> | undefined;
 let spendPublisher: DesktopSpendPublisher | undefined;
 let claudeSwap: DesktopClaudeSwapController | undefined;
 let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | undefined;
+let legacyImport: DesktopLegacyImportController | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
@@ -154,6 +174,10 @@ const activeClaudeSwap = (): DesktopClaudeSwapController => {
 const activeGrokLocalTokenScanner = (): ReturnType<typeof makeNodeGrokLocalTokenScanner> => {
   if (grokLocalTokenScanner === undefined) throw new Error("Grok local token scanner is not ready");
   return grokLocalTokenScanner;
+};
+const activeLegacyImport = (): DesktopLegacyImportController => {
+  if (legacyImport === undefined) throw new Error("Legacy import is not ready");
+  return legacyImport;
 };
 
 const overviewProviders = () => {
@@ -297,9 +321,11 @@ function trayImage() {
 void app
   .whenReady()
   .then(async () => {
+    const userDataPath = app.getPath("userData");
+    const databasePath = join(userDataPath, "usage.sqlite");
     persistence = await Effect.runPromise(
       makeNodeSqliteWorkerPersistence({
-        databasePath: join(app.getPath("userData"), "usage.sqlite"),
+        databasePath,
         workerUrl: new URL(/* @vite-ignore */ "./sqlite-worker.js", import.meta.url),
       }),
     );
@@ -412,6 +438,56 @@ void app
       files: makeNodePrivateFileStore(),
       retentionPath: join(app.getPath("userData"), "claude-swap-retained.json"),
     });
+    legacyImport = new DesktopLegacyImportController({
+      adapter: {
+        inspect: (options) => Effect.runPromise(inspectNodeLegacyImport(options)),
+        execute: (options) => Effect.runPromise(executeNodeLegacyImport(options)),
+        rollback: (options) => Effect.runPromise(rollbackNodeLegacyImport(options)),
+      },
+      host: {
+        selectLegacyRoot: async () => {
+          const options: OpenDialogOptions = {
+            title: "Select the copied CodexBar data directory",
+            buttonLabel: "Inspect",
+            properties: ["openDirectory"],
+          };
+          const selected =
+            window === undefined
+              ? await dialog.showOpenDialog(options)
+              : await dialog.showOpenDialog(window, options);
+          return selected.canceled ? undefined : selected.filePaths[0];
+        },
+        confirm: async (action, itemCount) => {
+          const importing = action === "execute";
+          const options: MessageBoxOptions = {
+            type: "warning",
+            title: importing ? "Import legacy CodexBar data?" : "Roll back legacy import?",
+            message: importing
+              ? `Copy ${itemCount} inspected item${itemCount === 1 ? "" : "s"} into CodexBar Multi?`
+              : "Remove only data recorded in this CodexBar Multi import journal?",
+            detail: importing
+              ? "Credentials, browser sessions, approvals, iCloud, WidgetKit and Sparkle are never imported."
+              : "The original Swift installation is never changed.",
+            buttons: ["Cancel", importing ? "Import" : "Roll Back"],
+            cancelId: 0,
+            defaultId: 0,
+            noLink: true,
+          };
+          const confirmed =
+            window === undefined
+              ? await dialog.showMessageBox(options)
+              : await dialog.showMessageBox(window, options);
+          return confirmed.response === 1;
+        },
+      },
+      paths: {
+        destinationRoot: userDataPath,
+        databasePath,
+        targetConfigPath: join(userDataPath, "config.json"),
+        targetPluginsPath: join(userDataPath, "plugins"),
+      },
+      nextOpaqueId: randomUUID,
+    });
     const decodeVoid = Schema.decodeUnknownPromise(Schema.Void);
     const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
     const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -443,6 +519,13 @@ void app
     const decodeUpdateSessionQuotaNotificationSettings = Schema.decodeUnknownPromise(
       UpdateSessionQuotaNotificationSettingsRequestDTO,
     );
+    const decodeLegacyImportInspection = Schema.decodeUnknownPromise(
+      LegacyImportInspectionResultDTO,
+    );
+    const decodeExecuteLegacyImport = Schema.decodeUnknownPromise(ExecuteLegacyImportRequestDTO);
+    const decodeLegacyImportExecution = Schema.decodeUnknownPromise(LegacyImportExecutionResultDTO);
+    const decodeRollbackLegacyImport = Schema.decodeUnknownPromise(RollbackLegacyImportRequestDTO);
+    const decodeLegacyImportRollback = Schema.decodeUnknownPromise(LegacyImportRollbackResultDTO);
     const decodeInstallPlugin = Schema.decodeUnknownPromise(InstallPluginRequestDTO);
     const decodeInstalledPlugin = Schema.decodeUnknownPromise(InstalledPluginDTO);
     const decodePluginList = Schema.decodeUnknownPromise(PluginListResultDTO);
@@ -628,6 +711,26 @@ void app
           );
         }),
     );
+    ipcMain.handle(DesktopChannels.inspectLegacyImport, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        return decodeLegacyImportInspection(await activeLegacyImport().inspect());
+      }),
+    );
+    ipcMain.handle(DesktopChannels.executeLegacyImport, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodeLegacyImportExecution(
+          await activeLegacyImport().execute(await decodeExecuteLegacyImport(input)),
+        ),
+      ),
+    );
+    ipcMain.handle(DesktopChannels.rollbackLegacyImport, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodeLegacyImportRollback(
+          await activeLegacyImport().rollback(await decodeRollbackLegacyImport(input)),
+        ),
+      ),
+    );
     ipcMain.handle(DesktopChannels.listPlugins, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         await decodeVoid(input);
@@ -692,6 +795,8 @@ void app
   });
 
 app.on("before-quit", (event) => {
+  legacyImport?.cancel();
+  legacyImport = undefined;
   spendPublisher?.cancel();
   spendPublisher = undefined;
   pluginSandbox?.terminate();

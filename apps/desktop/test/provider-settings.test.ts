@@ -56,6 +56,7 @@ describe("desktop provider settings", () => {
     expect(providerSettingsSourcesForKind("web")).toEqual(["auto", "web"]);
     expect(providerSettingsSourcesForKind("cli")).toEqual(["auto", "cli"]);
     expect(providerSettingsSourcesForKind("local")).toEqual(["auto", "cli"]);
+    expect(providerSettingsSourcesForKind("oauth")).toEqual(["auto"]);
   });
 
   it("unions only declared source modes for a multi-strategy provider", () => {
