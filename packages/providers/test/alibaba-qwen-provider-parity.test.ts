@@ -142,7 +142,12 @@ describe("Alibaba and Qwen Cloud Swift parity", () => {
     const raw = await alibabatokenplan.fetchUsage(
       context(
         (request) => {
-          if (request.method === "GET") return response("<html>sec_token = 'fixture-token'</html>");
+          if (request.method === "GET")
+            return {
+              status: 200,
+              bodyText:
+                '<script>window.ALIYUN_CONSOLE_CONFIG = { SEC_TOKEN: "fixture-token" };</script>',
+            };
           const body = decodeURIComponent(String(request.options?.body));
           if (body.includes('"Api":"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/subscription"'))
             return response({ data: { DataV2: { data: { data: { specCode: "pro" } } } } });
@@ -175,7 +180,19 @@ describe("Alibaba and Qwen Cloud Swift parity", () => {
       ),
     );
     expect(requests).toHaveLength(4);
+    expect(requests[0]?.options).toMatchObject({
+      headers: {
+        Referer: "https://modelstudio.console.alibabacloud.com/",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
+    });
     expect(requests[1]?.url.hostname).toBe("bailian-singapore-cs.alibabacloud.com");
+    expect(decodeURIComponent(String(requests[1]?.options?.body))).toContain(
+      "sec_token=fixture-token",
+    );
     expect(requests[1]?.options).toMatchObject({
       headers: { Cookie: "sid=fixture", Origin: "https://modelstudio.console.alibabacloud.com" },
     });

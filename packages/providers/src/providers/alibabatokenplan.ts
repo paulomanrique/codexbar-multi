@@ -269,10 +269,21 @@ const sessionToken = async (ctx: ProviderContext, cookie: string, value: Region)
   if (fromCookie) return fromCookie;
   try {
     const response = await ctx.http.get(dashboard(value), {
-      headers: { Cookie: cookie, Accept: "text/html,*/*", "User-Agent": browserUA },
+      headers: {
+        Cookie: cookie,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": browserUA,
+        Referer: `${gateway(value)}/`,
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
     });
     if (response.status >= 200 && response.status < 300) {
-      const match = /(?:sec_token|secToken)\s*[=:]\s*["']([^"']+)/iu.exec(response.bodyText);
+      const match = /(?:sec_token|secToken|SEC_TOKEN)["']?\s*[=:]\s*["']([^"']+)/u.exec(
+        response.bodyText,
+      );
       if (match?.[1]) return match[1];
     }
   } catch {

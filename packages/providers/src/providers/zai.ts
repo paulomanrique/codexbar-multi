@@ -11,8 +11,10 @@ const definition: ProviderDefinition = {
   endpoints: [
     "https://api.z.ai",
     "https://open.bigmodel.cn",
+    "https://www.bigmodel.cn",
     { setting: "Z_AI_QUOTA_ENDPOINT", policy: "https" },
     { setting: "Z_AI_MODEL_USAGE_ENDPOINT", policy: "https" },
+    { setting: "Z_AI_BALANCE_ENDPOINT", policy: "https" },
   ],
   auth: { type: "bearer", secret: "Z_AI_API_KEY" },
   settings: [
@@ -23,6 +25,7 @@ const definition: ProviderDefinition = {
     { key: "Z_AI_PROJECT", title: "Project", type: "plain" },
     { key: "Z_AI_QUOTA_ENDPOINT", title: "Quota endpoint", type: "plain" },
     { key: "Z_AI_MODEL_USAGE_ENDPOINT", title: "Model usage endpoint", type: "plain" },
+    { key: "Z_AI_BALANCE_ENDPOINT", title: "Balance endpoint", type: "plain" },
   ],
 
   fetchUsage: async (ctx: ProviderContext) => {
@@ -246,6 +249,52 @@ const definition: ProviderDefinition = {
       root.data.level,
     ].find((value: any) => typeof value === "string" && value.trim());
     if (plan) result.identity.loginMethod = plan.trim();
+
+    // BigModel CN exposes account balance on the console host, not the API
+    // host. This is best-effort: quota remains authoritative when the optional
+    // balance service is slow, unavailable, or changes shape.
+    if (region === "bigmodel-cn") {
+      try {
+        const balanceEndpoint: any =
+          ctx.settings.get("Z_AI_BALANCE_ENDPOINT") ||
+          "https://www.bigmodel.cn/api/biz/account/query-customer-account-report";
+        const balanceResponse: any = await ctx.http.getJSON(balanceEndpoint, {
+          timeoutSeconds: 5,
+        });
+        const balanceRoot: any = balanceResponse.json;
+        if (
+          balanceResponse.status === 200 &&
+          balanceRoot &&
+          typeof balanceRoot === "object" &&
+          balanceRoot.success === true
+        ) {
+          const data: any =
+            balanceRoot.data && typeof balanceRoot.data === "object" ? balanceRoot.data : {};
+          const numeric = (value: any) =>
+            value === null || value === undefined ? undefined : Number(value);
+          const available: any = numeric(data.availableBalance);
+          const current: any = numeric(data.balance);
+          const value: any = Number.isFinite(available) ? available : current;
+          if (Number.isFinite(value)) {
+            const recharged: any = numeric(data.rechargeAmount);
+            const granted: any = numeric(data.giveAmount);
+            const spent: any = numeric(data.totalSpendAmount);
+            const secondary: any[] = [];
+            if (Number.isFinite(recharged)) secondary.push(`recharged ¥${recharged.toFixed(2)}`);
+            if (Number.isFinite(granted) && granted > 0)
+              secondary.push(`granted ¥${granted.toFixed(2)}`);
+            if (Number.isFinite(spent)) secondary.push(`spent ¥${spent.toFixed(2)}`);
+            result.details[0].rows.push({
+              label: "Account balance",
+              value: `¥${Number(value).toFixed(2)}`,
+              secondaryValue: secondary.join(" · ") || undefined,
+            });
+          }
+        }
+      } catch {
+        // Keep the already-fetched quota snapshot when this optional endpoint fails.
+      }
+    }
 
     async function modelUsage(daysBack: any) {
       const end: any = ctx.date.now();
