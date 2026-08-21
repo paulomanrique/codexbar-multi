@@ -5,6 +5,7 @@ import {
   PlanUtilizationHistoryEntry,
   PlanUtilizationHistorySelection,
   PlanUtilizationSeriesHistory,
+  PlanUtilizationSeriesName,
   type PlanUtilizationHistoryProviders,
 } from "./plan-utilization-history.ts";
 import {
@@ -23,6 +24,7 @@ import {
   claudePlanUtilizationIdentityAccountKey,
   claudePlanUtilizationLegacyEmailAccountKey,
 } from "./claude-history-ownership.ts";
+import { antigravityPlanUtilizationIdentityAccountKey } from "./antigravity-history-ownership.ts";
 import type { InfrastructureError } from "./services.ts";
 
 const PLAN_UTILIZATION_UNSCOPED_PREFERRED_KEY = "__unscoped__";
@@ -204,6 +206,68 @@ export class PlanUtilizationHistoryCoordinator {
         if (bucketsEqual(buckets, originalBuckets)) return false;
 
         const nextProviders = { ...providers, claude: buckets };
+        yield* Ref.set(stateRef, {
+          loaded: true,
+          revision: state.revision + 1,
+          providers: nextProviders,
+        });
+        yield* repository.save(cloneProviders(nextProviders));
+        return true;
+      }),
+    );
+  }
+
+  /**
+   * Records only the pinned Gemini 5h/weekly pair. Identityless samples start
+   * unscoped or continue the sticky owner; later identity adopts legacy
+   * unscoped history exactly like the Swift generic account resolver.
+   */
+  recordAntigravity(input: {
+    readonly snapshot: UsageSnapshot;
+    readonly capturedAt: Date;
+  }): Effect.Effect<boolean, InfrastructureError> {
+    const samples = extractPlanUtilizationSeriesSamples({
+      providerId: "antigravity",
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+      forSessionEquivalents: true,
+    });
+    if (samples.length === 0) return Effect.succeed(false);
+
+    const ensureLoaded = this.#ensureLoaded;
+    const stateRef = this.#state;
+    const repository = this.#repository;
+    return this.#semaphore.withPermit(
+      Effect.gen(function* () {
+        const state = yield* ensureLoaded;
+        const providers = cloneProviders(state.providers);
+        const buckets = providers.antigravity ?? new PlanUtilizationHistoryBuckets();
+        const originalBuckets = cloneBuckets(buckets);
+        const identityAccountKey = antigravityPlanUtilizationIdentityAccountKey(input.snapshot);
+        const accountKey =
+          identityAccountKey ?? stickyPlanUtilizationAccountKey(buckets) ?? undefined;
+
+        if (identityAccountKey !== undefined) {
+          buckets.preferredAccountKey = identityAccountKey;
+          adoptUnscopedHistory(identityAccountKey, buckets);
+        }
+
+        let histories = [...buckets.historiesFor(accountKey)];
+        if (
+          samples.some((sample) =>
+            sample.name instanceof PlanUtilizationSeriesName
+              ? sample.name.rawValue === "session"
+              : sample.name === "session",
+          ) &&
+          !histories.some((history) => history.name.rawValue === "session")
+        ) {
+          histories = histories.filter((history) => history.name.rawValue !== "weekly");
+        }
+        const updated = updatePlanUtilizationHistories(histories, samples) ?? histories;
+        buckets.setHistories(updated, accountKey);
+        if (bucketsEqual(buckets, originalBuckets)) return false;
+
+        const nextProviders = { ...providers, antigravity: buckets };
         yield* Ref.set(stateRef, {
           loaded: true,
           revision: state.revision + 1,
@@ -412,6 +476,42 @@ const adoptUnscopedHistory = (accountKey: string, buckets: PlanUtilizationHistor
     accountKey,
   );
   buckets.setHistories([], null);
+};
+
+const stickyPlanUtilizationAccountKey = (
+  buckets: PlanUtilizationHistoryBuckets,
+): string | undefined => {
+  if (buckets.preferredAccountKey === PLAN_UTILIZATION_UNSCOPED_PREFERRED_KEY) return undefined;
+  const accountKeys = Object.keys(buckets.accounts);
+  if (accountKeys.length === 0) return undefined;
+  if (
+    buckets.preferredAccountKey !== undefined &&
+    accountKeys.includes(buckets.preferredAccountKey)
+  )
+    return buckets.preferredAccountKey;
+  if (accountKeys.length === 1) return accountKeys[0];
+  return accountKeys.sort((left, right) => {
+    const leftLatest = latestCapturedAt(buckets.accounts[left] ?? []);
+    const rightLatest = latestCapturedAt(buckets.accounts[right] ?? []);
+    return rightLatest - leftLatest || compareUnicodeScalars(left, right);
+  })[0];
+};
+
+const latestCapturedAt = (histories: readonly PlanUtilizationSeriesHistory[]): number =>
+  histories.reduce(
+    (latest, history) => Math.max(latest, history.latestCapturedAt?.getTime() ?? -Infinity),
+    -Infinity,
+  );
+
+const compareUnicodeScalars = (left: string, right: string): number => {
+  const leftScalars = Array.from(left, (character) => character.codePointAt(0) ?? 0);
+  const rightScalars = Array.from(right, (character) => character.codePointAt(0) ?? 0);
+  const length = Math.min(leftScalars.length, rightScalars.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = leftScalars[index]! - rightScalars[index]!;
+    if (difference !== 0) return difference;
+  }
+  return leftScalars.length - rightScalars.length;
 };
 
 const mergePlanUtilizationHistories = (

@@ -24,5 +24,6 @@ export * from "./plan-utilization-coordinator.ts";
 export * from "./plan-utilization-recording.ts";
 export * from "./codex-history-ownership.ts";
 export * from "./claude-history-ownership.ts";
+export * from "./antigravity-history-ownership.ts";
 export * from "./sha256.ts";
 export * from "./plan-utilization-samples.ts";

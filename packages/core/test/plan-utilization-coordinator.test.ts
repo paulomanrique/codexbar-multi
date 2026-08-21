@@ -42,6 +42,27 @@ const usageSnapshot = (overrides: Partial<UsageSnapshot> = {}): UsageSnapshot =>
   ...overrides,
 });
 
+const antigravitySnapshot = (
+  sessionUsed: number,
+  weeklyUsed: number,
+  identity?: UsageSnapshot["identity"],
+): UsageSnapshot =>
+  usageSnapshot({
+    extraRateWindows: [
+      {
+        id: "antigravity-quota-summary-gemini-session",
+        title: "Gemini 5-hour",
+        window: { usedPercent: sessionUsed, windowMinutes: 300 },
+      },
+      {
+        id: "antigravity-quota-summary-gemini-weekly",
+        title: "Gemini weekly",
+        window: { usedPercent: weeklyUsed, windowMinutes: 10_080 },
+      },
+    ],
+    ...(identity === undefined ? {} : { identity }),
+  });
+
 describe("plan-utilization history coordinator", () => {
   it("waits for startup load before recording and never overwrites persisted history", async () => {
     let releaseLoad!: () => void;
@@ -532,6 +553,173 @@ describe("plan-utilization history coordinator", () => {
     }
     expect(loads).toBe(0);
     expect(saves).toBe(0);
+  });
+
+  it("records Antigravity unscoped, then adopts it into an email owner", async () => {
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({}),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordAntigravity({
+          capturedAt,
+          snapshot: antigravitySnapshot(20, 40),
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(saved?.antigravity?.unscoped.map((history) => history.name.rawValue)).toEqual([
+      "session",
+      "weekly",
+    ]);
+
+    await expect(
+      Effect.runPromise(
+        coordinator.recordAntigravity({
+          capturedAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+          snapshot: antigravitySnapshot(25, 45, {
+            providerId: "antigravity",
+            accountEmail: " PERSON@Example.com ",
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    const accountKey = "75d0b167bd6f71dd9568ea49a94f1563284f6e95c8ca2dad095fdc7ac9773cfc";
+    expect(saved?.antigravity?.preferredAccountKey).toBe(accountKey);
+    expect(saved?.antigravity?.unscoped).toEqual([]);
+    expect(
+      saved?.antigravity?.accounts[accountKey]?.map((history) =>
+        history.entries.map((entry) => entry.usedPercent),
+      ),
+    ).toEqual([
+      [20, 25],
+      [40, 45],
+    ]);
+  });
+
+  it("drops legacy provider-wide weekly history when the Gemini pair starts", async () => {
+    const legacyWeekly = new PlanUtilizationSeriesHistory({
+      name: "weekly",
+      windowMinutes: 10_080,
+      entries: [sample(99).entry],
+    });
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        antigravity: new PlanUtilizationHistoryBuckets({ unscoped: [legacyWeekly] }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordAntigravity({
+        capturedAt,
+        snapshot: antigravitySnapshot(20, 40),
+      }),
+    );
+    expect(
+      saved?.antigravity?.unscoped.map((history) => ({
+        name: history.name.rawValue,
+        values: history.entries.map((entry) => entry.usedPercent),
+      })),
+    ).toEqual([
+      { name: "session", values: [20] },
+      { name: "weekly", values: [40] },
+    ]);
+  });
+
+  it("continues a sticky Antigravity owner and skips snapshots without a pinned pair", async () => {
+    const accountKey = "existing";
+    let loads = 0;
+    let saves = 0;
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.sync(() => {
+        loads += 1;
+        return {
+          antigravity: new PlanUtilizationHistoryBuckets({
+            accounts: {
+              [accountKey]: [
+                new PlanUtilizationSeriesHistory({
+                  name: "session",
+                  windowMinutes: 300,
+                  entries: [sample(10).entry],
+                }),
+              ],
+            },
+          }),
+        };
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saves += 1;
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordAntigravity({
+          capturedAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+          snapshot: antigravitySnapshot(30, 50),
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(saved?.antigravity?.accounts[accountKey]).toHaveLength(2);
+    expect(saved?.antigravity?.unscoped).toEqual([]);
+
+    await expect(
+      Effect.runPromise(
+        coordinator.recordAntigravity({
+          capturedAt,
+          snapshot: usageSnapshot({
+            extraRateWindows: [
+              {
+                id: "antigravity-quota-summary-third-party-session",
+                title: "Claude/GPT 5-hour",
+                window: { usedPercent: 90, windowMinutes: 300 },
+              },
+            ],
+          }),
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(loads).toBe(1);
+    expect(saves).toBe(1);
+  });
+
+  it("uses Swift Unicode-scalar ordering to break sticky Antigravity owner ties", async () => {
+    const history = new PlanUtilizationSeriesHistory({
+      name: "session",
+      windowMinutes: 300,
+      entries: [sample(10).entry],
+    });
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        antigravity: new PlanUtilizationHistoryBuckets({
+          accounts: { Å: [history], Z: [history] },
+        }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await Effect.runPromise(
+      coordinator.recordAntigravity({
+        capturedAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+        snapshot: antigravitySnapshot(30, 50),
+      }),
+    );
+    expect(saved?.antigravity?.accounts.Z).toHaveLength(2);
+    expect(saved?.antigravity?.accounts.Å).toEqual([history]);
   });
 
   it("removes only the requested provider and persists the new namespace", async () => {

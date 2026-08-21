@@ -6,7 +6,7 @@ import type { InfrastructureError } from "./services.ts";
 export interface RecordFirstPartyPlanUtilizationInput {
   readonly coordinator: Pick<
     PlanUtilizationHistoryCoordinator,
-    "recordClaudeIdentity" | "recordCodex" | "recordGenericSessionEquivalent"
+    "recordAntigravity" | "recordClaudeIdentity" | "recordCodex" | "recordGenericSessionEquivalent"
   >;
   readonly providerId: ProviderId;
   readonly snapshot: UsageSnapshot;
@@ -28,6 +28,11 @@ export const recordFirstPartyPlanUtilization = (
     });
   if (input.providerId === "claude")
     return input.coordinator.recordClaudeIdentity({
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+  if (input.providerId === "antigravity")
+    return input.coordinator.recordAntigravity({
       snapshot: input.snapshot,
       capturedAt: input.capturedAt,
     });

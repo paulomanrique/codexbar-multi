@@ -18,6 +18,7 @@ describe("first-party plan-utilization recording policy", () => {
       Effect.runPromise(
         recordFirstPartyPlanUtilization({
           coordinator: {
+            recordAntigravity: () => Effect.succeed(false),
             recordClaudeIdentity: () => Effect.succeed(false),
             recordCodex: (input) =>
               Effect.sync(() => {
@@ -41,6 +42,7 @@ describe("first-party plan-utilization recording policy", () => {
       Effect.runPromise(
         recordFirstPartyPlanUtilization({
           coordinator: {
+            recordAntigravity: () => Effect.succeed(false),
             recordClaudeIdentity: () => Effect.succeed(false),
             recordCodex: () => Effect.succeed(false),
             recordGenericSessionEquivalent: (input) =>
@@ -64,6 +66,7 @@ describe("first-party plan-utilization recording policy", () => {
       Effect.runPromise(
         recordFirstPartyPlanUtilization({
           coordinator: {
+            recordAntigravity: () => Effect.succeed(false),
             recordClaudeIdentity: (input) =>
               Effect.sync(() => {
                 calls.push(input);
@@ -84,6 +87,11 @@ describe("first-party plan-utilization recording policy", () => {
   it("skips opt-in and still-unported dedicated history providers", async () => {
     let calls = 0;
     const coordinator = {
+      recordAntigravity: () =>
+        Effect.sync(() => {
+          calls += 1;
+          return true;
+        }),
       recordClaudeIdentity: () =>
         Effect.sync(() => {
           calls += 1;
@@ -100,7 +108,7 @@ describe("first-party plan-utilization recording policy", () => {
           return true;
         }),
     };
-    for (const providerId of ["zai", "antigravity"] as const) {
+    for (const providerId of ["zai"] as const) {
       await expect(
         Effect.runPromise(
           recordFirstPartyPlanUtilization({ coordinator, providerId, snapshot, capturedAt }),
@@ -108,5 +116,29 @@ describe("first-party plan-utilization recording policy", () => {
       ).resolves.toBe(false);
     }
     expect(calls).toBe(0);
+  });
+
+  it("routes Antigravity to its dedicated family/account recording", async () => {
+    const calls: Array<{ snapshot: UsageSnapshot; capturedAt: Date }> = [];
+    await expect(
+      Effect.runPromise(
+        recordFirstPartyPlanUtilization({
+          coordinator: {
+            recordAntigravity: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return true;
+              }),
+            recordClaudeIdentity: () => Effect.succeed(false),
+            recordCodex: () => Effect.succeed(false),
+            recordGenericSessionEquivalent: () => Effect.succeed(false),
+          },
+          providerId: "antigravity",
+          snapshot,
+          capturedAt,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(calls).toEqual([{ snapshot, capturedAt }]);
   });
 });

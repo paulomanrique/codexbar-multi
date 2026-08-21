@@ -18,6 +18,7 @@ describe("desktop plan-utilization history", () => {
     await expect(
       recordDesktopPlanUtilization({
         coordinator: {
+          recordAntigravity: () => Effect.succeed(false),
           recordClaudeIdentity: () => Effect.succeed(false),
           recordCodex: () => Effect.succeed(false),
           recordGenericSessionEquivalent: (input) =>
@@ -39,6 +40,7 @@ describe("desktop plan-utilization history", () => {
     await expect(
       recordDesktopPlanUtilization({
         coordinator: {
+          recordAntigravity: () => Effect.succeed(false),
           recordClaudeIdentity: () => Effect.succeed(false),
           recordCodex: (input) =>
             Effect.sync(() => {
@@ -60,6 +62,7 @@ describe("desktop plan-utilization history", () => {
     await expect(
       recordDesktopPlanUtilization({
         coordinator: {
+          recordAntigravity: () => Effect.succeed(false),
           recordClaudeIdentity: (input) =>
             Effect.sync(() => {
               calls.push(input);
@@ -76,11 +79,17 @@ describe("desktop plan-utilization history", () => {
     expect(calls).toEqual([{ snapshot, capturedAt }]);
   });
 
-  it("does not admit opt-in or still-unported dedicated-history providers", async () => {
+  it("does not admit opt-in history providers", async () => {
+    let antigravityCalls = 0;
     let claudeCalls = 0;
     let codexCalls = 0;
     let genericCalls = 0;
     const coordinator = {
+      recordAntigravity: () =>
+        Effect.sync(() => {
+          antigravityCalls += 1;
+          return true;
+        }),
       recordClaudeIdentity: () =>
         Effect.sync(() => {
           claudeCalls += 1;
@@ -97,11 +106,12 @@ describe("desktop plan-utilization history", () => {
           return true;
         }),
     };
-    for (const providerId of ["zai", "antigravity"] as const) {
+    for (const providerId of ["zai"] as const) {
       await expect(
         recordDesktopPlanUtilization({ coordinator, providerId, snapshot, capturedAt }),
       ).resolves.toBe(false);
     }
+    expect(antigravityCalls).toBe(0);
     expect(claudeCalls).toBe(0);
     expect(codexCalls).toBe(0);
     expect(genericCalls).toBe(0);
@@ -111,6 +121,7 @@ describe("desktop plan-utilization history", () => {
     await expect(
       recordDesktopPlanUtilization({
         coordinator: {
+          recordAntigravity: () => Effect.succeed(false),
           recordClaudeIdentity: () => Effect.succeed(false),
           recordCodex: () => Effect.succeed(false),
           recordGenericSessionEquivalent: () =>
