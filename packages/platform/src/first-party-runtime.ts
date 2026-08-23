@@ -20,6 +20,7 @@ import type {
   FirstPartyProvider,
   ProviderAntigravityLocalSnapshot,
   ProviderBinaryResponse,
+  ProviderClaudeCliUsageResult,
   ProviderContext,
   ProviderDescriptor,
   ProviderGrokCliBillingResponse,
@@ -114,6 +115,10 @@ export interface FirstPartyLocalCapabilities {
   readonly fetchGrokCliBilling?: (
     providerId: ProviderId,
   ) => Effect.Effect<ProviderGrokCliBillingResponse, unknown>;
+  /** Claude-only bounded PTY usage text; no credential material crosses the boundary. */
+  readonly fetchClaudeCliUsage?: (
+    providerId: ProviderId,
+  ) => Effect.Effect<ProviderClaudeCliUsageResult, unknown>;
 }
 
 export interface FirstPartyProviderRuntimeOptions {
@@ -677,6 +682,27 @@ const localFor = (
       result.stderr.includes("\u0000")
     )
       throw failure("api-failure", "Grok CLI billing response is invalid or exceeds 1 MiB.");
+    return result;
+  },
+  fetchClaudeCliUsage: async () => {
+    if (local === undefined || local.fetchClaudeCliUsage === undefined)
+      throw failure("provider-unavailable", "Claude CLI usage is not configured by this host.");
+    if (providerId !== "claude")
+      throw failure("permission-denied", "Claude CLI usage is not declared for this provider.");
+    const result = await Effect.runPromise(local.fetchClaudeCliUsage(providerId), { signal });
+    if (
+      (result.exitCode !== undefined && !Number.isSafeInteger(result.exitCode)) ||
+      (result.signal !== undefined &&
+        (typeof result.signal !== "string" || result.signal.length > 128)) ||
+      typeof result.stdout !== "string" ||
+      typeof result.stderr !== "string" ||
+      typeof result.loggedIn !== "boolean" ||
+      new TextEncoder().encode(result.stdout).byteLength > maximumResponseBytes ||
+      new TextEncoder().encode(result.stderr).byteLength > maximumResponseBytes ||
+      result.stdout.includes("\u0000") ||
+      result.stderr.includes("\u0000")
+    )
+      throw failure("api-failure", "Claude CLI usage response is invalid or exceeds 1 MiB.");
     return result;
   },
 });

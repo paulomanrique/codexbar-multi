@@ -71,6 +71,12 @@ import {
   rollbackNodeLegacyImport,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
+import {
+  filterProvidersForClaudeBackgroundPolicy,
+  makeNodeClaudeCliLocalCapability,
+  recordClaudeCliUserInitiatedSuccess,
+} from "@codexbar/platform/node-claude-cli";
+import { makeDesktopNodePtyRunner } from "./node-pty-adapter.ts";
 import { selectedFirstPartyAccountFromConfig } from "@codexbar/platform";
 import { makeNodePlanUtilizationHistoryStore } from "@codexbar/platform";
 import {
@@ -253,9 +259,8 @@ const publishSessionQuotaNotification = (
  */
 const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise<void> => {
   await Promise.all(
-    overviewProviders()
-      .filter((provider) => provider.enabled)
-      .map(async (provider) => {
+    filterProvidersForClaudeBackgroundPolicy(overviewProviders(), "background").map(
+      async (provider) => {
         try {
           // Local Grok tokens are independent of the remote billing session;
           // retain that source even when the following web refresh fails.
@@ -286,7 +291,8 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
           // transport text here because it can contain sensitive context.
           if (signal.aborted) throw new Error("Adaptive refresh was cancelled.");
         }
-      }),
+      },
+    ),
   );
 };
 
@@ -418,6 +424,8 @@ void app
         return result.value;
       });
     const credentials = makeNativeCredentialStore();
+    const processRunner = makeNodeProcessRunner();
+    const baseLocal = makeNodeFirstPartyLocalCapabilities({ processRunner });
     providerRuntime = makeFirstPartyProviderRuntime({
       providers: FIRST_PARTY_PROVIDERS,
       settings: makeNodeDiscoveredProviderSettings(),
@@ -427,7 +435,14 @@ void app
         resolve: (providerId) =>
           Effect.sync(() => selectedFirstPartyAccountFromConfig(desktopConfig, providerId)),
       },
-      local: makeNodeFirstPartyLocalCapabilities(),
+      local: {
+        ...baseLocal,
+        fetchClaudeCliUsage: makeNodeClaudeCliLocalCapability({
+          processRunner,
+          ptyRunner: makeDesktopNodePtyRunner(),
+          userDataPath,
+        }),
+      },
       http: makeFetchHttpTransport(),
       clock: providerClock,
     });
@@ -708,6 +723,9 @@ void app
             Effect.provideService(CostUsageRepository, activePersistence().costs),
           ),
         );
+        if (request.provider === "claude" && outcome.strategyId === "claude.cli") {
+          recordClaudeCliUserInitiatedSuccess();
+        }
         publishSessionQuotaNotification(request.provider, outcome.snapshot);
         await recordDesktopPlanUtilization({
           coordinator: activePlanUtilizationHistory(),

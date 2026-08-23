@@ -14,7 +14,8 @@
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
-    "@napi-rs/keyring": "catalog:"
+    "@napi-rs/keyring": "catalog:",
+    "node-pty": "catalog:"
   },
   "devDependencies": {
     "@codexbar/contracts": "workspace:*",
@@ -53,7 +54,8 @@
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "node_modules/@napi-rs/**/*.node"
+      "node_modules/@napi-rs/**/*.node",
+      "node_modules/node-pty/prebuilds/**/*"
     ],
     "files": [
       "dist/**",

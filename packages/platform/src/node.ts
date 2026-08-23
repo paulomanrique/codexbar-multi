@@ -63,11 +63,13 @@ import {
 } from "./node-antigravity-local.ts";
 import { discoverNodeClaudeCredential } from "./node-claude-credential.ts";
 import { discoverNodeCodexCredential } from "./node-codex-credential.ts";
+import { terminateProcessTree } from "./node-process-terminator.ts";
 
 export * from "./node-persistence.ts";
 export * from "./node-antigravity-local.ts";
 export * from "./node-persistence-worker-client.ts";
 export * from "./first-party-runtime.ts";
+export * from "./node-process-terminator.ts";
 export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
 export * from "./node-codex-priority.ts";
@@ -416,18 +418,33 @@ const maximumLocalOutputBytes = 1024 * 1024;
  * Node process adapter used only at the platform boundary. It never invokes a
  * shell, bounds output, and terminates its child when the Effect is aborted.
  */
+export interface NodeProcessRunnerOptions {
+  readonly maximumOutputBytes?: number;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly platform?: NodeJS.Platform;
+  readonly terminateProcessTreeImpl?: (pid: number) => Promise<void>;
+}
+
+const abortError = (message = "Process execution was cancelled."): Error => {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+};
+
 export const makeNodeProcessRunner = (
-  options: {
-    readonly maximumOutputBytes?: number;
-    readonly environment?: Readonly<Record<string, string | undefined>>;
-  } = {},
+  options: NodeProcessRunnerOptions = {},
 ): ProcessRunnerService => {
   const maximumOutputBytes = options.maximumOutputBytes ?? maximumLocalOutputBytes;
   const environment = options.environment ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const terminator =
+    options.terminateProcessTreeImpl ??
+    ((pid: number) => terminateProcessTree(pid, { platform, environment }));
   return {
     run: (spec) =>
       Effect.tryPromise({
-        try: (signal) => runNodeProcess(spec, signal, maximumOutputBytes, environment),
+        try: (signal) =>
+          runNodeProcess(spec, signal, maximumOutputBytes, environment, platform, terminator),
         catch: (error) =>
           new InfrastructureError("run process", `Unable to run '${spec.command}'.`, error),
       }),
@@ -439,26 +456,48 @@ const runNodeProcess = (
   signal: AbortSignal,
   maximumOutputBytes: number,
   baseEnvironment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+  terminator: (pid: number) => Promise<void>,
 ): Promise<ProcessResult> =>
   new Promise((resolvePromise, rejectPromise) => {
-    let settled = false;
+    type Outcome = "running" | "killing" | "settled";
+    let outcome: Outcome = "running";
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
+    let child: ReturnType<typeof spawn> | undefined;
+    const abortHandler = (): void => {
+      void fail(abortError());
+    };
+    const settle = (callback: () => void): void => {
+      if (outcome === "settled") return;
+      outcome = "settled";
       if (timeout !== undefined) clearTimeout(timeout);
-      signal.removeEventListener("abort", abort);
+      signal.removeEventListener("abort", abortHandler);
       callback();
     };
-    const abort = () => {
-      child.kill("SIGKILL");
-      finish(() => rejectPromise(new Error("Process execution was cancelled.")));
+    const killTree = async (): Promise<void> => {
+      if (child?.pid !== undefined) await terminator(child.pid);
+      else child?.kill("SIGKILL");
+    };
+    const fail = async (error: Error): Promise<void> => {
+      if (outcome !== "running") return;
+      outcome = "killing";
+      if (timeout !== undefined) clearTimeout(timeout);
+      signal.removeEventListener("abort", abortHandler);
+      try {
+        await killTree();
+      } catch {
+        try {
+          child?.kill("SIGKILL");
+        } catch {
+          // Termination already attempted.
+        }
+      }
+      settle(() => rejectPromise(error));
     };
     if (signal.aborted) {
-      rejectPromise(new Error("Process execution was cancelled."));
+      rejectPromise(abortError());
       return;
     }
-    let child: ReturnType<typeof spawn>;
     try {
       child = spawn(spec.command, [...(spec.args ?? [])], {
         cwd: spec.cwd,
@@ -470,6 +509,8 @@ const runNodeProcess = (
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        // POSIX process-group kill (`-pid`) requires the child to be a leader.
+        ...(platform === "win32" ? {} : { detached: true }),
       });
     } catch (error) {
       rejectPromise(error);
@@ -481,33 +522,34 @@ const runNodeProcess = (
     const append = (target: Buffer[], value: Buffer) => {
       size += value.byteLength;
       if (size > maximumOutputBytes) {
-        child.kill("SIGKILL");
-        finish(() => rejectPromise(new Error("Process output exceeded 1 MiB.")));
+        void fail(new Error("Process output exceeded 1 MiB."));
         return;
       }
       target.push(value);
     };
     child.stdout?.on("data", (value: Buffer) => append(stdout, value));
     child.stderr?.on("data", (value: Buffer) => append(stderr, value));
-    child.once("error", (error) => finish(() => rejectPromise(error)));
-    child.once("close", (exitCode, exitSignal) =>
-      finish(() =>
+    child.once("error", (error) => {
+      void fail(error instanceof Error ? error : new Error(String(error)));
+    });
+    child.once("close", (exitCode, exitSignal) => {
+      if (outcome !== "running") return;
+      settle(() =>
         resolvePromise({
           exitCode: exitCode ?? undefined,
           signal: exitSignal ?? undefined,
           stdout: new Uint8Array(Buffer.concat(stdout)),
           stderr: new Uint8Array(Buffer.concat(stderr)),
         }),
-      ),
-    );
-    signal.addEventListener("abort", abort, { once: true });
+      );
+    });
+    signal.addEventListener("abort", abortHandler, { once: true });
     if (spec.stdin !== undefined) child.stdin?.end(spec.stdin);
     else child.stdin?.end();
     const timeoutMs = spec.timeoutMs;
     if (timeoutMs !== undefined) {
       timeout = setTimeout(() => {
-        child.kill("SIGKILL");
-        finish(() => rejectPromise(new Error(`Process timed out after ${timeoutMs}ms.`)));
+        void fail(new Error(`Process timed out after ${timeoutMs}ms.`));
       }, timeoutMs);
     }
   });

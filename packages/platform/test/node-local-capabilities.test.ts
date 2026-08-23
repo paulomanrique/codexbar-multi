@@ -311,6 +311,26 @@ describe("Node first-party local capabilities", () => {
     }
   });
 
+  it("awaits descendant-tree termination before a timeout rejection", async () => {
+    const order: string[] = [];
+    const runner = makeNodeProcessRunner({
+      terminateProcessTreeImpl: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        order.push("terminated");
+      },
+    });
+    await expect(
+      Effect.runPromise(
+        runner.run({
+          command: process.execPath,
+          args: ["-e", "setTimeout(() => {}, 10_000)"],
+          timeoutMs: 40,
+        }),
+      ),
+    ).rejects.toBeDefined();
+    expect(order).toEqual(["terminated"]);
+  });
+
   it("uses an explicitly sanitized base environment when requested by a host", async () => {
     const runner = makeNodeProcessRunner({
       environment: { CODEXBAR_SAFE_BASE: "visible", PROVIDER_SECRET: undefined },

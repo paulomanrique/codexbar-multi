@@ -13,6 +13,6 @@ export default defineConfig({
       formats: ["es"],
       fileName: (_format, entryName) => `${entryName}.js`,
     },
-    rollupOptions: { external: ["electron", /^node:/, /^@napi-rs\//] },
+    rollupOptions: { external: ["electron", "node-pty", /^node:/, /^@napi-rs\//] },
   },
 });

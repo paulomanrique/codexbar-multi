@@ -75,6 +75,15 @@ export interface ProviderAntigravityLocalSnapshot {
   readonly userStatusJson?: string;
 }
 
+/** Bounded Claude CLI PTY usage text plus non-secret status metadata. */
+export interface ProviderClaudeCliUsageResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly loggedIn: boolean;
+}
+
 /** Host-resolved account identity. Raw token material never crosses this boundary. */
 export interface ProviderSelectedAccount {
   readonly id: string;
@@ -105,6 +114,8 @@ export interface ProviderLocalCapabilities {
   readonly fetchGrokCredentials?: () => Promise<ProviderGrokCredentials | undefined>;
   /** Executes the fixed, non-interactive Grok billing RPC; no process surface is exposed. */
   readonly fetchGrokCliBilling?: () => Promise<ProviderGrokCliBillingResponse>;
+  /** Bounded Claude CLI PTY usage text; no credential material crosses the boundary. */
+  readonly fetchClaudeCliUsage?: () => Promise<ProviderClaudeCliUsageResult>;
 }
 
 /** Small, platform-neutral host surface used by first-party providers. */

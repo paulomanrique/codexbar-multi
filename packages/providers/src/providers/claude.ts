@@ -89,6 +89,185 @@ export const parseClaudeCLIUsage = (text: string, ctx: ProviderContext) => {
   }
 };
 
+const stripAnsi = (text: string): string => {
+  const escape = String.fromCharCode(27);
+  const bell = String.fromCharCode(7);
+  const withoutAnsi = text
+    .replace(new RegExp(`${escape}\\[[0-9;?]*[a-zA-Z]`, "gu"), "")
+    .replace(new RegExp(`${escape}\\][^${bell}]*${bell}`, "gu"), "");
+  return [...withoutAnsi]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127);
+    })
+    .join("");
+};
+
+const normalized = (text: string): string => text.toLowerCase().replace(/\s+/gu, "");
+
+const isUsageSectionLabel = (line: string): boolean => {
+  const value = line.trim().toLowerCase();
+  return value.startsWith("current session") || value.startsWith("current week");
+};
+
+const isSubscriptionNoticeOnly = (text: string): boolean => {
+  const n = normalized(text);
+  if (!n.includes("currentlyusingyoursubscription")) return false;
+  if (!n.includes("claudecodeusage")) return false;
+  const hasQuota =
+    n.includes("currentsession") ||
+    n.includes("currentweek") ||
+    n.includes("%used") ||
+    n.includes("%left") ||
+    n.includes("%remaining") ||
+    n.includes("%available");
+  return !hasQuota;
+};
+
+const extractPercentLeft = (lines: readonly string[], label: string): number | undefined => {
+  const labelLower = label.toLowerCase();
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (!line.toLowerCase().includes(labelLower)) continue;
+    const end = Math.min(lines.length, i + 12);
+    for (let index = i + 1; index < end; index += 1) {
+      const candidate = lines[index] ?? "";
+      const candidateLower = candidate.toLowerCase();
+      if (isUsageSectionLabel(candidate)) break;
+      const m = candidate.match(/([0-9]{1,3}(?:\.[0-9]+)?)\s*%/u);
+      if (!m) continue;
+      const raw = Number(m[1]);
+      if (!Number.isFinite(raw)) continue;
+      const clamped = Math.max(0, Math.min(100, raw));
+      if (candidateLower.includes("used")) return Math.round(100 - clamped);
+      if (
+        candidateLower.includes("left") ||
+        candidateLower.includes("remaining") ||
+        candidateLower.includes("available")
+      )
+        return Math.round(clamped);
+    }
+  }
+  return undefined;
+};
+
+const extractReset = (lines: readonly string[], label: string): string | undefined => {
+  const labelLower = label.toLowerCase();
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (!line.toLowerCase().includes(labelLower)) continue;
+    const end = Math.min(lines.length, i + 14);
+    for (let index = i + 1; index < end; index += 1) {
+      const candidate = lines[index] ?? "";
+      if (isUsageSectionLabel(candidate)) break;
+      const m = candidate.match(/\bresets?\b[^\r\n]*/iu);
+      if (!m) continue;
+      const raw = m[0].trim();
+      let cleaned = raw.replace(/([A-Za-z]{3}\s+\d{1,2})\s+t\s+(\d)/u, "$1 at $2").trim();
+      // Keep balanced parentheses like Swift's cleanResetLine
+      const open = (cleaned.match(/\(/gu) ?? []).length;
+      const close = (cleaned.match(/\)/gu) ?? []).length;
+      if (open > close) cleaned += ")";
+      return cleaned;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Minimal exact-label Claude TUI parser ported from Swift ClaudeStatusProbe.parse.
+ * Handles ANSI/control stripping; Current session and Current week (all models);
+ * percent left -> used; resets where safely parseable; dataConfidence percentOnly.
+ * Subscription/unavailable notices fail closed, never fabricate zero/percent/identity.
+ */
+export const parseClaudeCliUsagePanel = (text: string, ctx: ProviderContext) => {
+  if (text.includes("\u0000")) throw ctx.fail.parseFailure("Claude CLI output contains NUL.");
+  if (text.length > 1024 * 1024 || new TextEncoder().encode(text).byteLength > 1024 * 1024)
+    throw ctx.fail.parseFailure("Claude CLI output exceeds 1 MiB.");
+  const clean = stripAnsi(text);
+  if (clean.trim() === "")
+    throw ctx.fail.parseFailure("Claude CLI /usage is still loading usage data.");
+  if (isSubscriptionNoticeOnly(clean)) {
+    throw ctx.fail.providerUnavailable(
+      "Claude CLI /usage returned a subscription notice without session quota data. Local cost and token history remain available.",
+    );
+  }
+  if (normalized(clean).includes("failedtoloadusagedata")) {
+    throw ctx.fail.parseFailure(
+      "Claude CLI could not load usage data. Open the CLI and retry `/usage`.",
+    );
+  }
+
+  // Trim to latest usage panel if Settings: ... Usage present, mirroring Swift
+  let panelText = clean;
+  const lowerClean = clean.toLowerCase();
+  const settingsIdx = lowerClean.lastIndexOf("settings:");
+  if (settingsIdx >= 0) {
+    const tail = clean.slice(settingsIdx);
+    if (tail.toLowerCase().includes("usage")) {
+      const hasPercent = tail.includes("%");
+      const hasUsageWords = /used|left|remaining|available/iu.test(tail);
+      const hasLoading = tail.toLowerCase().includes("loading usage");
+      if ((hasPercent && hasUsageWords) || hasLoading) panelText = tail;
+    }
+  }
+  if (
+    normalized(panelText).includes("loadingusage") &&
+    !panelText.toLowerCase().includes("current session")
+  ) {
+    throw ctx.fail.parseFailure("Claude CLI /usage is still loading usage data.");
+  }
+
+  const lines = panelText.split(/\r?\n/u);
+  const sessionLeft = extractPercentLeft(lines, "Current session");
+  const weeklyLeft = extractPercentLeft(lines, "Current week (all models)");
+
+  if (sessionLeft === undefined) {
+    throw ctx.fail.parseFailure("Missing Current session.");
+  }
+  const sessionUsed = Math.max(0, Math.min(100, 100 - sessionLeft));
+  const weeklyUsed =
+    weeklyLeft === undefined ? undefined : Math.max(0, Math.min(100, 100 - weeklyLeft));
+
+  const sessionReset = extractReset(lines, "Current session");
+  const weeklyReset =
+    weeklyLeft === undefined ? undefined : extractReset(lines, "Current week (all models)");
+
+  const resetsAt = (value: string | undefined): string | undefined => {
+    if (value === undefined) return undefined;
+    // Only safely parse ISO timestamps; other resets stay as resetDescription only.
+    if (/^\d{4}-\d{2}-\d{2}T/u.test(value)) {
+      try {
+        return ctx.date.iso(value);
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  };
+
+  return {
+    primary: {
+      usedPercent: clampPercent(sessionUsed),
+      windowMinutes: 300,
+      ...(resetsAt(sessionReset) ? { resetsAt: resetsAt(sessionReset) } : {}),
+      ...(sessionReset ? { resetDescription: sessionReset } : {}),
+    },
+    ...(weeklyUsed === undefined
+      ? {}
+      : {
+          secondary: {
+            usedPercent: clampPercent(weeklyUsed),
+            windowMinutes: 10_080,
+            ...(resetsAt(weeklyReset) ? { resetsAt: resetsAt(weeklyReset) } : {}),
+            ...(weeklyReset ? { resetDescription: weeklyReset } : {}),
+          },
+        }),
+    identity: { providerId: "claude" as const },
+    dataConfidence: "percentOnly" as const,
+  };
+};
+
 const oauthUsage = async (ctx: ProviderContext, token: string) => {
   const response = await ctx.http.getJSON("https://api.anthropic.com/api/oauth/usage", {
     headers: {
@@ -161,15 +340,71 @@ const definition: ProviderDefinition = {
     );
   },
 };
-const strategy: ProviderStrategy = {
+
+const claudeOAuthFallbackOn = [
+  "missing-credential",
+  "authentication-expired",
+  "provider-unavailable",
+  "parse-failure",
+  "network-failure",
+  "permission-denied",
+  "api-failure",
+] as const;
+
+const oauthStrategy: ProviderStrategy = {
   id: "claude.oauth",
-  kind: "api",
-  fetchUsage: definition.fetchUsage,
+  kind: "oauth",
+  fallbackOn: [...claudeOAuthFallbackOn],
+  fetchUsage: async (ctx) => {
+    const token = ctx.settings.getSecret("CLAUDE_OAUTH_ACCESS_TOKEN")?.trim();
+    if (!token)
+      throw ctx.fail.missingCredential(
+        "Claude OAuth access token is not configured. Run `claude login`.",
+      );
+    return oauthUsage(ctx, token);
+  },
 };
+
+const cliStrategy: ProviderStrategy = {
+  id: "claude.cli",
+  kind: "cli",
+  fallbackOn: [...claudeOAuthFallbackOn],
+  fetchUsage: async (ctx) => {
+    // Prefer the named PTY capability when available; keep the JSON secret as a test seam.
+    if (ctx.local?.fetchClaudeCliUsage !== undefined) {
+      const result = await ctx.local.fetchClaudeCliUsage();
+      if (!result.loggedIn)
+        throw ctx.fail.missingCredential("Claude CLI is not logged in. Run `claude login`.");
+      const parsed = parseClaudeCliUsagePanel(result.stdout, ctx);
+      return parsed;
+    }
+    const cliUsage = ctx.settings.getSecret("CLAUDE_CLI_USAGE_JSON")?.trim();
+    if (cliUsage) return parseClaudeCLIUsage(cliUsage, ctx);
+    throw ctx.fail.missingCredential("Claude CLI usage is not available. Run `claude login`.");
+  },
+};
+
+const webStrategy: ProviderStrategy = {
+  id: "claude.web",
+  kind: "web",
+  fetchUsage: async (ctx) => {
+    const cookie =
+      ctx.settings.getSecret("CLAUDE_COOKIE_HEADER")?.trim() ||
+      (await ctx.browser.cookieHeader("claude.ai"));
+    if (!cookie) throw ctx.fail.missingCredential("Claude web session is not configured.");
+    return webUsage(ctx, cookie);
+  },
+};
+
 export const descriptor: ProviderDescriptor = {
   ...definition,
   status: "partial",
   isPrimaryProvider: true,
-  strategy,
+  strategies: [oauthStrategy, cliStrategy, webStrategy],
+  strategy: oauthStrategy,
 };
-export const claude: FirstPartyProvider = { ...strategy, descriptor };
+export const claude: FirstPartyProvider = {
+  ...oauthStrategy,
+  descriptor,
+  strategies: [oauthStrategy, cliStrategy, webStrategy],
+};

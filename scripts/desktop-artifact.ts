@@ -107,3 +107,37 @@ export const expectedDesktopArtifactName = (
 
 export const desktopArtifactOutputDirectoryName = (target: DesktopArtifactTarget): string =>
   `${target.platform}-${target.arch}`;
+
+const nodePtyPrebuildDirectory = (target: DesktopArtifactTarget): string =>
+  `prebuilds/${target.platform}-${target.arch}`;
+
+/** Host native addon: Windows ConPTY uses `conpty.node`; Unix uses `pty.node`. */
+export const nodePtyNativeModuleSubpath = (target: DesktopArtifactTarget): string =>
+  `${nodePtyPrebuildDirectory(target)}/${target.platform === "win32" ? "conpty.node" : "pty.node"}`;
+
+/** @deprecated Use `nodePtyNativeModuleSubpath`. Kept as the native-module path alias. */
+export const nodePtyPrebuildSubpath = nodePtyNativeModuleSubpath;
+
+/**
+ * Companion files required beside the native addon, relative to the node-pty
+ * package root. Windows DLLs live under nested `conpty/`; macOS needs spawn-helper.
+ */
+export const nodePtyCompanionSubpaths = (target: DesktopArtifactTarget): readonly string[] => {
+  const directory = nodePtyPrebuildDirectory(target);
+  if (target.platform === "win32")
+    return [`${directory}/conpty/conpty.dll`, `${directory}/conpty/OpenConsole.exe`];
+  if (target.platform === "darwin") return [`${directory}/spawn-helper`];
+  return [];
+};
+
+export const nodePtyAsarUnpackGlob = "node_modules/node-pty/prebuilds/**/*";
+
+export const forbiddenCliPtyGraphNeedles = [
+  "node-pty",
+  "makeNodePtyRunner",
+  "makeNodeClaudeCliLocalCapability",
+  "node-claude-cli",
+] as const;
+
+export const collectPtyGraphHits = (source: string): readonly string[] =>
+  forbiddenCliPtyGraphNeedles.filter((needle) => source.includes(needle));

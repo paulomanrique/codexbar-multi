@@ -10,6 +10,8 @@ import {
   desktopArtifactOutputDirectoryName,
   expectedDesktopArtifactName,
   getHostDesktopTarget,
+  nodePtyCompanionSubpaths,
+  nodePtyNativeModuleSubpath,
 } from "./desktop-artifact.ts";
 import { detectMusl, selectKeyringPackage } from "./cli-sea.ts";
 
@@ -114,10 +116,34 @@ await existingDirectory(unpacked, "Unpacked desktop artifact");
 await regularFile(executable, "Unpacked Electron executable");
 await access(join(unpacked, "resources", "app.asar"));
 await regularFile(nativeKeyringPath, "Host-native unpacked credential module");
+const nodePtyPackageRoot = join(unpackedResources, "node_modules", "node-pty");
+const nodePtyNativePath = join(nodePtyPackageRoot, nodePtyNativeModuleSubpath(target));
+await regularFile(nodePtyNativePath, "Host-native unpacked PTY module");
+for (const companion of nodePtyCompanionSubpaths(target)) {
+  await regularFile(
+    join(nodePtyPackageRoot, companion),
+    `Host-native unpacked PTY companion ${companion}`,
+  );
+}
 
 // This asks the Electron binary for its version without starting our main
 // process. It therefore cannot open a provider, a credential store, or the
 // application database.
 run(executable, ["--version"], unpacked, { ...process.env, ELECTRON_RUN_AS_NODE: "1" });
+// Load the host-native PTY addon through Electron's Node without starting
+// providers or touching credentials. spawn is not invoked. Windows
+// conpty.node / conpty.dll load is an orchestrator gate on a Windows host.
+if (target.platform !== "win32") {
+  run(
+    executable,
+    [
+      "-e",
+      "process.dlopen({ exports: {} }, process.argv[1]); process.stdout.write('pty-native-ok');",
+      nodePtyNativePath,
+    ],
+    unpacked,
+    { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  );
+}
 
 console.log(`Built host-native desktop artifact: ${resolve(artifact)}`);

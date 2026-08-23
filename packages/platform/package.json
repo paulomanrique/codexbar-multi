@@ -4,7 +4,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node.ts"
+    "./node": "./src/node.ts",
+    "./node-claude-cli": "./src/node-claude-cli.ts",
+    "./node-pty": "./src/node-pty.ts"
   },
   "scripts": {
     "typecheck": "tsgo --project tsconfig.json",
