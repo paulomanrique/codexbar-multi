@@ -544,6 +544,14 @@ const runNodeProcess = (
       );
     });
     signal.addEventListener("abort", abortHandler, { once: true });
+    // `spawn()` is synchronous and can take longer than a short cancellation
+    // deadline on a loaded Windows host. AbortSignal does not replay an abort
+    // event to listeners registered after it fired, so close that window
+    // explicitly before handing any input to the child.
+    if (signal.aborted) {
+      abortHandler();
+      return;
+    }
     if (spec.stdin !== undefined) child.stdin?.end(spec.stdin);
     else child.stdin?.end();
     const timeoutMs = spec.timeoutMs;

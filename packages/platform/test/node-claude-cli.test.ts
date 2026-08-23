@@ -1,6 +1,6 @@
 import { access, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { ProcessRunnerService } from "@codexbar/core";
@@ -314,7 +314,7 @@ describe("Node Claude CLI probe", () => {
         CLAUDE_CONFIG_DIR: claudeRoot,
         HOME: claudeRoot,
       });
-      expect(removed.map((path) => path.split("/").at(-1))).toEqual(["probe-session.jsonl"]);
+      expect(removed.map((path) => basename(path))).toEqual(["probe-session.jsonl"]);
       await expect(access(join(projectDir, "keep.txt"))).resolves.toBeUndefined();
       await expect(access(join(unrelated, "user-session.jsonl"))).resolves.toBeUndefined();
       expect((await lstat(join(projectDir, "linked.jsonl"))).isSymbolicLink()).toBe(true);
