@@ -19,6 +19,10 @@ export interface DesktopAdaptiveRefreshHost {
   readonly signals: () => DesktopAdaptiveRefreshSignals;
 }
 
+export interface DesktopAdaptiveRefreshOptions {
+  readonly immediate?: boolean;
+}
+
 /**
  * Desktop composition around the portable adaptive policy. It owns only timer
  * generations and cancellation; provider execution, persistence, and secrets
@@ -29,9 +33,14 @@ export class DesktopAdaptiveRefreshController {
   #lastMenuOpenAt: Date | null = null;
   #controller: AbortController | undefined;
   #running: Promise<void> | undefined;
+  readonly #immediate: boolean;
+  #generation = 0;
+  #initialRefreshDone = false;
+  #initialRefreshInFlight = false;
 
-  constructor(host: DesktopAdaptiveRefreshHost) {
+  constructor(host: DesktopAdaptiveRefreshHost, options?: DesktopAdaptiveRefreshOptions) {
     this.#host = host;
+    this.#immediate = options?.immediate ?? false;
   }
 
   start(): void {
@@ -49,6 +58,7 @@ export class DesktopAdaptiveRefreshController {
     if (!Number.isFinite(at.getTime())) return;
     this.#lastMenuOpenAt = at;
     if (this.#running === undefined) return;
+    if (this.#initialRefreshInFlight) return;
     this.#controller?.abort();
     this.#startGeneration();
   }
@@ -69,7 +79,14 @@ export class DesktopAdaptiveRefreshController {
   #startGeneration(): void {
     const controller = new AbortController();
     this.#controller = controller;
-    const running = this.#run(controller);
+    this.#generation += 1;
+    const generation = this.#generation;
+    const shouldDoImmediate = this.#immediate && !this.#initialRefreshDone;
+    if (shouldDoImmediate) {
+      this.#initialRefreshDone = true;
+      this.#initialRefreshInFlight = true;
+    }
+    const running = this.#run(controller, generation, shouldDoImmediate);
     this.#running = running;
     void running.finally(() => {
       // A superseded generation must not clear the controller owned by its
@@ -80,8 +97,30 @@ export class DesktopAdaptiveRefreshController {
     });
   }
 
-  async #run(controller: AbortController): Promise<void> {
+  async #run(
+    controller: AbortController,
+    generation: number,
+    shouldDoImmediate: boolean,
+  ): Promise<void> {
+    if (shouldDoImmediate) {
+      try {
+        await this.#host.refresh(controller.signal);
+      } catch {
+        // Provider-specific errors are intentionally handled by the refresh
+        // path. The timer stores/logs neither error text nor provider data.
+        if (controller.signal.aborted) {
+          this.#initialRefreshInFlight = false;
+          return;
+        }
+      } finally {
+        this.#initialRefreshInFlight = false;
+      }
+      if (controller.signal.aborted) return;
+      if (generation !== this.#generation) return;
+    }
+
     while (!controller.signal.aborted) {
+      if (generation !== this.#generation) return;
       const decision = this.currentDecision();
       try {
         await this.#host.sleep(decision.delayMs, controller.signal);
@@ -89,6 +128,7 @@ export class DesktopAdaptiveRefreshController {
         return;
       }
       if (controller.signal.aborted) return;
+      if (generation !== this.#generation) return;
       try {
         await this.#host.refresh(controller.signal);
       } catch {
@@ -96,6 +136,7 @@ export class DesktopAdaptiveRefreshController {
         // path. The timer stores/logs neither error text nor provider data.
         if (controller.signal.aborted) return;
       }
+      if (generation !== this.#generation) return;
     }
   }
 }

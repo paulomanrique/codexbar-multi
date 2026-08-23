@@ -497,30 +497,33 @@ void app
       desktopConfig = makeDefaultCodexBarConfig();
       await Effect.runPromise(configRepository.save(desktopConfig));
     }
-    adaptiveRefresh = new DesktopAdaptiveRefreshController({
-      now: () => new Date(),
-      sleep: (milliseconds, signal) =>
-        new Promise<void>((resolve, reject) => {
-          const cancel = () => {
-            clearTimeout(timer);
-            reject(new Error("Adaptive refresh was cancelled."));
-          };
-          const timer = setTimeout(() => {
-            signal.removeEventListener("abort", cancel);
-            resolve();
-          }, milliseconds);
-          signal.addEventListener("abort", cancel, { once: true });
+    adaptiveRefresh = new DesktopAdaptiveRefreshController(
+      {
+        now: () => new Date(),
+        sleep: (milliseconds, signal) =>
+          new Promise<void>((resolve, reject) => {
+            const cancel = () => {
+              clearTimeout(timer);
+              reject(new Error("Adaptive refresh was cancelled."));
+            };
+            const timer = setTimeout(() => {
+              signal.removeEventListener("abort", cancel);
+              resolve();
+            }, milliseconds);
+            signal.addEventListener("abort", cancel, { once: true });
+          }),
+        refresh: refreshEnabledProvidersInBackground,
+        // Electron does not expose the OS low-power-mode state or thermal
+        // pressure consistently across all three targets. Keep both neutral
+        // until a dedicated platform adapter can supply the real semantics;
+        // being on battery alone is not equivalent to low-power mode.
+        signals: () => ({
+          lowPowerModeEnabled: false,
+          thermalPressure: "nominal",
         }),
-      refresh: refreshEnabledProvidersInBackground,
-      // Electron does not expose the OS low-power-mode state or thermal
-      // pressure consistently across all three targets. Keep both neutral
-      // until a dedicated platform adapter can supply the real semantics;
-      // being on battery alone is not equivalent to low-power mode.
-      signals: () => ({
-        lowPowerModeEnabled: false,
-        thermalPressure: "nominal",
-      }),
-    });
+      },
+      { immediate: true },
+    );
     adaptiveRefresh.start();
     claudeSwap = new DesktopClaudeSwapController({
       config: () => desktopConfig,
