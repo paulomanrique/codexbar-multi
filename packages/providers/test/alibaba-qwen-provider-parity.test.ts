@@ -22,6 +22,7 @@ const context = (
     readonly settings?: Record<string, string>;
     readonly cookie?: string;
     readonly requests?: Request[];
+    readonly sleep?: (milliseconds: number) => Promise<void>;
   } = {},
 ): ProviderContext => {
   const request = async (
@@ -60,6 +61,7 @@ const context = (
       unixSeconds: (value) => new Date(value * 1_000).toISOString(),
       unixMillis: (value) => new Date(value).toISOString(),
       nextDailyReset: () => "2026-08-21T00:00:00.000Z",
+      ...(options.sleep ? { sleep: options.sleep } : {}),
     },
     format: {
       number: (value, formatOptions) =>
@@ -209,6 +211,71 @@ describe("Alibaba and Qwen Cloud Swift parity", () => {
       },
       identity: { loginMethod: "Pro" },
     });
+  });
+
+  it("retries an empty Personal Success envelope before publishing usage", async () => {
+    let usageCalls = 0;
+    const sleeps: number[] = [];
+    const raw = await alibabatokenplan.fetchUsage(
+      context(
+        (request) => {
+          if (request.method === "GET") return { status: 200, bodyText: "<html></html>" };
+          const body = decodeURIComponent(String(request.options?.body));
+          if (body.includes('"Api":"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage"')) {
+            usageCalls += 1;
+            return usageCalls === 1
+              ? response({ code: "SUCCESS", successResponse: true, data: {} })
+              : response({ data: { per5HourPercentage: 0.25 } });
+          }
+          return response({});
+        },
+        {
+          settings: {
+            ALIBABA_TOKEN_PLAN_REGION: "cn-personal",
+            ALIBABA_TOKEN_PLAN_COOKIE: "sid=fixture",
+          },
+          sleep: async (milliseconds) => {
+            sleeps.push(milliseconds);
+          },
+        },
+      ),
+    );
+    expect(usageCalls).toBe(2);
+    expect(sleeps).toEqual([400]);
+    expect(raw.primary).toMatchObject({ usedPercent: 25, windowMinutes: 300 });
+  });
+
+  it("classifies a persistently empty Personal Success envelope as transient", async () => {
+    let usageCalls = 0;
+    const sleeps: number[] = [];
+    await expect(
+      alibabatokenplan.fetchUsage(
+        context(
+          (request) => {
+            if (request.method === "GET") return { status: 200, bodyText: "<html></html>" };
+            const body = decodeURIComponent(String(request.options?.body));
+            if (body.includes('"Api":"zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage"')) {
+              usageCalls += 1;
+              return response({ code: "SUCCESS", successResponse: true, data: {} });
+            }
+            return response({});
+          },
+          {
+            settings: {
+              ALIBABA_TOKEN_PLAN_REGION: "cn-personal",
+              ALIBABA_TOKEN_PLAN_COOKIE: "sid=fixture",
+            },
+            sleep: async (milliseconds) => {
+              sleeps.push(milliseconds);
+            },
+          },
+        ),
+      ),
+    ).rejects.toThrow(
+      "provider-unavailable: Alibaba Token Plan usage is temporarily unavailable; it will refresh automatically.",
+    );
+    expect(usageCalls).toBe(3);
+    expect(sleeps).toEqual([400, 400]);
   });
 
   it("keeps the OneConsole token fallback compatible with lower-case and missing shells", async () => {

@@ -11,6 +11,7 @@ const plans: Record<string, readonly [string, number]> = {
   "individual-go": ["Go", 10],
   "individual-goat": ["GOAT", 70],
   "individual-pro": ["Pro", 30],
+  "individual-pro-v1": ["Pro", 80],
   "individual-max": ["Max", 150],
   "individual-ultra": ["Ultra", 300],
 };

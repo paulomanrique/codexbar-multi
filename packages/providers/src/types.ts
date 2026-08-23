@@ -149,6 +149,8 @@ export interface ProviderContext {
     unixSeconds(value: number): string;
     unixMillis(value: number): string;
     nextDailyReset(timeZone: string, hour: number): string;
+    /** Host-owned cancellable delay for bounded provider retry policies. */
+    sleep?(milliseconds: number): Promise<void>;
   };
   readonly format: {
     number(value: number, options?: Record<string, unknown>): string;

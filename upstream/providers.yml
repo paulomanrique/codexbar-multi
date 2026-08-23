@@ -234,7 +234,7 @@ providers:
       - packages/providers/test/alibaba-qwen-provider-parity.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 4933e2301
+    lastReviewedCommit: 961d7fd104488458c27d2989b8cbf75b6627f288
   - id: qwencloud
     swiftGlobs:
       - Sources/CodexBar/Providers/QwenCloud/**/*.swift
@@ -1064,7 +1064,7 @@ providers:
       - packages/providers/test/web-cookie-providers-e.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 5506a78a4754c3527ed00331d3bf47dbe69e454f
   - id: qoder
     swiftGlobs:
       - Sources/CodexBar/Providers/Qoder/**/*.swift

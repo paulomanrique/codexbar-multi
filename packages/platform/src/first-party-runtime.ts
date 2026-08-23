@@ -961,6 +961,8 @@ const executeProvider = (
           unixSeconds: (value) => new Date(value * 1_000).toISOString(),
           unixMillis: (value) => new Date(value).toISOString(),
           nextDailyReset: (timeZone, hour) => nextDailyReset(nowMillis, timeZone, hour),
+          sleep: (milliseconds) =>
+            Effect.runPromise(options.clock.sleep(milliseconds), { signal: operationSignal }),
         },
         format: {
           number: (value, formatOptions) =>

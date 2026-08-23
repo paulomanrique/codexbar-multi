@@ -8,6 +8,7 @@ import type {
 import { number, object, status, string } from "./_http.ts";
 
 type Region = "intl" | "cn" | "intl-personal" | "cn-personal";
+class PersonalUsageWindowsUnavailable extends Error {}
 type Json = Record<string, unknown>;
 
 const browserUA =
@@ -168,11 +169,10 @@ const personalSnapshot = (
   if (!root) throw ctx.fail.parseFailure("Alibaba Token Plan response must be an object.");
   classifyPayload(ctx, root);
   const usage = findOneConsoleObject(usageRoot, ["per5HourPercentage", "per1WeekPercentage"]);
-  if (!usage) throw ctx.fail.parseFailure("Alibaba Token Plan is missing Personal usage windows.");
+  if (!usage) throw new PersonalUsageWindowsUnavailable();
   const fiveHour = percentPoints(usage.per5HourPercentage);
   const weekly = percentPoints(usage.per1WeekPercentage);
-  if (fiveHour === undefined && weekly === undefined)
-    throw ctx.fail.parseFailure("Alibaba Token Plan is missing Personal usage windows.");
+  if (fiveHour === undefined && weekly === undefined) throw new PersonalUsageWindowsUnavailable();
   const plan = planName(expandOneConsole(subscriptionResponse));
   const totals = quotaTotals(expandOneConsole(quotaResponse), plan);
   return {
@@ -347,6 +347,22 @@ const personalRequest = async (
   return response.json as unknown;
 };
 
+const optionalPersonalRequest = async (
+  ctx: ProviderContext,
+  value: Region,
+  cookie: string,
+  secToken: string | undefined,
+  api: string,
+  data: Record<string, string>,
+): Promise<unknown> => {
+  try {
+    return await personalRequest(ctx, value, cookie, secToken, api, data);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    return {};
+  }
+};
+
 const definition: ProviderDefinition = {
   id: "alibabatokenplan",
   name: "Alibaba Token Plan",
@@ -395,16 +411,31 @@ const definition: ProviderDefinition = {
     const usageAPI = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
     const subscriptionAPI = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/subscription";
     const quotaAPI = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/quota-config";
-    const usage = await personalRequest(ctx, selected, cookie, secToken, usageAPI, {});
-    const subscription = await personalRequest(ctx, selected, cookie, secToken, subscriptionAPI, {
-      commodityCode: international(selected)
-        ? "sfm_tokenplansolo_public_intl"
-        : "sfm_tokenplansolo_public_cn",
-    }).catch(() => ({}));
-    const quota = await personalRequest(ctx, selected, cookie, secToken, quotaAPI, {}).catch(
-      () => ({}),
+    const subscription = await optionalPersonalRequest(
+      ctx,
+      selected,
+      cookie,
+      secToken,
+      subscriptionAPI,
+      {
+        commodityCode: international(selected)
+          ? "sfm_tokenplansolo_public_intl"
+          : "sfm_tokenplansolo_public_cn",
+      },
     );
-    return personalSnapshot(ctx, usage, subscription, quota);
+    const quota = await optionalPersonalRequest(ctx, selected, cookie, secToken, quotaAPI, {});
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await ctx.date.sleep?.(400);
+      const usage = await personalRequest(ctx, selected, cookie, secToken, usageAPI, {});
+      try {
+        return personalSnapshot(ctx, usage, subscription, quota);
+      } catch (error) {
+        if (!(error instanceof PersonalUsageWindowsUnavailable)) throw error;
+      }
+    }
+    throw ctx.fail.providerUnavailable(
+      "Alibaba Token Plan usage is temporarily unavailable; it will refresh automatically.",
+    );
   },
 };
 

@@ -91,6 +91,26 @@ describe("Swift-derived CommandCode, StepFun and LongCat parity", () => {
       identity: { loginMethod: "Pro · $10.00 of $30.00 · + $5.00 credits" },
     });
   });
+  it("maps the versioned CommandCode Pro plan to eighty dollars", async () => {
+    const result = await commandcode.fetchUsage(
+      ctx(
+        (request) =>
+          request.url.pathname.endsWith("credits")
+            ? reply({ credits: { monthlyCredits: 8.7784, purchasedCredits: 0 } })
+            : reply({
+                success: true,
+                data: {
+                  planId: "individual-pro-v1",
+                  status: "active",
+                  currentPeriodEnd: "2026-09-01T00:00:00Z",
+                },
+              }),
+        { COMMANDCODE_COOKIE: "session" },
+      ),
+    );
+    expect(result.identity).toEqual({ loginMethod: "Pro · $71.22 of $80.00" });
+    expect(result.tertiary).toMatchObject({ usedPercent: expect.closeTo(89.027, 3) });
+  });
   it("maps StepFun rolling rate windows and plan status", async () => {
     const result = await stepfun.fetchUsage(
       ctx(
