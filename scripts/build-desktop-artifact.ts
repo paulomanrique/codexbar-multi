@@ -115,6 +115,8 @@ await regularFile(artifact, "Desktop artifact");
 await existingDirectory(unpacked, "Unpacked desktop artifact");
 await regularFile(executable, "Unpacked Electron executable");
 await access(join(unpacked, "resources", "app.asar"));
+await regularFile(join(unpacked, "resources", "tray.png"), "Packaged tray PNG");
+await regularFile(join(unpacked, "resources", "tray.ico"), "Packaged tray ICO");
 await regularFile(nativeKeyringPath, "Host-native unpacked credential module");
 const nodePtyPackageRoot = join(unpackedResources, "node_modules", "node-pty");
 const nodePtyNativePath = join(nodePtyPackageRoot, nodePtyNativeModuleSubpath(target));

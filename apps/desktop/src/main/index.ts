@@ -125,6 +125,7 @@ import {
 } from "./provider-settings.js";
 import { DesktopLegacyImportController } from "./legacy-import.js";
 import { recordDesktopPlanUtilization } from "./plan-utilization-history.js";
+import { loadTrayIcon } from "./tray-icon.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -372,10 +373,13 @@ function createWindow(): BrowserWindow {
 }
 
 function trayImage() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><rect x="2" y="2" width="18" height="18" rx="5" fill="#111827"/><path d="M7 8h8M7 11h6M7 14h4" stroke="white" stroke-width="1.8" stroke-linecap="round"/></svg>`;
-  return nativeImage
-    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`)
-    .resize({ width: 18, height: 18 });
+  return loadTrayIcon({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    mainDirectory: currentDirectory,
+    createFromPath: (path) => nativeImage.createFromPath(path),
+  });
 }
 
 void app

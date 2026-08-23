@@ -95,6 +95,10 @@ test("declares a non-publishing desktop package with the fixed product identity"
   assert.equal(build.asar, true);
   assert.equal(build.forceCodeSigning, false);
   assert.equal(build.npmRebuild, false);
+  assert.deepEqual(build.extraResources, [
+    { from: "build/icon.png", to: "tray.png" },
+    { from: "build/icon.ico", to: "tray.ico" },
+  ]);
   assert.deepEqual(packageJson.dependencies, {
     "@napi-rs/keyring": "catalog:",
     "node-pty": "catalog:",

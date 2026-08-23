@@ -61,6 +61,16 @@
       "dist/**",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "tray.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "tray.ico"
+      }
+    ],
     "npmRebuild": false,
     "forceCodeSigning": false,
     "protocols": [
