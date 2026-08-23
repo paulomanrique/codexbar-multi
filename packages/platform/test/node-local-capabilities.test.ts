@@ -297,14 +297,16 @@ describe("Node first-party local capabilities", () => {
             command: process.execPath,
             args: [
               "-e",
-              `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x'), 150)`,
+              // This proves the descendant is terminated, not that a loaded
+              // Windows host can start taskkill.exe within a 150 ms SLA.
+              `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x'), 1000)`,
             ],
-            timeoutMs: 1_000,
+            timeoutMs: 2_000,
           }),
           { signal: AbortSignal.timeout(20) },
         ),
       ).rejects.toBeDefined();
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
       await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(root, { recursive: true, force: true });
