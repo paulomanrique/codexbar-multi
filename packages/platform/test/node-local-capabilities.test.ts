@@ -128,7 +128,7 @@ describe("Node first-party local capabilities", () => {
     const privateFiles = {
       read: (path: string) =>
         Effect.succeed(
-          path.endsWith("/grok/auth.json")
+          path.replaceAll("\\", "/").endsWith("/grok/auth.json")
             ? new TextEncoder().encode(
                 '{"https://auth.x.ai::client":{"key":"fixture-token","email":"ada@example.test"}}',
               )
@@ -138,10 +138,14 @@ describe("Node first-party local capabilities", () => {
     const local = makeNodeFirstPartyLocalCapabilities({
       environment: { GROK_HOME: "~/grok", GROK_CLI_PATH: "/usr/local/bin/grok" },
       homeDirectory: "/fixture/home",
+      platform: "linux",
       privateFiles,
     });
-    expect(nodeGrokAuthFilePath({ GROK_HOME: "~/grok" }, "/fixture/home")).toBe(
+    expect(nodeGrokAuthFilePath({ GROK_HOME: "~/grok" }, "/fixture/home", "linux")).toBe(
       "/fixture/home/grok/auth.json",
+    );
+    expect(nodeGrokAuthFilePath({ GROK_HOME: "~/grok" }, "C:\\Users\\fixture", "win32")).toBe(
+      "C:\\Users\\fixture\\grok\\auth.json",
     );
     await expect(Effect.runPromise(local.fetchGrokCredentials!("grok"))).resolves.toMatchObject({
       accessToken: "fixture-token",

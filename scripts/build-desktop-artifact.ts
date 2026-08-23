@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -25,6 +27,12 @@ const npmExecPath = process.env.npm_execpath;
 if (npmExecPath === undefined || npmExecPath.length === 0)
   throw new Error("build-desktop-artifact must be launched through pnpm.");
 
+// Give electron-builder's Node module collector a deterministic pinned pnpm.
+// The outer process is already running via corepack pnpm 11.10.0; the collector
+// otherwise finds a global pnpm (11.17.0 on the Windows gate) via `which` and
+// fails the packageManager pin without bypassing any version check.
+const pnpmShimDir = mkdtempSync(join(tmpdir(), "codexbar-pnpm-shim-"));
+
 const run = (program: string, arguments_: readonly string[], cwd = root, env?: NodeJS.ProcessEnv) =>
   execFileSync(program, arguments_, { cwd, env, stdio: "inherit" });
 
@@ -41,16 +49,45 @@ const existingDirectory = async (path: string, description: string): Promise<voi
 await rm(artifactDirectory, { recursive: true, force: true });
 await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
 
-run(process.execPath, [npmExecPath, "--filter", "@codexbar/desktop", "run", "build"]);
-run(process.execPath, [
-  npmExecPath,
-  "--filter",
-  "@codexbar/desktop",
-  "exec",
-  "electron-builder",
-  ...target.electronBuilderArgs,
-  `--config.directories.output=${artifactDirectory}`,
-]);
+try {
+  writeFileSync(
+    join(pnpmShimDir, "pnpm"),
+    `#!/bin/sh\nexec "${process.execPath}" "${npmExecPath}" "$@"\n`,
+  );
+  chmodSync(join(pnpmShimDir, "pnpm"), 0o700);
+  writeFileSync(
+    join(pnpmShimDir, "pnpm.cmd"),
+    `@echo off\r\n"${process.execPath}" "${npmExecPath}" %*\r\n`,
+  );
+  const shimEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    npm_execpath: npmExecPath,
+    PATH: `${pnpmShimDir}${delimiter}${process.env.PATH ?? ""}`,
+  };
+
+  run(
+    process.execPath,
+    [npmExecPath, "--filter", "@codexbar/desktop", "run", "build"],
+    root,
+    shimEnv,
+  );
+  run(
+    process.execPath,
+    [
+      npmExecPath,
+      "--filter",
+      "@codexbar/desktop",
+      "exec",
+      "electron-builder",
+      ...target.electronBuilderArgs,
+      `--config.directories.output=${artifactDirectory}`,
+    ],
+    root,
+    shimEnv,
+  );
+} finally {
+  rmSync(pnpmShimDir, { recursive: true, force: true });
+}
 
 const manifest = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8")) as {
   readonly version?: unknown;

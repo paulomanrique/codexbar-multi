@@ -7,7 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join, resolve, win32 } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import { Effect } from "effect";
 import {
   InfrastructureError,
@@ -359,7 +359,7 @@ export const resolveNodeLocalCostRoots = (
   homeDirectory: string,
   platform: NodeJS.Platform,
 ): Readonly<Record<"codex" | "claude", readonly string[]>> => {
-  const paths = platform === "win32" ? win32 : { join, resolve };
+  const paths = platform === "win32" ? win32 : posix;
   const expand = (value: string | undefined, fallback: string): string => {
     const trimmed = value?.trim();
     if (trimmed === undefined || trimmed.length === 0) return fallback;
@@ -390,7 +390,7 @@ const resolveNodeCodexHome = (
   homeDirectory: string,
   platform: NodeJS.Platform,
 ): string => {
-  const paths = platform === "win32" ? win32 : { join, resolve };
+  const paths = platform === "win32" ? win32 : posix;
   const configured = environment.CODEX_HOME?.trim();
   if (configured === undefined || configured.length === 0)
     return paths.join(homeDirectory, ".codex");

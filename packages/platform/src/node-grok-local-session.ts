@@ -1,6 +1,6 @@
 import { lstat, open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 
 export const GROK_LOCAL_SESSION_DEFAULT_LOOKBACK_DAYS = 30;
 export const GROK_LOCAL_SESSION_MAX_ENTRIES = 10_000;
@@ -106,7 +106,7 @@ export const resolveNodeGrokLocalSessionRoot = (
   homeDirectory: string,
   platform: NodeJS.Platform,
 ): string => {
-  const paths = platform === "win32" ? win32 : { join, resolve };
+  const paths = platform === "win32" ? win32 : posix;
   const configured = environment.GROK_HOME?.trim();
   const grokHome =
     configured === undefined || configured === ""
@@ -131,7 +131,7 @@ export const scanNodeGrokLocalSessions = async (
   const home = options.homeDirectory ?? homedir();
   const platform = options.platform ?? process.platform;
   const root = options.root ?? resolveNodeGrokLocalSessionRoot(environment, home, platform);
-  const paths = platform === "win32" ? win32 : { join };
+  const paths = platform === "win32" ? win32 : posix;
   const lookbackDays = nonnegativeInteger(
     options.lookbackDays ?? GROK_LOCAL_SESSION_DEFAULT_LOOKBACK_DAYS,
     "lookbackDays",

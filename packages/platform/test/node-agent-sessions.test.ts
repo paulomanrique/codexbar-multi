@@ -11,11 +11,11 @@ import {
 } from "../src/node-agent-sessions.ts";
 
 const now = Date.parse("2026-08-20T12:00:00.000Z");
-const home = "/fixture/home";
-const project = "/fixture/project";
-const piRoot = `${home}/.pi/agent/sessions`;
-const piProject = `${piRoot}/--fixture-project--`;
-const piFile = `${piProject}/session.jsonl`;
+const home = join("/", "fixture", "home");
+const project = join("/", "fixture", "project");
+const piRoot = join(home, ".pi", "agent", "sessions");
+const piProject = join(piRoot, "--fixture-project--");
+const piFile = join(piProject, "session.jsonl");
 
 const files: NodeAgentSessionFiles = {
   canonical: async (path) => path,
@@ -27,7 +27,7 @@ const files: NodeAgentSessionFiles = {
   readPrefix: async (path) =>
     path === piFile
       ? [
-          '{"type":"session","version":3,"id":"pi-fixture","timestamp":"2026-08-20T11:50:00Z","cwd":"/fixture/project"}',
+          `{"type":"session","version":3,"id":"pi-fixture","timestamp":"2026-08-20T11:50:00Z","cwd":${JSON.stringify(project)}}`,
           '{"type":"message","text":"not returned"}',
           "",
         ].join("\n")
@@ -85,10 +85,10 @@ describe("Node agent session scanner", () => {
 
   it("parses bounded Pi metadata and redacts control characters from titles", () => {
     const record = parsePiFamilySession(
-      '{"type":"session","version":3,"id":"pi-safe","timestamp":"2026-08-20T11:50:00Z","cwd":"/fixture/project"}\n',
+      `{"type":"session","version":3,"id":"pi-safe","timestamp":"2026-08-20T11:50:00Z","cwd":${JSON.stringify(project)}}\n`,
       '{"type":"session_info","name":"hello\\nworld\\u0000"}\n',
       "pi",
-      "/fixture/session.jsonl",
+      join("/", "fixture", "session.jsonl"),
       now + 1_000,
       now,
     );

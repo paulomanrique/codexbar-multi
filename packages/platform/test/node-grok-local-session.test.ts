@@ -66,6 +66,19 @@ describe("Node Grok local session scanner", () => {
     expect(
       resolveNodeGrokLocalSessionRoot({ GROK_HOME: " ~/grok-profile " }, "/home/fixture", "linux"),
     ).toBe("/home/fixture/grok-profile/sessions");
+    expect(
+      resolveNodeGrokLocalSessionRoot(
+        { GROK_HOME: " ~/grok-profile " },
+        "C:\\Users\\fixture",
+        "win32",
+      ),
+    ).toBe("C:\\Users\\fixture\\grok-profile\\sessions");
+    expect(resolveNodeGrokLocalSessionRoot({}, "/home/fixture", "linux")).toBe(
+      "/home/fixture/.grok/sessions",
+    );
+    expect(resolveNodeGrokLocalSessionRoot({}, "C:\\Users\\fixture", "win32")).toBe(
+      "C:\\Users\\fixture\\.grok\\sessions",
+    );
   });
 
   it("uses local-calendar days for the cutoff and rejects growth or a swapped source", async () => {

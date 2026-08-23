@@ -13,7 +13,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { Entry } from "@napi-rs/keyring";
 import { Effect } from "effect";
 import type { AppPaths } from "@codexbar/core";
@@ -520,12 +520,14 @@ const executableByCommand: Readonly<Record<ProviderLocalCommand, { readonly env:
 const grokHomeDirectory = (
   environment: Readonly<Record<string, string | undefined>>,
   home: string,
+  platform: NodeJS.Platform = process.platform,
 ): string => {
+  const paths = platform === "win32" ? win32 : posix;
   const configured = environment.GROK_HOME?.trim();
-  if (configured === undefined || configured === "") return join(home, ".grok");
+  if (configured === undefined || configured === "") return paths.join(home, ".grok");
   if (configured === "~") return home;
   if (configured.startsWith("~/") || configured.startsWith("~\\"))
-    return join(home, configured.slice(2));
+    return paths.join(home, configured.slice(2));
   return configured;
 };
 
@@ -533,7 +535,11 @@ const grokHomeDirectory = (
 export const nodeGrokAuthFilePath = (
   environment: Readonly<Record<string, string | undefined>>,
   home: string,
-): string => join(grokHomeDirectory(environment, home), "auth.json");
+  platform: NodeJS.Platform = process.platform,
+): string => {
+  const paths = platform === "win32" ? win32 : posix;
+  return paths.join(grokHomeDirectory(environment, home, platform), "auth.json");
+};
 
 const jetBrainsIDEPrefixes = [
   "IntelliJIdea",
@@ -754,7 +760,11 @@ export const makeNodeFirstPartyLocalCapabilities = (
           if (providerId !== "grok") throw new Error("Provider Grok OIDC is not allowlisted.");
           const content = await Effect.runPromise(
             privateFiles.read(
-              nodeGrokAuthFilePath(environment, options.homeDirectory ?? homedir()),
+              nodeGrokAuthFilePath(
+                environment,
+                options.homeDirectory ?? homedir(),
+                options.platform ?? process.platform,
+              ),
             ),
           );
           if (content === undefined) return undefined;
@@ -813,7 +823,7 @@ export const kiroStateDatabasePath = (
   home: string,
   platform: NodeJS.Platform,
 ): string => {
-  const paths = platform === "win32" ? win32 : { join };
+  const paths = platform === "win32" ? win32 : posix;
   const directory = (value: string | undefined): string | undefined => {
     const trimmed = value?.trim();
     if (trimmed === undefined || trimmed === "") return undefined;
