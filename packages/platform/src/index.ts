@@ -10,3 +10,4 @@ export * from "./node-grok-local-token-scan.ts";
 export * from "./node-grok-rpc.ts";
 export * from "./node-agent-sessions.ts";
 export * from "./claude-swap.ts";
+export * from "./node-claude-credential.ts";

@@ -15,8 +15,8 @@ import { serializeUsageSnapshot } from "@codexbar/contracts";
 import { FIRST_PARTY_PROVIDERS, PROVIDERS } from "@codexbar/providers";
 import {
   makeCredentialBrowserSessions,
-  makeEnvironmentProviderSettings,
   makeFetchHttpTransport,
+  makeNodeDiscoveredProviderSettings,
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
@@ -41,7 +41,6 @@ import {
   refreshClaudeSwapAccounts,
   switchClaudeSwapAccount,
 } from "@codexbar/platform";
-import { discoverCodexCredential } from "./codex-credential.ts";
 import { makeNodeCLIConfigStore, runConfig, type CLIConfigStore } from "./config.ts";
 import { resolveCLIConfigPath } from "./config-path.ts";
 import { runCost, type CLICostScanner, type CLICostStore } from "./cost.ts";
@@ -331,8 +330,6 @@ const outputFor = (arguments_: readonly string[], allowsToon: boolean): OutputPr
             : "text";
   return { format, jsonOnly, pretty };
 };
-
-const hasValue = (value: unknown): value is string => typeof value === "string" && value !== "";
 
 const message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -710,9 +707,7 @@ export const makeNodeCLIProviderRuntime = (
   });
   const claudeSwapFiles = makeNodePrivateFileStore();
   const claudeSwapRetentionPath = join(dirname(configPath), "claude-swap-retained-usage.json");
-  const environmentSettings = makeEnvironmentProviderSettings(environment);
   const agentSessions = makeNodeAgentSessionRuntime(environment);
-  const codexCredential = discoverCodexCredential({ environment });
   const runtime: ProviderRuntimeService = makeFirstPartyProviderRuntime({
     providers: FIRST_PARTY_PROVIDERS,
     http: makeFetchHttpTransport(),
@@ -731,29 +726,7 @@ export const makeNodeCLIProviderRuntime = (
         ? { antigravityExternalCLIPath: environment.ANTIGRAVITY_CLI_PATH.trim() }
         : {}),
     }),
-    settings: {
-      read: (providerId, setting) => {
-        if (
-          providerId === "codex" &&
-          setting === "CODEX_ACCESS_TOKEN" &&
-          hasValue(codexCredential.accessToken)
-        )
-          return Effect.succeed(codexCredential.accessToken);
-        if (
-          providerId === "codex" &&
-          setting === "CODEX_ACCOUNT_ID" &&
-          hasValue(codexCredential.accountId)
-        )
-          return Effect.succeed(codexCredential.accountId);
-        if (
-          providerId === "codex" &&
-          setting === "CODEX_PERSONAL_ACCESS_TOKEN" &&
-          hasValue(codexCredential.personalAccessToken)
-        )
-          return Effect.succeed(codexCredential.personalAccessToken);
-        return environmentSettings.read(providerId, setting);
-      },
-    },
+    settings: makeNodeDiscoveredProviderSettings({ environment }),
   });
   // Both the normal Node CLI and SEA use the same disposable QuickJS child.
   // The SEA bootstrap extracts a digest-bound ESM child asset before forking

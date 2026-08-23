@@ -61,6 +61,8 @@ import {
   fetchNodeAntigravityLocalSnapshot,
   makeNodeAntigravityLocalDependencies,
 } from "./node-antigravity-local.ts";
+import { discoverNodeClaudeCredential } from "./node-claude-credential.ts";
+import { discoverNodeCodexCredential } from "./node-codex-credential.ts";
 
 export * from "./node-persistence.ts";
 export * from "./node-antigravity-local.ts";
@@ -1062,11 +1064,57 @@ export const makeEnvironmentProviderSettings = (
     ),
 });
 
+const discoveredSetting = (value: unknown): value is string =>
+  typeof value === "string" && value !== "";
+
+/**
+ * Per-read Claude/Codex file discovery used by both Node composition roots.
+ * Missing discovery values fall through to environment settings unchanged.
+ */
+export const makeNodeDiscoveredProviderSettings = (
+  options: {
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+    readonly discoverClaudeCredential?: typeof discoverNodeClaudeCredential;
+    readonly discoverCodexCredential?: typeof discoverNodeCodexCredential;
+  } = {},
+): FirstPartySettings => {
+  const environment = options.environment ?? process.env;
+  const fallback = makeEnvironmentProviderSettings(environment);
+  const discoverClaude = options.discoverClaudeCredential ?? discoverNodeClaudeCredential;
+  const discoverCodex = options.discoverCodexCredential ?? discoverNodeCodexCredential;
+  return {
+    read: (providerId, setting) => {
+      if (providerId === "codex") {
+        const credential = discoverCodex({ environment });
+        if (setting === "CODEX_ACCESS_TOKEN" && discoveredSetting(credential.accessToken))
+          return Effect.succeed(credential.accessToken);
+        if (setting === "CODEX_ACCOUNT_ID" && discoveredSetting(credential.accountId))
+          return Effect.succeed(credential.accountId);
+        if (
+          setting === "CODEX_PERSONAL_ACCESS_TOKEN" &&
+          discoveredSetting(credential.personalAccessToken)
+        )
+          return Effect.succeed(credential.personalAccessToken);
+      }
+      if (providerId === "claude" && setting === "CLAUDE_OAUTH_ACCESS_TOKEN") {
+        const credential = discoverClaude({ environment });
+        if (discoveredSetting(credential.accessToken))
+          return Effect.succeed(credential.accessToken);
+      }
+      return fallback.read(providerId, setting);
+    },
+  };
+};
+
 export {
   accountIdFromJwt,
   discoverNodeCodexCredential,
   type NodeCodexCredential,
 } from "./node-codex-credential.ts";
+export {
+  discoverNodeClaudeCredential,
+  type NodeClaudeCredential,
+} from "./node-claude-credential.ts";
 
 /** Only an allowlisted, encrypted cookie header is released to a declared provider domain. */
 export const makeCredentialBrowserSessions = (
