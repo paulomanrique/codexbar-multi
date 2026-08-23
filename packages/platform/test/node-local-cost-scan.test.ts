@@ -48,9 +48,14 @@ const withPersistence = async (
 ): Promise<void> => {
   const directory = await mkdtemp(join(tmpdir(), `codexbar-${name}-`));
   const sessions = join(directory, "sessions");
+  // Usage SQLite lives under a private store/ root, matching production's
+  // AppData vs Codex-home split. Collocating it with JSONL or logs_2.sqlite
+  // would let Windows DACL hardening of the usage parent lock those files.
+  const store = join(directory, "store");
   try {
     await mkdir(sessions);
-    await action({ directory, sessions, databasePath: join(directory, "usage.sqlite") });
+    await mkdir(store);
+    await action({ directory, sessions, databasePath: join(store, "usage.sqlite") });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
