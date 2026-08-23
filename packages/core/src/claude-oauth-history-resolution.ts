@@ -45,9 +45,9 @@ const emptyBindingState = (): ClaudeOAuthHistoryBindingState => ({
   candidates: {},
 });
 
-const cloneBindings = (
-  bindings: Readonly<Record<string, string>>,
-): Record<string, string> => ({ ...bindings });
+const cloneBindings = (bindings: Readonly<Record<string, string>>): Record<string, string> => ({
+  ...bindings,
+});
 
 const cloneCandidates = (
   candidates: Readonly<Record<string, ClaudeOAuthAccountBindingCandidate>>,
@@ -59,9 +59,8 @@ const cloneCandidates = (
     ]),
   );
 
-const stableIdentity = (
-  observation: ClaudeOAuthActiveAccountObservation,
-): string | undefined => (observation.kind === "stable" ? observation.identity : undefined);
+const stableIdentity = (observation: ClaudeOAuthActiveAccountObservation): string | undefined =>
+  observation.kind === "stable" ? observation.identity : undefined;
 
 const confirmClaudeOAuthAccountBindingCandidate = (
   state: ClaudeOAuthHistoryBindingState,

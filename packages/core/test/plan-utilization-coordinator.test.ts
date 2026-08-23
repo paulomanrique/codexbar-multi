@@ -534,7 +534,10 @@ describe("plan-utilization history coordinator", () => {
           saves += 1;
         }),
     });
-    for (const identity of [{ providerId: "codex" as const, accountEmail: "person@example.com" }, { providerId: "claude" as const }]) {
+    for (const identity of [
+      { providerId: "codex" as const, accountEmail: "person@example.com" },
+      { providerId: "claude" as const },
+    ]) {
       await expect(
         Effect.runPromise(
           coordinator.recordClaudeIdentity({
@@ -597,7 +600,9 @@ describe("plan-utilization history coordinator", () => {
     ).resolves.toBe(true);
     expect(saved?.claude?.preferredAccountKey).toBe(accountKey);
     expect(
-      saved?.claude?.accounts[accountKey]?.map((history) => history.entries.map((entry) => entry.usedPercent)),
+      saved?.claude?.accounts[accountKey]?.map((history) =>
+        history.entries.map((entry) => entry.usedPercent),
+      ),
     ).toEqual([[10, 30], [40]]);
   });
 
