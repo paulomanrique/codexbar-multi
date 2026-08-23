@@ -91,6 +91,22 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
       }),
     );
     expect(grok.id).toBe("grok.web");
+    expect(grok.fallbackOn).toEqual([
+      "authentication-expired",
+      "missing-credential",
+      "provider-unavailable",
+      "parse-failure",
+      "network-failure",
+      "rate-limited",
+      "permission-denied",
+      "api-failure",
+    ]);
+    expect(grok.strategies?.map((strategy) => [strategy.id, strategy.fallbackOn])).toEqual([
+      ["grok.cli", grok.fallbackOn],
+      ["grok.oauth", grok.fallbackOn],
+      ["grok.web", grok.fallbackOn],
+      ["grok.oauth-grpc", undefined],
+    ]);
     expect(grok.descriptor.endpoints).toEqual([
       "https://grok.com",
       "https://cli-chat-proxy.grok.com",

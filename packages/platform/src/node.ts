@@ -24,6 +24,7 @@ import {
   type HttpResponse,
   type HttpTransportService,
   InfrastructureError,
+  MissingBrowserCredentialError,
   type ProcessResult,
   type ProcessRunnerService,
   type ProcessSpec,
@@ -1074,41 +1075,40 @@ export const makeCredentialBrowserSessions = (
 ): FirstPartyBrowserSessions => ({
   cookieHeader: (providerId, domain) =>
     credentials.read(`browser-session/${providerId}/${accountIdFor(providerId)}`).pipe(
-      Effect.flatMap((stored) => {
-        if (stored === undefined) {
-          return Effect.fail(
-            new InfrastructureError(
-              "browser session",
-              "No exported desktop browser credential is available",
-            ),
-          );
-        }
-        return Effect.try({
-          try: () => {
-            const parsed = JSON.parse(stored) as { readonly cookieHeaders?: unknown };
-            if (
-              typeof parsed.cookieHeaders !== "object" ||
-              parsed.cookieHeaders === null ||
-              Array.isArray(parsed.cookieHeaders)
-            ) {
-              throw new Error("Stored browser credential is invalid");
-            }
-            const normalizedDomain = domain.trim().toLowerCase();
-            const cookieHeader = (parsed.cookieHeaders as Record<string, unknown>)[
-              normalizedDomain
-            ];
-            if (typeof cookieHeader !== "string" || cookieHeader.trim() === "") {
-              throw new Error("Stored browser credential has no cookies for the requested domain");
-            }
-            return cookieHeader;
-          },
-          catch: (error) =>
-            new InfrastructureError(
-              "browser session",
-              "Stored browser credential is invalid",
-              error,
-            ),
-        });
-      }),
+      Effect.flatMap(
+        (stored): Effect.Effect<string, InfrastructureError | MissingBrowserCredentialError> => {
+          if (stored === undefined) {
+            return Effect.fail(new MissingBrowserCredentialError());
+          }
+          return Effect.try({
+            try: () => {
+              const parsed = JSON.parse(stored) as { readonly cookieHeaders?: unknown };
+              if (
+                typeof parsed.cookieHeaders !== "object" ||
+                parsed.cookieHeaders === null ||
+                Array.isArray(parsed.cookieHeaders)
+              ) {
+                throw new Error("Stored browser credential is invalid");
+              }
+              const normalizedDomain = domain.trim().toLowerCase();
+              const cookieHeader = (parsed.cookieHeaders as Record<string, unknown>)[
+                normalizedDomain
+              ];
+              if (typeof cookieHeader !== "string" || cookieHeader.trim() === "") {
+                throw new Error(
+                  "Stored browser credential has no cookies for the requested domain",
+                );
+              }
+              return cookieHeader;
+            },
+            catch: (error) =>
+              new InfrastructureError(
+                "browser session",
+                "Stored browser credential is invalid",
+                error,
+              ),
+          });
+        },
+      ),
     ),
 });

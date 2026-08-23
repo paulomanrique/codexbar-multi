@@ -665,34 +665,34 @@ const definition: ProviderDefinition = {
   },
 };
 
+const grokAutoFallbackOn = [
+  "authentication-expired",
+  "missing-credential",
+  "provider-unavailable",
+  "parse-failure",
+  "network-failure",
+  "rate-limited",
+  "permission-denied",
+  "api-failure",
+] as const;
+
 const webStrategy: ProviderStrategy = {
   id: "grok.web",
   kind: "web",
   fetchUsage: definition.fetchUsage,
+  fallbackOn: grokAutoFallbackOn,
 };
 const cliStrategy: ProviderStrategy = {
   id: "grok.cli",
   kind: "cli",
   fetchUsage: cliBillingUsage,
-  fallbackOn: [
-    "authentication-expired",
-    "missing-credential",
-    "provider-unavailable",
-    "parse-failure",
-    "api-failure",
-  ],
+  fallbackOn: grokAutoFallbackOn,
 };
 const oauthProxyStrategy: ProviderStrategy = {
   id: "grok.oauth",
   kind: "oauth",
   fetchUsage: oauthProxyUsage,
-  fallbackOn: [
-    "authentication-expired",
-    "missing-credential",
-    "provider-unavailable",
-    "parse-failure",
-    "api-failure",
-  ],
+  fallbackOn: grokAutoFallbackOn,
 };
 const oauthGrpcStrategy: ProviderStrategy = {
   id: "grok.oauth-grpc",

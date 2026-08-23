@@ -8,6 +8,7 @@ import {
   type HttpRequest,
   type HttpResponse,
   type HttpTransportService,
+  MissingBrowserCredentialError,
   type ProviderFetchContext,
   type ProviderFetchStrategy,
   type ProviderRuntimeService,
@@ -326,6 +327,11 @@ const endpointAllowed = (url: URL, rules: readonly EndpointRule[]): boolean => {
 
 const failure = (kind: ClassifiedFetchFailure["kind"], message: string) =>
   new ClassifiedFetchFailure(kind, message);
+
+const missingBrowserCredentialMessage = "No exported browser credential is available";
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
 
 const redact = (message: string, values: ReadonlySet<string>): string => {
   let redacted = message;
@@ -757,8 +763,14 @@ const executeProvider = (
 ): Effect.Effect<UsageSnapshot, ClassifiedFetchFailure> => {
   const redactionValues = new Set<string>();
   const abortController = new AbortController();
+  let hostCancelled = false;
   return Effect.tryPromise({
     try: async (signal) => {
+      const markCancelled = () => {
+        hostCancelled = true;
+      };
+      if (signal.aborted) markCancelled();
+      else signal.addEventListener("abort", markCancelled, { once: true });
       const operationSignal = AbortSignal.any([signal, abortController.signal]);
       const descriptor = provider.descriptor;
       const timeZone = runtimeTimeZone(options.timeZone);
@@ -929,10 +941,18 @@ const executeProvider = (
             ) {
               throw failure("permission-denied", `Cookie access is not declared for ${domain}`);
             }
-            const cookie = await Effect.runPromise(
-              options.browserSessions.cookieHeader(descriptor.id, domain),
-              { signal: operationSignal },
-            );
+            let cookie: string;
+            try {
+              cookie = await Effect.runPromise(
+                options.browserSessions.cookieHeader(descriptor.id, domain),
+                { signal: operationSignal },
+              );
+            } catch (error) {
+              if (isAbortError(error) || hostCancelled || operationSignal.aborted) throw error;
+              if (error instanceof MissingBrowserCredentialError)
+                throw failure("missing-credential", missingBrowserCredentialMessage);
+              throw error;
+            }
             redactionValues.add(cookie);
             for (const pair of cookie.split(";")) {
               const separator = pair.indexOf("=");
@@ -995,15 +1015,22 @@ const executeProvider = (
       };
       return mapProviderSnapshot(await strategy.fetchUsage(context), descriptor.id, now());
     },
-    catch: (error) =>
-      error instanceof ClassifiedFetchFailure
-        ? failure(error.kind, redact(error.message, redactionValues))
-        : failure(
-            "api-failure",
-            redact(
-              error instanceof Error ? error.message : "Provider refresh failed",
-              redactionValues,
-            ),
-          ),
-  }).pipe(Effect.ensuring(Effect.sync(() => abortController.abort())));
+    catch: (error) => error,
+  }).pipe(
+    Effect.catchIf(
+      (error) => isAbortError(error) || hostCancelled,
+      () => Effect.interrupt,
+    ),
+    Effect.mapError((error): ClassifiedFetchFailure => {
+      if (error instanceof MissingBrowserCredentialError)
+        return failure("missing-credential", missingBrowserCredentialMessage);
+      if (error instanceof ClassifiedFetchFailure)
+        return failure(error.kind, redact(error.message, redactionValues));
+      return failure(
+        "api-failure",
+        redact(error instanceof Error ? error.message : "Provider refresh failed", redactionValues),
+      );
+    }),
+    Effect.ensuring(Effect.sync(() => abortController.abort())),
+  );
 };

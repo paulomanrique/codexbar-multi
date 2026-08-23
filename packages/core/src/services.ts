@@ -27,6 +27,16 @@ export class InfrastructureError extends Error {
   }
 }
 
+/** Narrow nominal signal for a missing exported browser credential. */
+export class MissingBrowserCredentialError extends Error {
+  readonly _tag = "MissingBrowserCredentialError";
+
+  constructor(message = "No exported browser credential is available") {
+    super(message);
+    this.name = "MissingBrowserCredentialError";
+  }
+}
+
 export interface HttpRequest {
   readonly url: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
