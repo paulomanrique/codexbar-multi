@@ -60,7 +60,11 @@ export interface FirstPartySettings {
 
 /** Browser sessions stay host-owned: providers receive only their declared cookie header. */
 export interface FirstPartyBrowserSessions {
-  readonly cookieHeader: (providerId: ProviderId, domain: string) => Effect.Effect<string, unknown>;
+  readonly cookieHeader: (
+    providerId: ProviderId,
+    domain: string,
+    selectedAccountId?: string,
+  ) => Effect.Effect<string, unknown>;
 }
 
 /**
@@ -1026,10 +1030,11 @@ const executeProvider = (
             }
             let cookie: string;
             try {
-              cookie = await Effect.runPromise(
-                options.browserSessions.cookieHeader(descriptor.id, domain),
-                { signal: operationSignal },
-              );
+              const cookieHeader =
+                descriptor.id === "grok"
+                  ? options.browserSessions.cookieHeader(descriptor.id, domain, selectedAccount?.id)
+                  : options.browserSessions.cookieHeader(descriptor.id, domain);
+              cookie = await Effect.runPromise(cookieHeader, { signal: operationSignal });
             } catch (error) {
               if (isAbortError(error) || hostCancelled || operationSignal.aborted) throw error;
               if (error instanceof MissingBrowserCredentialError)

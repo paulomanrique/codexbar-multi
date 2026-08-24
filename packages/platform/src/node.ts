@@ -1179,47 +1179,73 @@ export {
   type NodeClaudeOAuthHistoryOwnerOptions,
 } from "./node-claude-credential.ts";
 
+const browserSessionAccountIdPattern = /^[A-Za-z0-9_-]{1,64}$/u;
+
+const invalidStoredBrowserCredential = () =>
+  new InfrastructureError("browser session", "Stored browser credential is invalid");
+
+const isBrowserSessionRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseStoredBrowserSessionCookieHeader = (
+  stored: string,
+  providerId: ProviderId,
+  accountId: string,
+  normalizedDomain: string,
+): string => {
+  const parsed = JSON.parse(stored) as unknown;
+  if (
+    !isBrowserSessionRecord(parsed) ||
+    parsed.version !== 1 ||
+    parsed.provider !== providerId ||
+    parsed.accountId !== accountId ||
+    !isBrowserSessionRecord(parsed.cookieHeaders)
+  ) {
+    throw new Error("Stored browser credential is invalid");
+  }
+  const cookieHeader = parsed.cookieHeaders[normalizedDomain];
+  if (typeof cookieHeader !== "string" || cookieHeader.trim() === "") {
+    throw new Error("Stored browser credential is invalid");
+  }
+  return cookieHeader;
+};
+
 /** Only an allowlisted, encrypted cookie header is released to a declared provider domain. */
 export const makeCredentialBrowserSessions = (
   credentials: CredentialStoreService,
   accountIdFor: (providerId: ProviderId) => string = () => "default",
 ): FirstPartyBrowserSessions => ({
-  cookieHeader: (providerId, domain) =>
-    credentials.read(`browser-session/${providerId}/${accountIdFor(providerId)}`).pipe(
+  cookieHeader: (providerId, domain, selectedAccountId) => {
+    if (selectedAccountId !== undefined && providerId !== "grok") {
+      return Effect.fail(
+        new InfrastructureError("browser session", "Selected browser session is unsupported"),
+      );
+    }
+    const accountId = selectedAccountId ?? accountIdFor(providerId);
+    if (!browserSessionAccountIdPattern.test(accountId)) {
+      return Effect.fail(
+        new InfrastructureError("browser session", "Browser session account is invalid"),
+      );
+    }
+    const normalizedDomain = domain.trim().toLowerCase();
+    return credentials.read(`browser-session/${providerId}/${accountId}`).pipe(
       Effect.flatMap(
         (stored): Effect.Effect<string, InfrastructureError | MissingBrowserCredentialError> => {
           if (stored === undefined) {
             return Effect.fail(new MissingBrowserCredentialError());
           }
           return Effect.try({
-            try: () => {
-              const parsed = JSON.parse(stored) as { readonly cookieHeaders?: unknown };
-              if (
-                typeof parsed.cookieHeaders !== "object" ||
-                parsed.cookieHeaders === null ||
-                Array.isArray(parsed.cookieHeaders)
-              ) {
-                throw new Error("Stored browser credential is invalid");
-              }
-              const normalizedDomain = domain.trim().toLowerCase();
-              const cookieHeader = (parsed.cookieHeaders as Record<string, unknown>)[
-                normalizedDomain
-              ];
-              if (typeof cookieHeader !== "string" || cookieHeader.trim() === "") {
-                throw new Error(
-                  "Stored browser credential has no cookies for the requested domain",
-                );
-              }
-              return cookieHeader;
-            },
-            catch: (error) =>
-              new InfrastructureError(
-                "browser session",
-                "Stored browser credential is invalid",
-                error,
+            try: () =>
+              parseStoredBrowserSessionCookieHeader(
+                stored,
+                providerId,
+                accountId,
+                normalizedDomain,
               ),
+            catch: () => invalidStoredBrowserCredential(),
           });
         },
       ),
-    ),
+    );
+  },
 });

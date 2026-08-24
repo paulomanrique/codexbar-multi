@@ -97,6 +97,24 @@ const runtimeFor = (
     clock,
   });
 
+const browserGrokFixture = (): FirstPartyProvider => ({
+  id: "grok.web",
+  kind: "web",
+  descriptor: {
+    id: "grok",
+    name: "Grok",
+    status: "partial",
+    endpoints: [],
+    settings: [],
+    capabilities: ["browser-cookies"],
+    cookieDomains: ["grok.com"],
+  },
+  fetchUsage: async (ctx) => {
+    await ctx.browser.cookieHeader("grok.com");
+    return { primary: { usedPercent: 25 } };
+  },
+});
+
 describe("first-party runtime Grok selected-account routing", () => {
   it("uses the selected Grok OAuth credential over ambient and keeps it out of outcomes", async () => {
     const seen: SeenGrokStrategy[] = [];
@@ -232,5 +250,127 @@ describe("first-party runtime Grok selected-account routing", () => {
       },
     ]);
     expect(ambientOAuthReads).toBe(0);
+  });
+
+  it("passes the selected Grok account ID to the browser-session broker", async () => {
+    const calls: Array<{
+      readonly providerId: string;
+      readonly domain: string;
+      readonly selectedAccountId: string | undefined;
+    }> = [];
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [browserGrokFixture()],
+      settings: { read: () => Effect.succeed(undefined) },
+      selectedAccounts: {
+        resolve: () => Effect.succeed({ id: "grok_token_1" }),
+      },
+      credentials,
+      browserSessions: {
+        cookieHeader: (providerId, domain, selectedAccountId) =>
+          Effect.sync(() => {
+            calls.push({ providerId, domain, selectedAccountId });
+            return "sso=selected";
+          }),
+      },
+      http: {
+        execute: (_request: HttpRequest) =>
+          Effect.fail(new InfrastructureError("test", "not used")),
+      },
+      clock,
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("grok", { sourceMode: "auto", includeCredits: false })),
+    ).resolves.toMatchObject({ strategyId: "grok.web" });
+
+    expect(calls).toEqual([
+      { providerId: "grok", domain: "grok.com", selectedAccountId: "grok_token_1" },
+    ]);
+  });
+
+  it("passes no selected Grok account ID to the browser-session broker when unselected", async () => {
+    const calls: Array<{
+      readonly providerId: string;
+      readonly domain: string;
+      readonly selectedAccountId: string | undefined;
+    }> = [];
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [browserGrokFixture()],
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials,
+      browserSessions: {
+        cookieHeader: (providerId, domain, selectedAccountId) =>
+          Effect.sync(() => {
+            calls.push({ providerId, domain, selectedAccountId });
+            return "sso=default";
+          }),
+      },
+      http: {
+        execute: (_request: HttpRequest) =>
+          Effect.fail(new InfrastructureError("test", "not used")),
+      },
+      clock,
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("grok", { sourceMode: "auto", includeCredits: false })),
+    ).resolves.toMatchObject({ strategyId: "grok.web" });
+
+    expect(calls).toEqual([
+      { providerId: "grok", domain: "grok.com", selectedAccountId: undefined },
+    ]);
+  });
+
+  it("does not pass a selected account ID to the broker for a non-Grok provider", async () => {
+    const calls: Array<{
+      readonly providerId: string;
+      readonly domain: string;
+      readonly selectedAccountId: string | undefined;
+    }> = [];
+    const provider: FirstPartyProvider = {
+      id: "t3chat.web",
+      kind: "web",
+      descriptor: {
+        id: "t3chat",
+        name: "T3 Chat",
+        status: "partial",
+        endpoints: [],
+        settings: [],
+        capabilities: ["browser-cookies"],
+        cookieDomains: ["t3.chat"],
+      },
+      fetchUsage: async (ctx) => {
+        await ctx.browser.cookieHeader("t3.chat");
+        return { primary: { usedPercent: 25 } };
+      },
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [provider],
+      settings: { read: () => Effect.succeed(undefined) },
+      selectedAccounts: {
+        resolve: () => Effect.succeed({ id: "unrelated_selected_account" }),
+      },
+      credentials,
+      browserSessions: {
+        cookieHeader: (providerId, domain, selectedAccountId) =>
+          Effect.sync(() => {
+            calls.push({ providerId, domain, selectedAccountId });
+            return "session=default";
+          }),
+      },
+      http: {
+        execute: (_request: HttpRequest) =>
+          Effect.fail(new InfrastructureError("test", "not used")),
+      },
+      clock,
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("t3chat", { sourceMode: "auto", includeCredits: false })),
+    ).resolves.toMatchObject({ strategyId: "t3chat.web" });
+
+    expect(calls).toEqual([
+      { providerId: "t3chat", domain: "t3.chat", selectedAccountId: undefined },
+    ]);
   });
 });

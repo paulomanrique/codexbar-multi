@@ -34,6 +34,18 @@ const store = (
   remove: () => Effect.void,
 });
 
+const storedBrowserSession = (
+  provider: "claude" | "grok",
+  accountId: string,
+  cookieHeaders: Readonly<Record<string, string>>,
+) =>
+  JSON.stringify({
+    version: 1,
+    provider,
+    accountId,
+    cookieHeaders,
+  });
+
 const classified = (kind: ClassifiedFetchFailure["kind"]) =>
   new ClassifiedFetchFailure(kind, `${kind} from web`);
 
@@ -190,7 +202,7 @@ describe("browser credential fallback slice", () => {
 
   it.each([
     ["corrupt JSON", "not-json"],
-    ["domain missing", JSON.stringify({ cookieHeaders: { "other.example": "session=x" } })],
+    ["domain missing", storedBrowserSession("claude", "default", { "other.example": "session=x" })],
   ] as const)("%s stored credential stays api-failure", async (_label, stored) => {
     const browserSessions = makeCredentialBrowserSessions(store(() => Effect.succeed(stored)));
     await expect(
@@ -290,7 +302,9 @@ describe("browser credential fallback slice", () => {
     const present = makeCredentialBrowserSessions(
       store(() =>
         Effect.succeed(
-          JSON.stringify({ cookieHeaders: { "claude.ai": `session=${cookieSecret}` } }),
+          storedBrowserSession("claude", "default", {
+            "claude.ai": `session=${cookieSecret}`,
+          }),
         ),
       ),
     );
