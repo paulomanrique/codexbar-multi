@@ -10,13 +10,18 @@ describe("default browser-session statuses preload bridge", () => {
       calls.push({ channel, input });
       return {
         schemaVersion: 1,
+        claudeDefault: "persisted",
         t3chatDefault: "persisted",
         grokDefault: "absent",
-        cookieHeaders: { "t3.chat": "__session=must-not-cross" },
+        cookieHeaders: {
+          "claude.ai": "sessionKey=must-not-cross",
+          "t3.chat": "__session=must-not-cross",
+        },
       };
     });
     await expect(api.getDefaultBrowserSessionStatuses()).resolves.toEqual({
       schemaVersion: 1,
+      claudeDefault: "persisted",
       t3chatDefault: "persisted",
       grokDefault: "absent",
     });
@@ -28,8 +33,18 @@ describe("default browser-session statuses preload bridge", () => {
   it("rejects malformed main-process output rather than exposing it", async () => {
     const api = makeDefaultBrowserSessionStatusesApi(async () => ({
       schemaVersion: 1,
+      claudeDefault: "absent",
       t3chatDefault: "persisted",
       grokDefault: "logged-out",
+    }));
+    await expect(api.getDefaultBrowserSessionStatuses()).rejects.toThrow();
+  });
+
+  it("rejects output missing any fixed default status", async () => {
+    const api = makeDefaultBrowserSessionStatusesApi(async () => ({
+      schemaVersion: 1,
+      t3chatDefault: "persisted",
+      grokDefault: "absent",
     }));
     await expect(api.getDefaultBrowserSessionStatuses()).rejects.toThrow();
   });

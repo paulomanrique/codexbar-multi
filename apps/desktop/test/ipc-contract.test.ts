@@ -92,9 +92,13 @@ describe("desktop IPC boundary", () => {
     expect(
       decode({
         schemaVersion: 1,
+        claudeDefault: "absent",
         t3chatDefault: "persisted",
         grokDefault: "unavailable",
-        cookieHeaders: { "t3.chat": "__session=must-not-cross" },
+        cookieHeaders: {
+          "claude.ai": "sessionKey=must-not-cross",
+          "t3.chat": "__session=must-not-cross",
+        },
         domains: ["t3.chat"],
         exportedAt: "2026-08-24T00:00:00.000Z",
         key: "browser-session/t3chat/default",
@@ -104,12 +108,20 @@ describe("desktop IPC boundary", () => {
       }),
     ).toEqual({
       schemaVersion: 1,
+      claudeDefault: "absent",
       t3chatDefault: "persisted",
       grokDefault: "unavailable",
     });
     expect(
-      Object.keys(decode({ schemaVersion: 1, t3chatDefault: "absent", grokDefault: "absent" })),
-    ).toEqual(["schemaVersion", "t3chatDefault", "grokDefault"]);
+      Object.keys(
+        decode({
+          schemaVersion: 1,
+          claudeDefault: "absent",
+          t3chatDefault: "absent",
+          grokDefault: "absent",
+        }),
+      ),
+    ).toEqual(["schemaVersion", "claudeDefault", "t3chatDefault", "grokDefault"]);
     expect(() =>
       decode({
         schemaVersion: 1,
@@ -119,8 +131,16 @@ describe("desktop IPC boundary", () => {
     expect(() =>
       decode({
         schemaVersion: 1,
+        claudeDefault: "absent",
         t3chatDefault: "persisted",
         grokDefault: "logged-out",
+      }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        schemaVersion: 1,
+        t3chatDefault: "persisted",
+        grokDefault: "unavailable",
       }),
     ).toThrow();
   });

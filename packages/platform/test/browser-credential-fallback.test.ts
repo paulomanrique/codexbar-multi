@@ -303,13 +303,13 @@ describe("browser credential fallback slice", () => {
       store(() =>
         Effect.succeed(
           storedBrowserSession("claude", "default", {
-            "claude.ai": `session=${cookieSecret}`,
+            "claude.ai": `sessionKey=${cookieSecret}`,
           }),
         ),
       ),
     );
     expect(await Effect.runPromise(present.cookieHeader("claude", "claude.ai"))).toBe(
-      `session=${cookieSecret}`,
+      `sessionKey=${cookieSecret}`,
     );
     const malformed = makeCredentialBrowserSessions(store(() => Effect.succeed("{ not json")));
     const error = await Effect.runPromise(

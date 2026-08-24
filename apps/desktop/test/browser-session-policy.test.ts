@@ -85,6 +85,37 @@ describe("isolated browser session policy", () => {
     );
   });
 
+  it("keeps Claude browser login on claude.ai with only sessionKey exported", () => {
+    const claude = browserLoginDescriptor("claude");
+    if (claude === undefined) throw new Error("missing Claude descriptor");
+    expect(claude.startUrl).toBe("https://claude.ai");
+    expect([...claude.allowedOrigins]).toEqual([
+      "https://claude.ai",
+      "https://www.claude.ai",
+      "https://accounts.google.com",
+    ]);
+    expect(claude.cookieDomains).toEqual(["claude.ai"]);
+    expect([...claude.cookieNames]).toEqual(["sessionKey"]);
+    expect([...claude.completionCookieNames]).toEqual(["sessionKey"]);
+    expect(isAllowedBrowserLoginNavigation(claude, "https://claude.ai")).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(claude, "https://www.claude.ai/login")).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(claude, "https://accounts.google.com/o/oauth2")).toBe(
+      true,
+    );
+    expect(isAllowedBrowserLoginNavigation(claude, "https://claude.ai.evil.test")).toBe(false);
+    expect(isAllowedBrowserLoginNavigation(claude, "http://claude.ai")).toBe(false);
+    expect(
+      exportableCookieHeader(claude, [
+        { name: "tracking", value: "must-not-leave-partition" },
+        { name: "sessionKey", value: "secret-session" },
+        { name: "sessionKey_backup", value: "prefixes-are-not-allowed" },
+      ]),
+    ).toBe("sessionKey=secret-session");
+    expect(exportableCookieHeader(claude, [{ name: "tracking", value: "private" }])).toBe(
+      undefined,
+    );
+  });
+
   it("keeps every declared entrypoint and navigation origin HTTPS", () => {
     for (const provider of browserLoginProviders()) {
       const policy = browserLoginDescriptor(provider);

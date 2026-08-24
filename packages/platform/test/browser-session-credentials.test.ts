@@ -186,12 +186,15 @@ describe("browser session credential account routing", () => {
 });
 
 describe("default browser session status projection", () => {
-  it("reports persisted only for strict default T3 and Grok credentials", async () => {
+  it("reports persisted only for strict default Claude, T3, and Grok credentials", async () => {
     const reads: string[] = [];
     await expect(
       readDefaultBrowserSessionStatuses(
         store(
           {
+            "browser-session/claude/default": storedBrowserSession("claude", "default", {
+              "claude.ai": "sessionKey=fixture-secret",
+            }),
             "browser-session/t3chat/default": storedBrowserSession("t3chat", "default", {
               "t3.chat": "__session=fixture-secret",
             }),
@@ -207,18 +210,92 @@ describe("default browser session status projection", () => {
       ),
     ).resolves.toEqual({
       schemaVersion: 1,
+      claudeDefault: "persisted",
       t3chatDefault: "persisted",
       grokDefault: "persisted",
     });
-    expect(reads).toEqual(["browser-session/t3chat/default", "browser-session/grok/default"]);
+    expect(reads).toEqual([
+      "browser-session/claude/default",
+      "browser-session/t3chat/default",
+      "browser-session/grok/default",
+    ]);
   });
 
   it("reports absent for missing exact default credentials", async () => {
     await expect(readDefaultBrowserSessionStatuses(store({}))).resolves.toEqual({
       schemaVersion: 1,
+      claudeDefault: "absent",
       t3chatDefault: "absent",
       grokDefault: "absent",
     });
+  });
+
+  it("requires a non-empty Claude sessionKey for the claude.ai default credential", async () => {
+    await expect(
+      readDefaultBrowserSessionStatuses(
+        store({
+          "browser-session/claude/default": storedBrowserSession("claude", "default", {
+            "claude.ai": "tracking=fixture-secret",
+          }),
+          "browser-session/t3chat/default": storedBrowserSession("t3chat", "default", {
+            "t3.chat": "__session=fixture-secret",
+          }),
+          "browser-session/grok/default": storedBrowserSession("grok", "default", {
+            "grok.com": "sso=fixture-secret",
+          }),
+        }),
+      ),
+    ).resolves.toEqual({
+      schemaVersion: 1,
+      claudeDefault: "unavailable",
+      t3chatDefault: "persisted",
+      grokDefault: "persisted",
+    });
+    await expect(
+      readDefaultBrowserSessionStatuses(
+        store({
+          "browser-session/claude/default": storedBrowserSession("claude", "default", {
+            "claude.ai": "sessionKey=   ",
+          }),
+        }),
+      ),
+    ).resolves.toMatchObject({ claudeDefault: "unavailable" });
+  });
+
+  it.each([
+    ["extra cookie", "sessionKey=fixture-secret; tracking=must-not-cross"],
+    ["duplicate cookie", "sessionKey=fixture-secret; sessionKey=other-secret"],
+    ["control character", "sessionKey=fixture-secret\nInjected=value"],
+  ] as const)("rejects a Claude default credential with %s", async (_label, cookieHeader) => {
+    const stored = storedBrowserSession("claude", "default", { "claude.ai": cookieHeader });
+    await expect(
+      readDefaultBrowserSessionStatuses(
+        store({
+          "browser-session/claude/default": stored,
+        }),
+      ),
+    ).resolves.toMatchObject({ claudeDefault: "unavailable" });
+    const sessions = makeCredentialBrowserSessions(
+      store({
+        "browser-session/claude/default": stored,
+      }),
+    );
+    await expect(
+      Effect.runPromise(sessions.cookieHeader("claude", "claude.ai")),
+    ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "browser session" });
+  });
+
+  it("canonicalizes the single allowlisted Claude sessionKey before release", async () => {
+    const sessions = makeCredentialBrowserSessions(
+      store({
+        "browser-session/claude/default": storedBrowserSession("claude", "default", {
+          "claude.ai": "  sessionKey = fixture-secret  ",
+        }),
+      }),
+    );
+    await expect(Effect.runPromise(sessions.cookieHeader("claude", "claude.ai"))).resolves.toBe(
+      "sessionKey=fixture-secret",
+    );
   });
 
   it.each([
@@ -241,6 +318,9 @@ describe("default browser session status projection", () => {
     async (_label, stored) => {
       const result = await readDefaultBrowserSessionStatuses(
         store({
+          "browser-session/claude/default": storedBrowserSession("claude", "default", {
+            "claude.ai": "sessionKey=fixture-secret",
+          }),
           "browser-session/t3chat/default": stored,
           "browser-session/grok/default": storedBrowserSession("grok", "default", {
             "grok.com": "sso=fixture-secret",
@@ -249,10 +329,12 @@ describe("default browser session status projection", () => {
       );
       expect(result).toEqual({
         schemaVersion: 1,
+        claudeDefault: "persisted",
         t3chatDefault: "unavailable",
         grokDefault: "persisted",
       });
       expect(JSON.stringify(result)).not.toContain("fixture-secret");
+      expect(JSON.stringify(result)).not.toContain("sessionKey");
       expect(JSON.stringify(result)).not.toContain("__session");
       expect(JSON.stringify(result)).not.toContain("sso=");
     },
@@ -273,6 +355,7 @@ describe("default browser session status projection", () => {
     });
     expect(result).toEqual({
       schemaVersion: 1,
+      claudeDefault: "unavailable",
       t3chatDefault: "unavailable",
       grokDefault: "unavailable",
     });

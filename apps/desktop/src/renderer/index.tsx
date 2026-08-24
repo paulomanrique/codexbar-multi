@@ -42,12 +42,13 @@ import { SpendDashboard } from "./spend-dashboard.tsx";
 import "./styles.css";
 
 type DashboardTab = "usage" | "history" | "costs" | "spend" | "settings";
-type BrowserLoginProvider = "t3chat" | "grok";
+type BrowserLoginProvider = "claude" | "t3chat" | "grok";
 
 const HISTORY_DAYS = 30;
 const HISTORY_LIMIT = 100;
 const DASHBOARD_TABS = ["usage", "history", "costs", "spend", "settings"] as const;
 const DEFAULT_BROWSER_LOGIN_REQUESTS = {
+  claude: { provider: "claude", accountId: "default" },
   t3chat: { provider: "t3chat", accountId: "default" },
   grok: { provider: "grok", accountId: "default" },
 } as const satisfies Record<BrowserLoginProvider, LoginRequestDTO>;
@@ -614,6 +615,7 @@ function App() {
   const [spendDashboard, setSpendDashboard] = useState<SpendDashboardDTO>();
   const [spendLoading, setSpendLoading] = useState(true);
   const [spendError, setSpendError] = useState(false);
+  const [claudeStatus, setClaudeStatus] = useState<BrowserLoginPresentationStatus>("idle");
   const [t3Status, setT3Status] = useState<BrowserLoginPresentationStatus>("idle");
   const [grokStatus, setGrokStatus] = useState<BrowserLoginPresentationStatus>("idle");
   const [browserLoginMutationPending, setBrowserLoginMutationPending] = useState(false);
@@ -623,6 +625,7 @@ function App() {
       makeDefaultBrowserSessionStatusLoader({
         read: () => window.codexbar.getDefaultBrowserSessionStatuses(),
         publish: (statuses) => {
+          setClaudeStatus(statuses.claude);
           setT3Status(statuses.t3chat);
           setGrokStatus(statuses.grok);
         },
@@ -873,6 +876,7 @@ function App() {
     logout: localization.t("logout"),
     unavailable: copy.unavailable,
   };
+  const claudeLoginAction = browserLoginActionState(claudeStatus, "Claude", loginCopy);
   const t3LoginAction = browserLoginActionState(t3Status, "T3 Chat", loginCopy);
   const grokLoginAction = browserLoginActionState(grokStatus, "Grok", loginCopy);
   const startBrowserLogin = (
@@ -950,6 +954,21 @@ function App() {
         </p>
       )}
       <div className="login-actions">
+        <button
+          disabled={browserLoginMutationPending || claudeLoginAction.loginDisabled}
+          onClick={() => startBrowserLogin("claude", setClaudeStatus)}
+        >
+          {claudeLoginAction.loginLabel}
+        </button>
+        {claudeLoginAction.showLogout ? (
+          <button
+            className="secondary"
+            disabled={browserLoginMutationPending || claudeLoginAction.logoutDisabled}
+            onClick={() => logoutBrowserLogin("claude", setClaudeStatus)}
+          >
+            {claudeLoginAction.logoutLabel}
+          </button>
+        ) : null}
         <button
           disabled={browserLoginMutationPending || t3LoginAction.loginDisabled}
           onClick={() => startBrowserLogin("t3chat", setT3Status)}

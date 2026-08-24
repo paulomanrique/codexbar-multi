@@ -241,12 +241,13 @@ export type DefaultBrowserSessionStatusStateDTO = Schema.Schema.Type<
 >;
 
 /**
- * Safe browser-session projection for the renderer's two supported default
+ * Safe browser-session projection for the renderer's three supported default
  * login buttons only. It deliberately omits cookies, domains, keyring keys,
  * paths, labels, timestamps, and error detail.
  */
 export const DefaultBrowserSessionStatusesDTO = Schema.Struct({
   schemaVersion: Schema.Literal(1),
+  claudeDefault: DefaultBrowserSessionStatusStateDTO,
   t3chatDefault: DefaultBrowserSessionStatusStateDTO,
   grokDefault: DefaultBrowserSessionStatusStateDTO,
 });

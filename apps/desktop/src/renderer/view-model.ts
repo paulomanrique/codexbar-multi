@@ -56,11 +56,12 @@ export const browserLoginStatusFromDefaultSessionState = (
   state === "persisted" ? "connected" : state === "absent" ? "idle" : "unavailable";
 
 export interface BrowserSessionPresentationStatuses {
+  readonly claude: BrowserLoginPresentationStatus;
   readonly t3chat: BrowserLoginPresentationStatus;
   readonly grok: BrowserLoginPresentationStatus;
 }
 
-/** Serializes the two browser-login mutations before React can render disabled controls. */
+/** Serializes browser-login mutations before React can render disabled controls. */
 export const makeBrowserLoginMutationGate = () => {
   let pending = false;
   return {
@@ -94,12 +95,13 @@ export const makeDefaultBrowserSessionStatusLoader = (options: {
         const statuses = await options.read();
         if (requestGeneration !== generation) return;
         options.publish({
+          claude: browserLoginStatusFromDefaultSessionState(statuses.claudeDefault),
           t3chat: browserLoginStatusFromDefaultSessionState(statuses.t3chatDefault),
           grok: browserLoginStatusFromDefaultSessionState(statuses.grokDefault),
         });
       } catch {
         if (requestGeneration !== generation) return;
-        options.publish({ t3chat: "unavailable", grok: "unavailable" });
+        options.publish({ claude: "unavailable", t3chat: "unavailable", grok: "unavailable" });
       }
     },
   };

@@ -74,12 +74,14 @@ describe("desktop renderer view model", () => {
     let resolveFirst:
       | ((value: {
           readonly schemaVersion: 1;
+          readonly claudeDefault: "persisted";
           readonly t3chatDefault: "persisted";
           readonly grokDefault: "persisted";
         }) => void)
       | undefined;
     const first = new Promise<{
       readonly schemaVersion: 1;
+      readonly claudeDefault: "persisted";
       readonly t3chatDefault: "persisted";
       readonly grokDefault: "persisted";
     }>((resolve) => {
@@ -94,6 +96,7 @@ describe("desktop renderer view model", () => {
     loader.invalidate();
     resolveFirst?.({
       schemaVersion: 1,
+      claudeDefault: "persisted",
       t3chatDefault: "persisted",
       grokDefault: "persisted",
     });
@@ -101,7 +104,7 @@ describe("desktop renderer view model", () => {
     expect(published).toEqual([]);
   });
 
-  it("serializes T3 and Grok login mutations before the renderer rerenders", () => {
+  it("serializes Claude, T3, and Grok login mutations before the renderer rerenders", () => {
     const gate = makeBrowserLoginMutationGate();
     expect(gate.tryStart()).toBe(true);
     expect(gate.tryStart()).toBe(false);
@@ -119,6 +122,7 @@ describe("desktop renderer view model", () => {
           ? Promise.reject(new Error("locked keyring"))
           : Promise.resolve({
               schemaVersion: 1 as const,
+              claudeDefault: "persisted" as const,
               t3chatDefault: "absent" as const,
               grokDefault: "persisted" as const,
             });
@@ -128,9 +132,22 @@ describe("desktop renderer view model", () => {
     await loader.load();
     await loader.load();
     expect(published).toEqual([
-      { t3chat: "unavailable", grok: "unavailable" },
-      { t3chat: "idle", grok: "connected" },
+      { claude: "unavailable", t3chat: "unavailable", grok: "unavailable" },
+      { claude: "connected", t3chat: "idle", grok: "connected" },
     ]);
+  });
+
+  it("keeps the default browser login UI requests closed over Claude, T3, and Grok", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../src/renderer/index.tsx", import.meta.url), "utf8"),
+    );
+    expect(source).toContain('type BrowserLoginProvider = "claude" | "t3chat" | "grok"');
+    expect(source).toContain('claude: { provider: "claude", accountId: "default" }');
+    expect(source).toContain('t3chat: { provider: "t3chat", accountId: "default" }');
+    expect(source).toContain('grok: { provider: "grok", accountId: "default" }');
+    expect(source).toContain("setClaudeStatus(statuses.claude)");
+    expect(source).toContain('startBrowserLogin("claude", setClaudeStatus)');
+    expect(source).toContain('logoutBrowserLogin("claude", setClaudeStatus)');
   });
 
   it("never represents a partial implementation as release-ready", () => {

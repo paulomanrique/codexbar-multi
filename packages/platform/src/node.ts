@@ -1191,6 +1191,28 @@ const invalidStoredBrowserCredential = () =>
 const isBrowserSessionRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const parseSingleAllowlistedCookieHeader = (cookieHeader: string, cookieName: string): string => {
+  if (
+    [...cookieHeader].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    })
+  ) {
+    throw new Error("Stored browser credential is invalid");
+  }
+  const pairs = cookieHeader.split(";");
+  if (pairs.length !== 1) throw new Error("Stored browser credential is invalid");
+  const pair = pairs[0]!;
+  const separator = pair.indexOf("=");
+  if (separator <= 0) throw new Error("Stored browser credential is invalid");
+  const name = pair.slice(0, separator).trim();
+  const value = pair.slice(separator + 1).trim();
+  if (name !== cookieName || value === "") {
+    throw new Error("Stored browser credential is invalid");
+  }
+  return `${cookieName}=${value}`;
+};
+
 const parseStoredBrowserSessionCookieHeader = (
   stored: string,
   providerId: ProviderId,
@@ -1211,10 +1233,18 @@ const parseStoredBrowserSessionCookieHeader = (
   if (typeof cookieHeader !== "string" || cookieHeader.trim() === "") {
     throw new Error("Stored browser credential is invalid");
   }
+  if (providerId === "claude" && normalizedDomain === "claude.ai")
+    return parseSingleAllowlistedCookieHeader(cookieHeader, "sessionKey");
   return cookieHeader;
 };
 
 const defaultBrowserSessionStatusDescriptors = [
+  {
+    key: "browser-session/claude/default",
+    provider: "claude",
+    accountId: "default",
+    domain: "claude.ai",
+  },
   {
     key: "browser-session/t3chat/default",
     provider: "t3chat",
@@ -1252,18 +1282,22 @@ const readDefaultBrowserSessionStatus = async (
   }
 };
 
-/** Host-only status projection for the two renderer-supported default browser sessions. */
+/** Host-only status projection for the three renderer-supported default browser sessions. */
 export const readDefaultBrowserSessionStatuses = async (
   credentials: CredentialStoreService,
 ): Promise<DefaultBrowserSessionStatusesDTO> => ({
   schemaVersion: 1,
-  t3chatDefault: await readDefaultBrowserSessionStatus(
+  claudeDefault: await readDefaultBrowserSessionStatus(
     credentials,
     defaultBrowserSessionStatusDescriptors[0],
   ),
-  grokDefault: await readDefaultBrowserSessionStatus(
+  t3chatDefault: await readDefaultBrowserSessionStatus(
     credentials,
     defaultBrowserSessionStatusDescriptors[1],
+  ),
+  grokDefault: await readDefaultBrowserSessionStatus(
+    credentials,
+    defaultBrowserSessionStatusDescriptors[2],
   ),
 });
 

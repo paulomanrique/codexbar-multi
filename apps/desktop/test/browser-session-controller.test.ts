@@ -15,6 +15,7 @@ import type {
 } from "../src/main/browser-session-policy.ts";
 
 const request: LoginRequestDTO = { provider: "t3chat", accountId: "primary" };
+const claudeDefaultRequest: LoginRequestDTO = { provider: "claude", accountId: "default" };
 const grokDefaultRequest: LoginRequestDTO = { provider: "grok", accountId: "default" };
 
 class FakeSession implements BrowserLoginSession {
@@ -102,6 +103,10 @@ describe("browser login controller", () => {
   it("uses isolated provider/account names for partitions and credentials", () => {
     expect(browserSessionPartition(request)).toBe("persist:codexbar-multi-t3chat-primary");
     expect(browserCredentialKey(request)).toBe("browser-session/t3chat/primary");
+    expect(browserSessionPartition(claudeDefaultRequest)).toBe(
+      "persist:codexbar-multi-claude-default",
+    );
+    expect(browserCredentialKey(claudeDefaultRequest)).toBe("browser-session/claude/default");
     expect(browserSessionPartition(grokDefaultRequest)).toBe("persist:codexbar-multi-grok-default");
     expect(browserCredentialKey(grokDefaultRequest)).toBe("browser-session/grok/default");
   });
@@ -155,6 +160,37 @@ describe("browser login controller", () => {
     expect(writes[0]?.value).not.toContain("must-not-leave");
     expect(writes[0]?.value).not.toContain("subdomain-secret");
     expect(writes[0]?.value).not.toContain("sso-origin-secret");
+  });
+
+  it("persists Claude browser login as the default claude.ai sessionKey only", async () => {
+    const { host, session, window, writes } = makeHost();
+    session.cookies.set("claude.ai", [
+      { name: "tracking", value: "must-not-leave" },
+      { name: "sessionKey", value: "secret-session" },
+    ]);
+    session.cookies.set("www.claude.ai", [{ name: "sessionKey", value: "subdomain-secret" }]);
+    session.cookies.set("accounts.google.com", [
+      { name: "sessionKey", value: "google-origin-secret" },
+    ]);
+    const controller = new BrowserLoginController(host);
+
+    const result = controller.start(claudeDefaultRequest);
+    await flush();
+    expect(window.loaded).toBe("https://claude.ai");
+    session.changed();
+
+    const resolved = await result;
+    expect(resolved).toEqual({ ...claudeDefaultRequest, status: "connected" });
+    expect(JSON.stringify(resolved)).not.toContain("secret");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.key).toBe(browserCredentialKey(claudeDefaultRequest));
+    const payload = JSON.parse(writes[0]?.value ?? "{}") as {
+      readonly cookieHeaders?: Readonly<Record<string, string>>;
+    };
+    expect(payload.cookieHeaders).toEqual({ "claude.ai": "sessionKey=secret-session" });
+    expect(writes[0]?.value).not.toContain("must-not-leave");
+    expect(writes[0]?.value).not.toContain("subdomain-secret");
+    expect(writes[0]?.value).not.toContain("google-origin-secret");
   });
 
   it("focuses an existing account login instead of opening a second window", async () => {
