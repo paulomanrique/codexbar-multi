@@ -426,7 +426,7 @@ const sanitizedMetadataValue = (raw: string | undefined): string | "invalid" | u
   return trimmed;
 };
 
-const normalizeZaiAPIKey = (raw: string): string | undefined => {
+const normalizeOpaqueAPIKey = (raw: string): string | undefined => {
   const normalized = stripWrappingQuotes(raw.trim()).trim();
   if (normalized === "" || normalized.includes("\u0000") || normalized.length > 1024 * 1024)
     return undefined;
@@ -442,7 +442,7 @@ const selectedZaiAccount = (
     readonly workspaceID?: string | undefined;
   },
 ): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
-  const apiKey = normalizeZaiAPIKey(raw);
+  const apiKey = normalizeOpaqueAPIKey(raw);
   if (apiKey === undefined) {
     return Effect.fail(selectedAccountFailure("Selected z.ai account credential is invalid."));
   }
@@ -461,6 +461,26 @@ const selectedZaiAccount = (
       Z_AI_ORGANIZATION: scope === "team" ? (organizationId ?? null) : null,
       Z_AI_PROJECT: scope === "team" ? (workspaceID ?? null) : null,
     },
+  });
+};
+
+const selectedCopilotAccount = (
+  accountId: string,
+  raw: string,
+  metadata: { readonly externalIdentifier?: string | undefined },
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const token = normalizeOpaqueAPIKey(raw);
+  if (token === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected Copilot account credential is invalid."));
+  }
+  const externalIdentifier = sanitizedMetadataValue(metadata.externalIdentifier);
+  if (externalIdentifier === "invalid") {
+    return Effect.fail(selectedAccountFailure("Selected Copilot account metadata is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    ...(externalIdentifier === undefined ? {} : { externalIdentifier }),
+    secureSettings: { COPILOT_API_TOKEN: token },
   });
 };
 
@@ -541,7 +561,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "claude" &&
     providerId !== "grok" &&
     providerId !== "antigravity" &&
-    providerId !== "zai"
+    providerId !== "zai" &&
+    providerId !== "copilot"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -552,6 +573,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "claude") return selectedClaudeAccount(account.id, material, account);
       if (providerId === "grok") return selectedGrokAccount(account.id, material);
       if (providerId === "zai") return selectedZaiAccount(account.id, material, account);
+      if (providerId === "copilot") return selectedCopilotAccount(account.id, material, account);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

@@ -88,6 +88,8 @@ export interface ProviderClaudeCliUsageResult {
 export interface ProviderSelectedAccount {
   readonly id: string;
   readonly accountEmail?: string;
+  /** Non-secret provider identity hint; authoritative identity still comes from the selected credential. */
+  readonly externalIdentifier?: string;
 }
 
 /**

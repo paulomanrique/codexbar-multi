@@ -14,6 +14,7 @@ import {
 import {
   apiHost,
   budgetCookieHeaderOverride,
+  copilotExternalIdentifierIsStale,
   copilot,
   normalizeCookieHeader,
 } from "../src/providers/copilot.ts";
@@ -127,6 +128,12 @@ function context(
 const tokenSettings = { COPILOT_API_TOKEN: "oauth-token" };
 
 describe("Swift-derived Copilot usage parser", () => {
+  it("treats selected external identifiers as non-authoritative stale hints", () => {
+    const identity = { id: 42, login: "Selected-Login" };
+    expect(copilotExternalIdentifierIsStale("github:user:42", identity)).toBe(false);
+    expect(copilotExternalIdentifierIsStale("selected-login", identity)).toBe(false);
+    expect(copilotExternalIdentifierIsStale("github:user:7", identity)).toBe(true);
+  });
   it("decodes quota snapshots and capitalizes the plan", () => {
     const model = parseCopilotUsageModel({
       copilot_plan: "free",

@@ -716,4 +716,37 @@ describe("token-account vault config repository", () => {
       });
     }
   });
+
+  it("maps a selected Copilot account to only its opaque API token", async () => {
+    const account = {
+      id: "copilot-selected",
+      label: "GitHub",
+      addedAt: 0,
+      externalIdentifier: "github:user:42",
+    };
+    const key = tokenAccountVaultKey("copilot", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "copilot",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: " selected-token " }),
+        "copilot",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      externalIdentifier: "github:user:42",
+      secureSettings: { COPILOT_API_TOKEN: "selected-token" },
+    });
+  });
 });

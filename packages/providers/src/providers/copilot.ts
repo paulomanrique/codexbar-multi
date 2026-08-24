@@ -153,6 +153,17 @@ const fetchGitHubIdentity = async (
   return { id, login };
 };
 
+export const copilotExternalIdentifierIsStale = (
+  externalIdentifier: string | undefined,
+  identity: { readonly id: number; readonly login: string },
+): boolean => {
+  const selected = externalIdentifier?.trim().toLowerCase();
+  if (!selected) return false;
+  return (
+    selected !== `github:user:${identity.id}` && selected !== identity.login.trim().toLowerCase()
+  );
+};
+
 const browserCookieHeader = async (ctx: ProviderContext): Promise<string | undefined> => {
   const github = (await ctx.browser.cookieHeader("github.com")).trim();
   if (github) return github;
@@ -179,6 +190,8 @@ const addBudgetWindowsIfNeeded = async (
     const cookie = manual ?? (await browserCookieHeader(ctx));
     if (!cookie) return snapshot;
     const identity = await fetchGitHubIdentity(ctx, token);
+    // Swift logs this diagnostic but keeps the token-derived identity authoritative.
+    copilotExternalIdentifierIsStale(ctx.selectedAccount?.externalIdentifier, identity);
     const windows = await fetchCopilotBudgetWindows(ctx, cookie, `github:user:${identity.id}`);
     if (windows.length === 0) return snapshot;
     return { ...snapshot, extraRateWindows: windows };

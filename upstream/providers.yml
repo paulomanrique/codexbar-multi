@@ -371,21 +371,26 @@ providers:
       tsGlobs:
         - packages/providers/test/complex-cloud-wave-b.test.ts
         - packages/providers/test/copilot-parity.test.ts
+        - packages/platform/test/first-party-runtime-copilot.test.ts
     fixtures:
       - packages/providers/test/complex-cloud-wave-b.test.ts
       - packages/providers/test/copilot-parity.test.ts
+      - packages/platform/test/first-party-runtime-copilot.test.ts
     tsPaths:
       expected:
         - packages/providers/src/providers/copilot.ts
         - packages/providers/src/providers/copilot-usage.ts
         - packages/providers/src/providers/copilot-budgets.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/copilot.ts
         - packages/providers/src/providers/copilot-usage.ts
         - packages/providers/src/providers/copilot-budgets.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/complex-cloud-wave-b.test.ts
       - packages/providers/test/copilot-parity.test.ts
+      - packages/platform/test/first-party-runtime-copilot.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

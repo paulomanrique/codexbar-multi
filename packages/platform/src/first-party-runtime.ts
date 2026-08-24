@@ -204,7 +204,9 @@ const validateSelectedAccount = (
     selected.id.length > 256 ||
     selected.id.includes("\u0000") ||
     (selected.accountEmail !== undefined &&
-      (selected.accountEmail.length > 1_024 || selected.accountEmail.includes("\u0000")))
+      (selected.accountEmail.length > 1_024 || selected.accountEmail.includes("\u0000"))) ||
+    (selected.externalIdentifier !== undefined &&
+      (selected.externalIdentifier.length > 256 || selected.externalIdentifier.includes("\u0000")))
   ) {
     throw failure("api-failure", "Selected provider account is invalid.");
   }
@@ -425,6 +427,24 @@ const authorizationHeader = (
         ? `${auth.scheme ?? ""} ${secret}`.trim()
         : secret;
   return [name, value];
+};
+
+const suppressManagedAuth = (
+  descriptor: ProviderDescriptor,
+  url: URL,
+  requestOptions: Readonly<Record<string, unknown>>,
+): boolean => {
+  const requested = requestOptions.__codexbarSuppressManagedAuth;
+  if (requested === undefined) return false;
+  if (
+    requested !== true ||
+    descriptor.id !== "copilot" ||
+    url.origin !== "https://github.com" ||
+    url.pathname !== "/settings/billing/budgets"
+  ) {
+    throw failure("permission-denied", "Managed auth suppression is not allowed for this request.");
+  }
+  return true;
 };
 
 const withoutHeader = (headers: Record<string, string>, name: string): void => {
@@ -783,6 +803,10 @@ const selectedStrategyAllowed = (
   strategy: ProviderStrategy,
 ): boolean => {
   if (selectedAccount === undefined) return true;
+  if (providerId === "copilot") {
+    const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
+    return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
+  }
   if (providerId === "zai") {
     const apiKey = ownSetting(selectedAccount.secureSettings, "Z_AI_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "zai.api";
@@ -964,7 +988,9 @@ const executeProvider = (
           throw failure("api-failure", `Provider endpoint is not declared: ${url.origin}`);
         const headers = headersFrom(requestOptions.headers);
         const auth = descriptor.auth;
-        if (auth !== undefined) {
+        const authSuppressed = suppressManagedAuth(descriptor, url, requestOptions);
+        if (authSuppressed) withoutHeader(headers, "Authorization");
+        if (auth !== undefined && !authSuppressed) {
           const secret = secrets.get(auth.secret) ?? settings.get(auth.secret);
           if (secret === undefined || secret === "")
             throw failure("missing-credential", `Missing credential ${auth.secret}`);
@@ -1082,6 +1108,9 @@ const executeProvider = (
                 ...(selectedAccount.accountEmail === undefined
                   ? {}
                   : { accountEmail: selectedAccount.accountEmail }),
+                ...(selectedAccount.externalIdentifier === undefined
+                  ? {}
+                  : { externalIdentifier: selectedAccount.externalIdentifier }),
               },
             }),
         env: { timeZone },

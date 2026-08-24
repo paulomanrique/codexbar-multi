@@ -477,6 +477,7 @@ const fetchBudgetPageMetadata = async (
   cookieHeader: string,
 ): Promise<{ nonce?: string; identity?: CopilotGitHubWebIdentity }> => {
   const response = await get(ctx, budgetPageURL, {
+    __codexbarSuppressManagedAuth: true,
     headers: cookieHeaders(cookieHeader, { Accept: "text/html,application/xhtml+xml" }),
     timeoutSeconds: 15,
   });
@@ -501,6 +502,7 @@ const fetchBudgetPage = async (
   url.searchParams.set("page_size", "10");
   url.searchParams.set("scope", "customer");
   const response = await get(ctx, url.href, {
+    __codexbarSuppressManagedAuth: true,
     headers: cookieHeaders(cookieHeader, {
       Accept: "application/json",
       Referer: budgetPageURL,
