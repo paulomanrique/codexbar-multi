@@ -645,7 +645,10 @@ function totalsFrom(value: unknown): CostJsonlTokens | undefined {
   if (usage === undefined) return undefined;
   return normalizedTokens({
     input: integer(usage.input_tokens),
-    cachedInput: integer(usage.cached_input_tokens ?? usage.cache_read_input_tokens),
+    cachedInput: Math.max(
+      integer(usage.cached_input_tokens),
+      integer(usage.cache_read_input_tokens),
+    ),
     cacheCreationInput: integer(usage.cache_creation_input_tokens),
     output: integer(usage.output_tokens),
     reasoningOutput: integer(usage.reasoning_output_tokens),

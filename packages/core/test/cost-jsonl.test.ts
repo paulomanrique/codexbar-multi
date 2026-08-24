@@ -131,6 +131,70 @@ describe("Codex cost JSONL parser (Swift parity)", () => {
     expect(second.rows[0]?.tokens).toMatchObject({ input: 30, cachedInput: 2, output: 4 });
   });
 
+  it("uses the maximum normalized Codex cache-read field from event_msg token counts", async () => {
+    const cases = [
+      {
+        usage: { input_tokens: 100, cached_input_tokens: 9, output_tokens: 5 },
+        cachedInput: 9,
+      },
+      {
+        usage: { input_tokens: 100, cache_read_input_tokens: 11, output_tokens: 5 },
+        cachedInput: 11,
+      },
+      {
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: 0,
+          cache_read_input_tokens: 13,
+          output_tokens: 5,
+        },
+        cachedInput: 13,
+        costUsd: 0.0002366,
+      },
+      {
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: 17,
+          cache_read_input_tokens: 5,
+          output_tokens: 5,
+        },
+        cachedInput: 17,
+      },
+      {
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: -1,
+          cache_read_input_tokens: "bad",
+          output_tokens: 5,
+        },
+        cachedInput: 0,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const result = await parseCodexCostJsonl(
+        chunks(
+          `${JSON.stringify({
+            type: "event_msg",
+            timestamp: "2026-08-20T10:00:01Z",
+            payload: {
+              type: "token_count",
+              info: { model: "gpt-5.6-terra", total_token_usage: testCase.usage },
+            },
+          })}\n`,
+        ),
+        { scan: {} },
+      );
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.tokens).toMatchObject({
+        input: 100,
+        cachedInput: testCase.cachedInput,
+        output: 5,
+      });
+      if ("costUsd" in testCase) expect(result.rows[0]?.costUsd).toBeCloseTo(testCase.costUsd, 12);
+    }
+  });
+
   it("deduplicates last usage fallbacks and fails closed for unknown prices", async () => {
     const line =
       '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"model":"unlisted","last_token_usage":{"input_tokens":7,"output_tokens":2}}}}\n';
