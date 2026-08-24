@@ -1,7 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repositoryRoot = new URL("../", import.meta.url).pathname;
+const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const domainRoots = [
   "packages/contracts",
   "packages/core",
