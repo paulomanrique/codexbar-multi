@@ -2,6 +2,7 @@ import type { ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  claudeOAuthPlanUtilizationAccountKey,
   PlanUtilizationHistoryBuckets,
   PlanUtilizationHistoryCoordinator,
   PlanUtilizationHistoryEntry,
@@ -771,6 +772,77 @@ describe("plan-utilization history coordinator", () => {
     );
     expect(saved?.antigravity?.accounts.Z).toHaveLength(2);
     expect(saved?.antigravity?.accounts.Å).toEqual([history]);
+  });
+
+  it("records Claude OAuth only in its opaque owner bucket without adopting existing history", async () => {
+    const owner = "a".repeat(64);
+    const accountKey = claudeOAuthPlanUtilizationAccountKey(owner);
+    if (accountKey === undefined) throw new Error("fixture owner must be valid");
+    const unscoped = new PlanUtilizationSeriesHistory({
+      name: "session",
+      windowMinutes: 300,
+      entries: [sample(5).entry],
+    });
+    const sticky = new PlanUtilizationSeriesHistory({
+      name: "session",
+      windowMinutes: 300,
+      entries: [sample(15).entry],
+    });
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        claude: new PlanUtilizationHistoryBuckets({
+          preferredAccountKey: "identity-owner",
+          unscoped: [unscoped],
+          accounts: { "identity-owner": [sticky] },
+        }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+    await expect(
+      Effect.runPromise(
+        coordinator.recordClaudeOAuth({
+          historyOwnerIdentifier: owner,
+          capturedAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+          snapshot: usageSnapshot({ primary: { usedPercent: 35, windowMinutes: 300 } }),
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(saved?.claude?.preferredAccountKey).toBe(accountKey);
+    expect(saved?.claude?.unscoped).toEqual([unscoped]);
+    expect(saved?.claude?.accounts["identity-owner"]).toEqual([sticky]);
+    expect(saved?.claude?.accounts[accountKey]?.[0]?.entries[0]?.usedPercent).toBe(35);
+  });
+
+  it("does not load or save Claude OAuth history without a valid owner", async () => {
+    let loads = 0;
+    let saves = 0;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.sync(() => {
+        loads += 1;
+        return {};
+      }),
+      save: () =>
+        Effect.sync(() => {
+          saves += 1;
+        }),
+    });
+    for (const historyOwnerIdentifier of [undefined, "invalid", "f".repeat(63)]) {
+      await expect(
+        Effect.runPromise(
+          coordinator.recordClaudeOAuth({
+            ...(historyOwnerIdentifier === undefined ? {} : { historyOwnerIdentifier }),
+            capturedAt,
+            snapshot: usageSnapshot({ primary: { usedPercent: 35, windowMinutes: 300 } }),
+          }),
+        ),
+      ).resolves.toBe(false);
+    }
+    expect(loads).toBe(0);
+    expect(saves).toBe(0);
   });
 
   it("removes only the requested provider and persists the new namespace", async () => {

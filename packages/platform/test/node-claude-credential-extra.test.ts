@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { discoverNodeClaudeCredential } from "../src/node-claude-credential.ts";
 import { posix } from "node:path";
 
-describe("credential reader still exposes only accessToken", () => {
+describe("credential reader exposes only accessToken and its opaque history owner", () => {
   it("JSON.stringify never contains refreshToken", () => {
     const payload = {
       claudeAiOauth: {
@@ -35,7 +35,7 @@ describe("credential reader still exposes only accessToken", () => {
         close: () => {},
       }),
     });
-    expect(Object.keys(result)).toEqual(["accessToken"]);
+    expect(Object.keys(result)).toEqual(["accessToken", "historyOwnerIdentifier"]);
     expect(JSON.stringify(result)).not.toContain("refresh");
     expect(JSON.stringify(result)).not.toContain("refresh-should-not-leak");
   });

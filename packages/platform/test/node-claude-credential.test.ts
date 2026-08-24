@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { join, posix, win32 } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  deriveClaudeOAuthHistoryOwnerIdentifier,
   discoverNodeClaudeCredential,
   type NodeClaudeCredentialOptions,
   type NodeClaudeFileHandle,
@@ -9,6 +11,12 @@ import {
 } from "../src/node-claude-credential.ts";
 
 const secret = "sk-claude-secret-value-123";
+const refreshSecret = "refresh-should-not-leak";
+const expectedOwner = (kind: "access" | "refresh", value: string) =>
+  createHash("sha256")
+    .update(`codexbar:claude-oauth-history-owner:v1\0${kind}\0${value}`, "utf8")
+    .digest("hex");
+const refreshOwner = expectedOwner("refresh", refreshSecret);
 const home = "/home/alice";
 const windowsHome = "C:\\Users\\Alice";
 const workingDirectory = "/tmp/probe";
@@ -17,7 +25,7 @@ const windowsWorkingDirectory = "D:\\work\\probe";
 const validPayload = {
   claudeAiOauth: {
     accessToken: `  ${secret}  `,
-    refreshToken: "refresh-should-not-leak",
+    refreshToken: refreshSecret,
     expiresAt: 9999999999999,
   },
   mcpOAuth: { accessToken: "mcp-token" },
@@ -90,7 +98,7 @@ describe("Node Claude credential discovery (Swift credentialsURL parity)", () =>
   it("reads the default homedir path when CLAUDE_CONFIG_DIR is absent", () => {
     const { credential, paths } = discover({ environment: {} });
     expect(paths[0]).toBe(posix.join(home, ".claude", ".credentials.json"));
-    expect(credential).toEqual({ accessToken: secret });
+    expect(credential).toEqual({ accessToken: secret, historyOwnerIdentifier: refreshOwner });
   });
 
   it("uses a nonempty HOME environment value before the host homedir", () => {
@@ -108,7 +116,7 @@ describe("Node Claude credential discovery (Swift credentialsURL parity)", () =>
     expect(paths[0]).toBe(
       posix.join(workingDirectory, "relative-home", ".claude", ".credentials.json"),
     );
-    expect(credential).toEqual({ accessToken: secret });
+    expect(credential).toEqual({ accessToken: secret, historyOwnerIdentifier: refreshOwner });
   });
 
   it("uses CLAUDE_CONFIG_DIR as a literal nonempty root without trimming", () => {
@@ -178,7 +186,10 @@ describe("Node Claude credential discovery (Swift credentialsURL parity)", () =>
       open: () => handleFor(JSON.stringify(validPayload), regularStat(), { count: 0 }),
     });
     expect(windowsPaths[0]).toBe(win32.join("C:\\Custom\\ClaudeConfig", ".credentials.json"));
-    expect(windowsCredential).toEqual({ accessToken: secret });
+    expect(windowsCredential).toEqual({
+      accessToken: secret,
+      historyOwnerIdentifier: refreshOwner,
+    });
 
     const relativeWindows: string[] = [];
     discoverNodeClaudeCredential({
@@ -222,19 +233,34 @@ describe("Node Claude credential discovery (Swift credentialsURL parity)", () =>
       open: () => handleFor(JSON.stringify(validPayload), regularStat(), { count: 0 }),
     });
     expect(paths[0]).toBe(join("/fixture/claude", ".credentials.json"));
-    expect(credential).toEqual({ accessToken: secret });
+    expect(credential).toEqual({ accessToken: secret, historyOwnerIdentifier: refreshOwner });
   });
 
   it("returns only trimmed claudeAiOauth.accessToken", () => {
     const { credential } = discover({
       environment: { CLAUDE_CONFIG_DIR: "/custom" },
     });
-    expect(credential).toEqual({ accessToken: secret });
-    expect(Object.keys(credential)).toEqual(["accessToken"]);
+    expect(credential).toEqual({ accessToken: secret, historyOwnerIdentifier: refreshOwner });
+    expect(Object.keys(credential)).toEqual(["accessToken", "historyOwnerIdentifier"]);
     const serialized = JSON.stringify(credential);
     expect(serialized).not.toContain("refresh");
     expect(serialized).not.toContain("cookie");
     expect(serialized).not.toContain("/custom");
+  });
+
+  it("derives the Swift-compatible opaque owner and prefers refresh credentials", () => {
+    expect(
+      deriveClaudeOAuthHistoryOwnerIdentifier({
+        accessToken: " test-access ",
+        refreshToken: " test-refresh ",
+      }),
+    ).toBe(expectedOwner("refresh", "test-refresh"));
+    expect(
+      deriveClaudeOAuthHistoryOwnerIdentifier({ accessToken: " test-access ", refreshToken: " " }),
+    ).toBe(expectedOwner("access", "test-access"));
+    expect(deriveClaudeOAuthHistoryOwnerIdentifier({ accessToken: " ", refreshToken: null })).toBe(
+      undefined,
+    );
   });
 
   it("rejects MCP-only, malformed, and missing access tokens", () => {

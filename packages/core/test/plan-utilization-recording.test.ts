@@ -84,6 +84,59 @@ describe("first-party plan-utilization recording policy", () => {
     expect(calls).toEqual([{ snapshot, capturedAt }]);
   });
 
+  it("routes Claude OAuth only to opaque owner recording and fails closed without it", async () => {
+    const oauthCalls: unknown[] = [];
+    let identityCalls = 0;
+    const coordinator = {
+      recordAntigravity: () => Effect.succeed(false),
+      recordClaudeIdentity: () =>
+        Effect.sync(() => {
+          identityCalls += 1;
+          return true;
+        }),
+      recordClaudeOAuth: (input: unknown) =>
+        Effect.sync(() => {
+          oauthCalls.push(input);
+          return true;
+        }),
+      recordCodex: () => Effect.succeed(false),
+      recordGenericSessionEquivalent: () => Effect.succeed(false),
+    };
+    await expect(
+      Effect.runPromise(
+        recordFirstPartyPlanUtilization({
+          coordinator,
+          providerId: "claude",
+          strategyId: "claude.oauth",
+          claudeOAuthHistoryOwnerIdentifier: "a".repeat(64),
+          snapshot,
+          capturedAt,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(oauthCalls).toEqual([{ snapshot, capturedAt, historyOwnerIdentifier: "a".repeat(64) }]);
+    expect(identityCalls).toBe(0);
+
+    const withoutOAuthRecorder = {
+      recordAntigravity: coordinator.recordAntigravity,
+      recordClaudeIdentity: coordinator.recordClaudeIdentity,
+      recordCodex: coordinator.recordCodex,
+      recordGenericSessionEquivalent: coordinator.recordGenericSessionEquivalent,
+    };
+    await expect(
+      Effect.runPromise(
+        recordFirstPartyPlanUtilization({
+          coordinator: withoutOAuthRecorder,
+          providerId: "claude",
+          strategyId: "claude.oauth",
+          snapshot,
+          capturedAt,
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(identityCalls).toBe(0);
+  });
+
   it("skips opt-in and still-unported dedicated history providers", async () => {
     let calls = 0;
     const coordinator = {

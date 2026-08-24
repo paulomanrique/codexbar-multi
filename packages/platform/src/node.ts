@@ -1172,8 +1172,11 @@ export {
   type NodeCodexCredential,
 } from "./node-codex-credential.ts";
 export {
+  deriveClaudeOAuthHistoryOwnerIdentifier,
   discoverNodeClaudeCredential,
+  resolveNodeClaudeOAuthHistoryOwner,
   type NodeClaudeCredential,
+  type NodeClaudeOAuthHistoryOwnerOptions,
 } from "./node-claude-credential.ts";
 
 /** Only an allowlisted, encrypted cookie header is released to a declared provider domain. */

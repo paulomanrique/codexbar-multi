@@ -1,12 +1,17 @@
+import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+
+import type { CredentialStoreService } from "@codexbar/core";
+import { Effect } from "effect";
 
 const MAXIMUM_CREDENTIAL_BYTES = 1024 * 1024;
 const MAXIMUM_CREDENTIAL_SIZE = BigInt(MAXIMUM_CREDENTIAL_BYTES);
 
 export interface NodeClaudeCredential {
   readonly accessToken?: string;
+  readonly historyOwnerIdentifier?: string;
 }
 
 export interface NodeClaudePathApi {
@@ -38,6 +43,35 @@ export interface NodeClaudeCredentialOptions {
   readonly open?: (path: string, flags: number) => NodeClaudeFileHandle;
 }
 
+export interface NodeClaudeOAuthHistoryOwnerOptions {
+  readonly credentialStore: CredentialStoreService;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly discoverOptions?: NodeClaudeCredentialOptions;
+}
+
+const CLAUDE_OAUTH_HISTORY_OWNER_PREFIX = "codexbar:claude-oauth-history-owner:v1";
+const CLAUDE_OAUTH_CREDENTIAL_KEY = "provider/claude/secret/CLAUDE_OAUTH_ACCESS_TOKEN";
+
+const normalizedSecret = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized === "" ? undefined : normalized;
+};
+
+export const deriveClaudeOAuthHistoryOwnerIdentifier = (input: {
+  readonly accessToken?: string | null;
+  readonly refreshToken?: string | null;
+}): string | undefined => {
+  const refreshToken = normalizedSecret(input.refreshToken);
+  const accessToken = normalizedSecret(input.accessToken);
+  const kind = refreshToken === undefined ? "access" : "refresh";
+  const secret = refreshToken ?? accessToken;
+  if (secret === undefined) return undefined;
+  return createHash("sha256")
+    .update(`${CLAUDE_OAUTH_HISTORY_OWNER_PREFIX}\0${kind}\0${secret}`, "utf8")
+    .digest("hex");
+};
+
 /**
  * Resolves Claude's `.credentials.json` using Swift `credentialsURL` precedence:
  * `CLAUDE_SECURESTORAGE_CONFIG_DIR` wins when present (empty → default `~/.claude`);
@@ -64,13 +98,58 @@ export function discoverNodeClaudeCredential(
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
     const claude = (parsed as Record<string, unknown>).claudeAiOauth;
     if (typeof claude !== "object" || claude === null || Array.isArray(claude)) return {};
-    const accessToken = nonEmptyString((claude as Record<string, unknown>).accessToken);
+    const values = claude as Record<string, unknown>;
+    const accessToken = nonEmptyString(values.accessToken);
     if (accessToken === undefined) return {};
-    return { accessToken };
+    const historyOwnerIdentifier = deriveClaudeOAuthHistoryOwnerIdentifier({
+      accessToken,
+      ...(typeof values.refreshToken === "string" ? { refreshToken: values.refreshToken } : {}),
+    });
+    return {
+      accessToken,
+      ...(historyOwnerIdentifier === undefined ? {} : { historyOwnerIdentifier }),
+    };
   } catch {
     return {};
   }
 }
+
+const environmentHistoryOwner = (
+  environment: Readonly<Record<string, string | undefined>>,
+): string | undefined => {
+  const namespaced = environment.CODEXBAR_MULTI_CLAUDE_CLAUDE_OAUTH_ACCESS_TOKEN;
+  const accessToken = namespaced !== undefined ? namespaced : environment.CLAUDE_OAUTH_ACCESS_TOKEN;
+  return deriveClaudeOAuthHistoryOwnerIdentifier(accessToken === undefined ? {} : { accessToken });
+};
+
+/**
+ * Resolves only the opaque owner used by backend history. Its ordering mirrors
+ * first-party runtime secrets: CodexBar keyring, Claude's private credential
+ * file, then the namespaced/native environment setting.
+ */
+export const resolveNodeClaudeOAuthHistoryOwner = (
+  options: NodeClaudeOAuthHistoryOwnerOptions,
+): Effect.Effect<string | undefined> => {
+  const environment = options.environment ?? process.env;
+  const injectedOwner = (): string | undefined => {
+    const discovered = discoverNodeClaudeCredential({
+      ...options.discoverOptions,
+      environment,
+    });
+    return discovered.historyOwnerIdentifier ?? environmentHistoryOwner(environment);
+  };
+  return Effect.flatMap(
+    options.credentialStore
+      .read(CLAUDE_OAUTH_CREDENTIAL_KEY)
+      .pipe(Effect.orElseSucceed(() => undefined)),
+    (stored) =>
+      Effect.sync(() =>
+        stored === undefined
+          ? injectedOwner()
+          : deriveClaudeOAuthHistoryOwnerIdentifier({ accessToken: stored }),
+      ),
+  );
+};
 
 const credentialsPath = (
   environment: Readonly<Record<string, string | undefined>>,

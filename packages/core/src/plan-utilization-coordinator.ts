@@ -21,6 +21,7 @@ import {
   resolveCodexHistoryIdentity,
 } from "./codex-history-ownership.ts";
 import {
+  claudeOAuthPlanUtilizationAccountKey,
   claudePlanUtilizationIdentityAccountKey,
   claudePlanUtilizationLegacyEmailAccountKey,
 } from "./claude-history-ownership.ts";
@@ -219,6 +220,31 @@ export class PlanUtilizationHistoryCoordinator {
         return true;
       }),
     );
+  }
+
+  /**
+   * OAuth history never borrows sticky identity or unscoped history. The
+   * secret-derived owner is validated and transformed into an opaque account
+   * key before the normal serialized recorder sees it.
+   */
+  recordClaudeOAuth(input: {
+    readonly snapshot: UsageSnapshot;
+    readonly capturedAt: Date;
+    readonly historyOwnerIdentifier?: string | null;
+  }): Effect.Effect<boolean, InfrastructureError> {
+    const accountKey = claudeOAuthPlanUtilizationAccountKey(input.historyOwnerIdentifier);
+    if (accountKey === undefined) return Effect.succeed(false);
+    const samples = extractPlanUtilizationSeriesSamples({
+      providerId: "claude",
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+    return this.record({
+      providerId: "claude",
+      accountKey,
+      samples,
+      updatePreferredAccountKey: true,
+    });
   }
 
   /**
