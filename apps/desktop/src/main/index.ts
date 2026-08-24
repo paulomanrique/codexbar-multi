@@ -52,6 +52,7 @@ import {
   LegacyImportRollbackResultDTO,
   RollbackLegacyImportRequestDTO,
   HostStatusDTO,
+  DefaultBrowserSessionStatusesDTO,
 } from "@codexbar/contracts";
 import {
   makeCredentialBrowserSessions,
@@ -67,6 +68,7 @@ import {
   claudeSwapProcessEnvironment,
   makeNodePrivateFileStore,
   makeNodeProcessRunner,
+  readDefaultBrowserSessionStatuses,
   inspectNodeLegacyImport,
   executeNodeLegacyImport,
   rollbackNodeLegacyImport,
@@ -709,6 +711,9 @@ void desktopReady?.then(async () => {
     const decodeSpendDashboard = Schema.decodeUnknownPromise(SpendDashboardDTO);
     const decodeLogin = Schema.decodeUnknownPromise(LoginRequestDTO);
     const decodeLoginResult = Schema.decodeUnknownPromise(LoginResultDTO);
+    const decodeDefaultBrowserSessionStatuses = Schema.decodeUnknownPromise(
+      DefaultBrowserSessionStatusesDTO,
+    );
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
     const decodeActivateClaudeSwapAccount = Schema.decodeUnknownPromise(
@@ -813,6 +818,14 @@ void desktopReady?.then(async () => {
       handleDesktopRequest(async () => {
         await logoutBrowserSession(await decodeLogin(input));
         return decodeVoid(undefined);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.getDefaultBrowserSessionStatuses, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeVoid(input);
+        return decodeDefaultBrowserSessionStatuses(
+          await readDefaultBrowserSessionStatuses(credentials),
+        );
       }),
     );
     ipcMain.handle(DesktopChannels.refreshProvider, (_event, input: unknown) =>

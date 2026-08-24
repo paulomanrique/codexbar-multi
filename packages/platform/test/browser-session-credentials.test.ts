@@ -1,9 +1,9 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import type { CredentialStoreService } from "@codexbar/core";
+import { InfrastructureError, type CredentialStoreService } from "@codexbar/core";
 import type { ProviderId } from "@codexbar/contracts";
 
-import { makeCredentialBrowserSessions } from "../src/node.ts";
+import { makeCredentialBrowserSessions, readDefaultBrowserSessionStatuses } from "../src/node.ts";
 
 const storedBrowserSession = (
   provider: ProviderId,
@@ -182,5 +182,100 @@ describe("browser session credential account routing", () => {
     ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "browser session" });
     expect(reads).toEqual([]);
     expect(defaultAccountCalls).toBe(0);
+  });
+});
+
+describe("default browser session status projection", () => {
+  it("reports persisted only for strict default T3 and Grok credentials", async () => {
+    const reads: string[] = [];
+    await expect(
+      readDefaultBrowserSessionStatuses(
+        store(
+          {
+            "browser-session/t3chat/default": storedBrowserSession("t3chat", "default", {
+              "t3.chat": "__session=fixture-secret",
+            }),
+            "browser-session/grok/default": storedBrowserSession("grok", "default", {
+              "grok.com": "sso=fixture-secret",
+            }),
+            "browser-session/openai/default": storedBrowserSession("openai", "default", {
+              "openai.com": "must-not-read",
+            }),
+          },
+          reads,
+        ),
+      ),
+    ).resolves.toEqual({
+      schemaVersion: 1,
+      t3chatDefault: "persisted",
+      grokDefault: "persisted",
+    });
+    expect(reads).toEqual(["browser-session/t3chat/default", "browser-session/grok/default"]);
+  });
+
+  it("reports absent for missing exact default credentials", async () => {
+    await expect(readDefaultBrowserSessionStatuses(store({}))).resolves.toEqual({
+      schemaVersion: 1,
+      t3chatDefault: "absent",
+      grokDefault: "absent",
+    });
+  });
+
+  it.each([
+    ["corrupt JSON", "{not-json"],
+    [
+      "provider mismatch",
+      storedBrowserSession("openai", "default", { "t3.chat": "__session=fixture-secret" }),
+    ],
+    [
+      "account mismatch",
+      storedBrowserSession("t3chat", "other", { "t3.chat": "__session=fixture-secret" }),
+    ],
+    [
+      "missing domain",
+      storedBrowserSession("t3chat", "default", { "www.t3.chat": "__session=fixture-secret" }),
+    ],
+    ["blank header", storedBrowserSession("t3chat", "default", { "t3.chat": "   " })],
+  ] as const)(
+    "reports unavailable for %s without exposing payload text",
+    async (_label, stored) => {
+      const result = await readDefaultBrowserSessionStatuses(
+        store({
+          "browser-session/t3chat/default": stored,
+          "browser-session/grok/default": storedBrowserSession("grok", "default", {
+            "grok.com": "sso=fixture-secret",
+          }),
+        }),
+      );
+      expect(result).toEqual({
+        schemaVersion: 1,
+        t3chatDefault: "unavailable",
+        grokDefault: "persisted",
+      });
+      expect(JSON.stringify(result)).not.toContain("fixture-secret");
+      expect(JSON.stringify(result)).not.toContain("__session");
+      expect(JSON.stringify(result)).not.toContain("sso=");
+    },
+  );
+
+  it("reports unavailable on credential-store failure without exposing the cause", async () => {
+    const result = await readDefaultBrowserSessionStatuses({
+      read: () =>
+        Effect.fail(
+          new InfrastructureError(
+            "keyring",
+            "fixture-secret should stay host-only",
+            new Error("fixture-secret cause"),
+          ),
+        ),
+      write: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    expect(result).toEqual({
+      schemaVersion: 1,
+      t3chatDefault: "unavailable",
+      grokDefault: "unavailable",
+    });
+    expect(JSON.stringify(result)).not.toContain("fixture-secret");
   });
 });

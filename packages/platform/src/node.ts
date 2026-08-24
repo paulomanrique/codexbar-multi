@@ -30,7 +30,11 @@ import {
   type ProcessSpec,
   type PrivateFileStoreService,
 } from "@codexbar/core";
-import type { ProviderId } from "@codexbar/contracts";
+import type {
+  DefaultBrowserSessionStatusesDTO,
+  DefaultBrowserSessionStatusStateDTO,
+  ProviderId,
+} from "@codexbar/contracts";
 import type {
   FirstPartyBrowserSessions,
   FirstPartyLocalCapabilities,
@@ -1209,6 +1213,59 @@ const parseStoredBrowserSessionCookieHeader = (
   }
   return cookieHeader;
 };
+
+const defaultBrowserSessionStatusDescriptors = [
+  {
+    key: "browser-session/t3chat/default",
+    provider: "t3chat",
+    accountId: "default",
+    domain: "t3.chat",
+  },
+  {
+    key: "browser-session/grok/default",
+    provider: "grok",
+    accountId: "default",
+    domain: "grok.com",
+  },
+] as const;
+
+const readDefaultBrowserSessionStatus = async (
+  credentials: CredentialStoreService,
+  descriptor: (typeof defaultBrowserSessionStatusDescriptors)[number],
+): Promise<DefaultBrowserSessionStatusStateDTO> => {
+  try {
+    const stored = await Effect.runPromise(credentials.read(descriptor.key));
+    if (stored === undefined) return "absent";
+    try {
+      parseStoredBrowserSessionCookieHeader(
+        stored,
+        descriptor.provider,
+        descriptor.accountId,
+        descriptor.domain,
+      );
+      return "persisted";
+    } catch {
+      return "unavailable";
+    }
+  } catch {
+    return "unavailable";
+  }
+};
+
+/** Host-only status projection for the two renderer-supported default browser sessions. */
+export const readDefaultBrowserSessionStatuses = async (
+  credentials: CredentialStoreService,
+): Promise<DefaultBrowserSessionStatusesDTO> => ({
+  schemaVersion: 1,
+  t3chatDefault: await readDefaultBrowserSessionStatus(
+    credentials,
+    defaultBrowserSessionStatusDescriptors[0],
+  ),
+  grokDefault: await readDefaultBrowserSessionStatus(
+    credentials,
+    defaultBrowserSessionStatusDescriptors[1],
+  ),
+});
 
 /** Only an allowlisted, encrypted cookie header is released to a declared provider domain. */
 export const makeCredentialBrowserSessions = (

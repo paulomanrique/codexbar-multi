@@ -2,11 +2,14 @@ import type {
   CostUsageRecordDTO,
   DashboardAccountDTO,
   DashboardProviderDTO,
+  DefaultBrowserSessionStatusesDTO,
+  DefaultBrowserSessionStatusStateDTO,
   ProviderId,
 } from "@codexbar/contracts";
 import { PROVIDER_IDS } from "@codexbar/contracts";
 
 export type ProviderImplementationPresentation = "parity-pending" | "unported";
+export type BrowserLoginPresentationStatus = "idle" | "waiting" | "connected" | "unavailable";
 
 /**
  * `partial` deliberately does not mean that a provider is ready for release.
@@ -46,6 +49,90 @@ export const claudeSwapActivationRequest = (
   provider.id === "claude" && !account.active && account.canActivate
     ? { provider: "claude", accountId: account.id }
     : undefined;
+
+export const browserLoginStatusFromDefaultSessionState = (
+  state: DefaultBrowserSessionStatusStateDTO,
+): BrowserLoginPresentationStatus =>
+  state === "persisted" ? "connected" : state === "absent" ? "idle" : "unavailable";
+
+export interface BrowserSessionPresentationStatuses {
+  readonly t3chat: BrowserLoginPresentationStatus;
+  readonly grok: BrowserLoginPresentationStatus;
+}
+
+/** Serializes the two browser-login mutations before React can render disabled controls. */
+export const makeBrowserLoginMutationGate = () => {
+  let pending = false;
+  return {
+    tryStart: (): boolean => {
+      if (pending) return false;
+      pending = true;
+      return true;
+    },
+    finish: (): void => {
+      pending = false;
+    },
+  };
+};
+
+/**
+ * Applies only the newest credential-status read. Login/logout invalidates any
+ * older bootstrap read before mutating its visible pending state.
+ */
+export const makeDefaultBrowserSessionStatusLoader = (options: {
+  readonly read: () => Promise<DefaultBrowserSessionStatusesDTO>;
+  readonly publish: (statuses: BrowserSessionPresentationStatuses) => void;
+}) => {
+  let generation = 0;
+  return {
+    invalidate: (): void => {
+      generation += 1;
+    },
+    load: async (): Promise<void> => {
+      const requestGeneration = ++generation;
+      try {
+        const statuses = await options.read();
+        if (requestGeneration !== generation) return;
+        options.publish({
+          t3chat: browserLoginStatusFromDefaultSessionState(statuses.t3chatDefault),
+          grok: browserLoginStatusFromDefaultSessionState(statuses.grokDefault),
+        });
+      } catch {
+        if (requestGeneration !== generation) return;
+        options.publish({ t3chat: "unavailable", grok: "unavailable" });
+      }
+    },
+  };
+};
+
+const withLoginProviderName = (template: string, providerName: string): string =>
+  template.replaceAll("T3 Chat", providerName);
+
+export const browserLoginActionState = (
+  status: BrowserLoginPresentationStatus,
+  providerName: string,
+  copy: {
+    readonly waiting: string;
+    readonly connected: string;
+    readonly start: string;
+    readonly logout: string;
+    readonly unavailable: string;
+  },
+) =>
+  ({
+    loginLabel:
+      status === "unavailable"
+        ? `${providerName}: ${copy.unavailable}`
+        : status === "waiting"
+          ? `${providerName}: ${copy.waiting}`
+          : status === "connected"
+            ? withLoginProviderName(copy.connected, providerName)
+            : withLoginProviderName(copy.start, providerName),
+    loginDisabled: status === "waiting" || status === "unavailable",
+    showLogout: status === "connected",
+    logoutLabel: `${providerName}: ${copy.logout}`,
+    logoutDisabled: status === "unavailable",
+  }) as const;
 
 export const historySince = (days: number, now: number = Date.now()): number =>
   Math.max(0, now - Math.max(1, Math.floor(days)) * 24 * 60 * 60 * 1000);

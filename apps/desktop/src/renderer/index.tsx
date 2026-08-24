@@ -22,6 +22,10 @@ import type {
 
 import { createLocalization } from "./localization.ts";
 import {
+  type BrowserLoginPresentationStatus,
+  browserLoginActionState,
+  makeBrowserLoginMutationGate,
+  makeDefaultBrowserSessionStatusLoader,
   costTotals,
   claudeSwapActivationRequest,
   displayPercent,
@@ -39,7 +43,6 @@ import "./styles.css";
 
 type DashboardTab = "usage" | "history" | "costs" | "spend" | "settings";
 type BrowserLoginProvider = "t3chat" | "grok";
-type BrowserLoginStatus = "idle" | "waiting" | "connected";
 
 const HISTORY_DAYS = 30;
 const HISTORY_LIMIT = 100;
@@ -75,8 +78,6 @@ const formatNumber = (locale: string, value: number): string =>
   new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
 const formatUsd = (locale: string, value: number): string =>
   new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(value);
-const withLoginProviderName = (template: string, providerName: string): string =>
-  template.replaceAll("T3 Chat", providerName);
 
 function ProviderCard({
   provider,
@@ -613,8 +614,21 @@ function App() {
   const [spendDashboard, setSpendDashboard] = useState<SpendDashboardDTO>();
   const [spendLoading, setSpendLoading] = useState(true);
   const [spendError, setSpendError] = useState(false);
-  const [t3Status, setT3Status] = useState<BrowserLoginStatus>("idle");
-  const [grokStatus, setGrokStatus] = useState<BrowserLoginStatus>("idle");
+  const [t3Status, setT3Status] = useState<BrowserLoginPresentationStatus>("idle");
+  const [grokStatus, setGrokStatus] = useState<BrowserLoginPresentationStatus>("idle");
+  const [browserLoginMutationPending, setBrowserLoginMutationPending] = useState(false);
+  const browserLoginMutationGate = useMemo(() => makeBrowserLoginMutationGate(), []);
+  const browserSessionStatusLoader = useMemo(
+    () =>
+      makeDefaultBrowserSessionStatusLoader({
+        read: () => window.codexbar.getDefaultBrowserSessionStatuses(),
+        publish: (statuses) => {
+          setT3Status(statuses.t3chat);
+          setGrokStatus(statuses.grok);
+        },
+      }),
+    [],
+  );
   const selectedProvider = snapshot?.providers.find(
     (provider) => provider.id === selectedProviderId,
   );
@@ -657,6 +671,7 @@ function App() {
       setSessionQuotaNotificationSettingsError(localization.upstream("Unavailable"));
     }
   };
+  const loadDefaultBrowserSessionStatuses = (): Promise<void> => browserSessionStatusLoader.load();
   const loadSpend = async (): Promise<void> => {
     setSpendLoading(true);
     setSpendError(false);
@@ -688,6 +703,9 @@ function App() {
   }, []);
   useEffect(() => {
     void loadSessionQuotaNotificationSettings();
+  }, []);
+  useEffect(() => {
+    void loadDefaultBrowserSessionStatuses();
   }, []);
   useEffect(() => {
     void loadSpend();
@@ -848,34 +866,57 @@ function App() {
     stale: localization.upstream("stale data"),
     partial: localization.upstream("Partial estimate"),
   };
-  const loginActionLabel = (status: BrowserLoginStatus, providerName: string): string =>
-    status === "waiting"
-      ? `${providerName}: ${localization.t("loginWaiting")}`
-      : status === "connected"
-        ? withLoginProviderName(localization.t("loginConnected"), providerName)
-        : withLoginProviderName(localization.t("loginStart"), providerName);
-  const logoutActionLabel = (providerName: string): string =>
-    `${providerName}: ${localization.t("logout")}`;
+  const loginCopy = {
+    waiting: localization.t("loginWaiting"),
+    connected: localization.t("loginConnected"),
+    start: localization.t("loginStart"),
+    logout: localization.t("logout"),
+    unavailable: copy.unavailable,
+  };
+  const t3LoginAction = browserLoginActionState(t3Status, "T3 Chat", loginCopy);
+  const grokLoginAction = browserLoginActionState(grokStatus, "Grok", loginCopy);
   const startBrowserLogin = (
     provider: BrowserLoginProvider,
-    setStatus: (status: BrowserLoginStatus) => void,
+    setStatus: (status: BrowserLoginPresentationStatus) => void,
   ): void => {
+    if (!browserLoginMutationGate.tryStart()) return;
+    setBrowserLoginMutationPending(true);
+    browserSessionStatusLoader.invalidate();
     setStatus("waiting");
     window.codexbar.startLogin(DEFAULT_BROWSER_LOGIN_REQUESTS[provider]).then(
-      (result) => setStatus(result.status === "connected" ? "connected" : "idle"),
       () => {
+        browserLoginMutationGate.finish();
+        setBrowserLoginMutationPending(false);
+        void loadDefaultBrowserSessionStatuses();
+      },
+      () => {
+        browserLoginMutationGate.finish();
+        setBrowserLoginMutationPending(false);
         setError(copy.unavailable);
-        setStatus("idle");
+        void loadDefaultBrowserSessionStatuses();
       },
     );
   };
   const logoutBrowserLogin = (
     provider: BrowserLoginProvider,
-    setStatus: (status: BrowserLoginStatus) => void,
+    setStatus: (status: BrowserLoginPresentationStatus) => void,
   ): void => {
+    if (!browserLoginMutationGate.tryStart()) return;
+    setBrowserLoginMutationPending(true);
+    browserSessionStatusLoader.invalidate();
+    setStatus("waiting");
     void window.codexbar.logout(DEFAULT_BROWSER_LOGIN_REQUESTS[provider]).then(
-      () => setStatus("idle"),
-      () => setError(copy.unavailable),
+      () => {
+        browserLoginMutationGate.finish();
+        setBrowserLoginMutationPending(false);
+        void loadDefaultBrowserSessionStatuses();
+      },
+      () => {
+        browserLoginMutationGate.finish();
+        setBrowserLoginMutationPending(false);
+        setError(copy.unavailable);
+        void loadDefaultBrowserSessionStatuses();
+      },
     );
   };
   const focusTab = (next: DashboardTab): void => {
@@ -910,25 +951,33 @@ function App() {
       )}
       <div className="login-actions">
         <button
-          disabled={t3Status === "waiting"}
+          disabled={browserLoginMutationPending || t3LoginAction.loginDisabled}
           onClick={() => startBrowserLogin("t3chat", setT3Status)}
         >
-          {loginActionLabel(t3Status, "T3 Chat")}
+          {t3LoginAction.loginLabel}
         </button>
-        {t3Status === "connected" ? (
-          <button className="secondary" onClick={() => logoutBrowserLogin("t3chat", setT3Status)}>
-            {logoutActionLabel("T3 Chat")}
+        {t3LoginAction.showLogout ? (
+          <button
+            className="secondary"
+            disabled={browserLoginMutationPending || t3LoginAction.logoutDisabled}
+            onClick={() => logoutBrowserLogin("t3chat", setT3Status)}
+          >
+            {t3LoginAction.logoutLabel}
           </button>
         ) : null}
         <button
-          disabled={grokStatus === "waiting"}
+          disabled={browserLoginMutationPending || grokLoginAction.loginDisabled}
           onClick={() => startBrowserLogin("grok", setGrokStatus)}
         >
-          {loginActionLabel(grokStatus, "Grok")}
+          {grokLoginAction.loginLabel}
         </button>
-        {grokStatus === "connected" ? (
-          <button className="secondary" onClick={() => logoutBrowserLogin("grok", setGrokStatus)}>
-            {logoutActionLabel("Grok")}
+        {grokLoginAction.showLogout ? (
+          <button
+            className="secondary"
+            disabled={browserLoginMutationPending || grokLoginAction.logoutDisabled}
+            onClick={() => logoutBrowserLogin("grok", setGrokStatus)}
+          >
+            {grokLoginAction.logoutLabel}
           </button>
         ) : null}
       </div>

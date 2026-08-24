@@ -43,6 +43,7 @@ import { makeClaudeSwapApi } from "./claude-swap-api.js";
 import { makeSessionQuotaNotificationSettingsApi } from "./session-quota-notification-settings-api.js";
 import { makeLegacyImportApi } from "./legacy-import-api.js";
 import { makeHostStatusApi } from "./host-status-api.js";
+import { makeDefaultBrowserSessionStatusesApi } from "./default-browser-session-statuses-api.js";
 
 const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
 const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -110,6 +111,7 @@ const api: CodexBarDesktopApi = Object.freeze({
     ),
   ...makeClaudeSwapApi((channel, input) => ipcRenderer.invoke(channel, input)),
   ...makeProviderSettingsApi((channel, input) => ipcRenderer.invoke(channel, input)),
+  ...makeDefaultBrowserSessionStatusesApi((channel, input) => ipcRenderer.invoke(channel, input)),
   ...makeSessionQuotaNotificationSettingsApi((channel, input) =>
     ipcRenderer.invoke(channel, input),
   ),

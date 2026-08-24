@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  browserLoginActionState,
+  browserLoginStatusFromDefaultSessionState,
+  makeBrowserLoginMutationGate,
+  makeDefaultBrowserSessionStatusLoader,
   costTotals,
   displayPercent,
   firstPartyProviderId,
@@ -31,6 +35,104 @@ describe("desktop renderer view model", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("maps persisted default browser sessions into fail-closed login presentation", () => {
+    expect(browserLoginStatusFromDefaultSessionState("persisted")).toBe("connected");
+    expect(browserLoginStatusFromDefaultSessionState("absent")).toBe("idle");
+    expect(browserLoginStatusFromDefaultSessionState("unavailable")).toBe("unavailable");
+    expect(
+      browserLoginActionState("unavailable", "Grok", {
+        waiting: "Waiting for login...",
+        connected: "T3 Chat connected",
+        start: "Sign in to T3 Chat",
+        logout: "Sign out",
+        unavailable: "Unavailable",
+      }),
+    ).toEqual({
+      loginLabel: "Grok: Unavailable",
+      loginDisabled: true,
+      showLogout: false,
+      logoutLabel: "Grok: Sign out",
+      logoutDisabled: true,
+    });
+    expect(
+      browserLoginActionState("connected", "Grok", {
+        waiting: "Waiting for login...",
+        connected: "T3 Chat connected",
+        start: "Sign in to T3 Chat",
+        logout: "Sign out",
+        unavailable: "Unavailable",
+      }),
+    ).toMatchObject({
+      loginLabel: "Grok connected",
+      loginDisabled: false,
+      showLogout: true,
+    });
+  });
+
+  it("ignores stale status reads after login or logout invalidates them", async () => {
+    let resolveFirst:
+      | ((value: {
+          readonly schemaVersion: 1;
+          readonly t3chatDefault: "persisted";
+          readonly grokDefault: "persisted";
+        }) => void)
+      | undefined;
+    const first = new Promise<{
+      readonly schemaVersion: 1;
+      readonly t3chatDefault: "persisted";
+      readonly grokDefault: "persisted";
+    }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const published: unknown[] = [];
+    const loader = makeDefaultBrowserSessionStatusLoader({
+      read: () => first,
+      publish: (statuses) => published.push(statuses),
+    });
+    const pending = loader.load();
+    loader.invalidate();
+    resolveFirst?.({
+      schemaVersion: 1,
+      t3chatDefault: "persisted",
+      grokDefault: "persisted",
+    });
+    await pending;
+    expect(published).toEqual([]);
+  });
+
+  it("serializes T3 and Grok login mutations before the renderer rerenders", () => {
+    const gate = makeBrowserLoginMutationGate();
+    expect(gate.tryStart()).toBe(true);
+    expect(gate.tryStart()).toBe(false);
+    gate.finish();
+    expect(gate.tryStart()).toBe(true);
+  });
+
+  it("publishes only the latest status read and fails closed", async () => {
+    const published: unknown[] = [];
+    let attempt = 0;
+    const loader = makeDefaultBrowserSessionStatusLoader({
+      read: () => {
+        attempt += 1;
+        return attempt === 1
+          ? Promise.reject(new Error("locked keyring"))
+          : Promise.resolve({
+              schemaVersion: 1 as const,
+              t3chatDefault: "absent" as const,
+              grokDefault: "persisted" as const,
+            });
+      },
+      publish: (statuses) => published.push(statuses),
+    });
+    await loader.load();
+    await loader.load();
+    expect(published).toEqual([
+      { t3chat: "unavailable", grok: "unavailable" },
+      { t3chat: "idle", grok: "connected" },
+    ]);
+  });
+
   it("never represents a partial implementation as release-ready", () => {
     expect(implementationPresentation({ implementationStatus: "partial" })).toBe("parity-pending");
     expect(implementationPresentation({ implementationStatus: "unported" })).toBe("unported");

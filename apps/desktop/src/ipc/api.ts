@@ -36,6 +36,7 @@ import type {
   LegacyImportRollbackResultDTO,
   RollbackLegacyImportRequestDTO,
   HostStatusDTO,
+  DefaultBrowserSessionStatusesDTO,
 } from "@codexbar/contracts";
 
 export const DesktopChannels = Object.freeze({
@@ -50,6 +51,7 @@ export const DesktopChannels = Object.freeze({
   startLogin: "codexbar-multi:start-login",
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
+  getDefaultBrowserSessionStatuses: "codexbar-multi:get-default-browser-session-statuses",
   refreshProvider: "codexbar-multi:refresh-provider",
   activateClaudeSwapAccount: "codexbar-multi:activate-claude-swap-account",
   getProviderSettings: "codexbar-multi:get-provider-settings",
@@ -82,6 +84,7 @@ export interface CodexBarDesktopApi {
   readonly startLogin: (request: LoginRequestDTO) => Promise<LoginResultDTO>;
   readonly cancelLogin: (request: LoginRequestDTO) => Promise<void>;
   readonly logout: (request: LoginRequestDTO) => Promise<void>;
+  readonly getDefaultBrowserSessionStatuses: () => Promise<DefaultBrowserSessionStatusesDTO>;
   readonly refreshProvider: (
     request: RefreshProviderRequestDTO,
   ) => Promise<RefreshProviderResultDTO>;

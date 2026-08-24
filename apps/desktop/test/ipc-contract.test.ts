@@ -20,6 +20,7 @@ import {
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
   ActivateClaudeSwapAccountRequestDTO,
+  DefaultBrowserSessionStatusesDTO,
   SpendDashboardDTO,
   SpendOverviewDTO,
 } from "@codexbar/contracts";
@@ -84,6 +85,44 @@ describe("desktop IPC boundary", () => {
     });
     expect(() => decode({ provider: "openai", accountId: "source-account" })).toThrow();
     expect(() => decode({ provider: "claude", accountId: "../../2" })).toThrow();
+  });
+
+  it("allows only the closed default browser-session status projection", () => {
+    const decode = Schema.decodeUnknownSync(DefaultBrowserSessionStatusesDTO);
+    expect(
+      decode({
+        schemaVersion: 1,
+        t3chatDefault: "persisted",
+        grokDefault: "unavailable",
+        cookieHeaders: { "t3.chat": "__session=must-not-cross" },
+        domains: ["t3.chat"],
+        exportedAt: "2026-08-24T00:00:00.000Z",
+        key: "browser-session/t3chat/default",
+        accountLabel: "Personal",
+        path: "/private/keyring",
+        error: "fixture secret",
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      t3chatDefault: "persisted",
+      grokDefault: "unavailable",
+    });
+    expect(
+      Object.keys(decode({ schemaVersion: 1, t3chatDefault: "absent", grokDefault: "absent" })),
+    ).toEqual(["schemaVersion", "t3chatDefault", "grokDefault"]);
+    expect(() =>
+      decode({
+        schemaVersion: 1,
+        sessions: [{ provider: "openai", accountId: "default", state: "persisted" }],
+      }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        schemaVersion: 1,
+        t3chatDefault: "persisted",
+        grokDefault: "logged-out",
+      }),
+    ).toThrow();
   });
 
   it("allows only a bounded first-party provider settings projection", () => {

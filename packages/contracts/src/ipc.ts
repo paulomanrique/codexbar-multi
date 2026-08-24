@@ -231,6 +231,29 @@ export const LoginResultDTO = Schema.Struct({
 });
 export type LoginResultDTO = Schema.Schema.Type<typeof LoginResultDTO>;
 
+export const DefaultBrowserSessionStatusStateDTO = Schema.Literals([
+  "persisted",
+  "absent",
+  "unavailable",
+]);
+export type DefaultBrowserSessionStatusStateDTO = Schema.Schema.Type<
+  typeof DefaultBrowserSessionStatusStateDTO
+>;
+
+/**
+ * Safe browser-session projection for the renderer's two supported default
+ * login buttons only. It deliberately omits cookies, domains, keyring keys,
+ * paths, labels, timestamps, and error detail.
+ */
+export const DefaultBrowserSessionStatusesDTO = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  t3chatDefault: DefaultBrowserSessionStatusStateDTO,
+  grokDefault: DefaultBrowserSessionStatusStateDTO,
+});
+export type DefaultBrowserSessionStatusesDTO = Schema.Schema.Type<
+  typeof DefaultBrowserSessionStatusesDTO
+>;
+
 /** Explicit, provider-scoped refresh request. The renderer cannot supply endpoints, headers, or secrets. */
 export const RefreshProviderRequestDTO = Schema.Struct({
   provider: ProviderId,
@@ -474,6 +497,7 @@ export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("start-login"), request: LoginRequestDTO }),
   Schema.Struct({ type: Schema.Literal("cancel-login"), request: LoginRequestDTO }),
   Schema.Struct({ type: Schema.Literal("logout"), request: LoginRequestDTO }),
+  Schema.Struct({ type: Schema.Literal("get-default-browser-session-statuses") }),
   Schema.Struct({ type: Schema.Literal("inspect-legacy-import") }),
   Schema.Struct({
     type: Schema.Literal("execute-legacy-import"),
@@ -501,6 +525,10 @@ export const IPCResponse = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("session-quota-notification-settings"),
     payload: SessionQuotaNotificationSettingsDTO,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("default-browser-session-statuses"),
+    payload: DefaultBrowserSessionStatusesDTO,
   }),
   Schema.Struct({
     type: Schema.Literal("legacy-import-inspection"),
