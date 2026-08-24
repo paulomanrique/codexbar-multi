@@ -356,8 +356,14 @@ describe("Codex cost JSONL parser (Swift parity)", () => {
     );
     expect(result.totalSnapshotsComplete).toBe(true);
     expect(result.totalSnapshots).toEqual([
-      { timestamp: Date.parse("2030-01-01T12:00:00Z"), totals: tokens(10, 0, 0, 1) },
-      { timestamp: Date.parse("2030-01-01T12:00:02Z"), totals: tokens(15, 0, 0, 3) },
+      {
+        timestamp: Date.parse("2030-01-01T12:00:00Z"),
+        totals: { input: 10, cachedInput: 0, cacheCreationInput: 0, output: 1 },
+      },
+      {
+        timestamp: Date.parse("2030-01-01T12:00:02Z"),
+        totals: { input: 15, cachedInput: 0, cacheCreationInput: 0, output: 3 },
+      },
     ]);
 
     const ordinary = await parseCodexCostJsonl(
@@ -572,6 +578,136 @@ describe("Claude cost JSONL parser (Swift parity)", () => {
     );
     expect(result.rows[0]?.tokens.input).toBe(0);
     expect(result.rows[0]?.tokens.output).toBe(1);
+  });
+});
+
+describe("Codex stale regression and optional reasoning (d927 slice)", () => {
+  it("skips a light stale regression and resumes deltas from the last accepted baseline", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":3}}}}\n',
+      ),
+      { collectTotalsForForkBaseline: true, scan: {} },
+    );
+    expect(first.rows).toHaveLength(1);
+    expect(first.state.totals).toMatchObject({ input: 10, output: 3 });
+    const second = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":8,"output_tokens":2},"last_token_usage":{"input_tokens":5,"output_tokens":1}}}}\n',
+      ),
+      { state: first.state, collectTotalsForForkBaseline: true, scan: { cursor: first.cursor } },
+    );
+    expect(second.rows).toHaveLength(0);
+    expect(second.state.cumulativeCounterUnsafe).toBeUndefined();
+    expect(second.state.totals).toMatchObject({ input: 10, output: 3 });
+    expect(second.totalSnapshots).toHaveLength(1);
+    expect(second.totalSnapshots?.[0]?.totals).toMatchObject({ input: 8, output: 2 });
+    const third = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15,"output_tokens":5}}}}\n',
+      ),
+      { state: second.state, scan: { cursor: second.cursor } },
+    );
+    expect(third.rows).toHaveLength(1);
+    expect(third.rows[0]?.tokens).toMatchObject({ input: 5, output: 2, reasoningOutput: 0 });
+    expect(third.state.cumulativeCounterUnsafe).toBeUndefined();
+  });
+
+  it("accepts omitted reasoning after explicit reasoning without treating it as regression", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"reasoning_output_tokens":1}}}}\n',
+      ),
+      { scan: {} },
+    );
+    expect(first.state.totals?.reasoningOutput).toBe(1);
+    const second = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":12,"output_tokens":6}}}}\n',
+      ),
+      { state: first.state, scan: { cursor: first.cursor } },
+    );
+    expect(second.rows).toHaveLength(1);
+    expect(second.rows[0]?.tokens).toMatchObject({ input: 2, output: 1, reasoningOutput: 0 });
+    expect(second.state.cumulativeCounterUnsafe).toBeUndefined();
+    expect(second.state.totals?.reasoningOutput).toBeUndefined();
+  });
+
+  it("treats explicit reasoning decreases as regressions for stale detection", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"reasoning_output_tokens":30}}}}\n',
+      ),
+      { collectTotalsForForkBaseline: true, scan: {} },
+    );
+    expect(first.state.totals?.reasoningOutput).toBe(5);
+    const second = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"reasoning_output_tokens":2},"last_token_usage":{"input_tokens":5,"output_tokens":1,"reasoning_output_tokens":1}}}}\n',
+      ),
+      { state: first.state, collectTotalsForForkBaseline: true, scan: { cursor: first.cursor } },
+    );
+    expect(second.rows).toHaveLength(0);
+    expect(second.state.cumulativeCounterUnsafe).toBeUndefined();
+    expect(second.totalSnapshots).toHaveLength(1);
+  });
+
+  it("takes the unsafe path for a major regression or missing/zero last", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10}}}}\n',
+      ),
+      { scan: {} },
+    );
+    const missingLast = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":4,"output_tokens":1}}}}\n',
+      ),
+      { state: first.state, scan: { cursor: first.cursor } },
+    );
+    expect(missingLast.rows).toHaveLength(0);
+    expect(missingLast.state.cumulativeCounterUnsafe).toBe(true);
+
+    const first2 = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10}}}}\n',
+      ),
+      { scan: {} },
+    );
+    const zeroLast = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":4,"output_tokens":1},"last_token_usage":{"input_tokens":0,"output_tokens":0}}}}\n',
+      ),
+      { state: first2.state, scan: { cursor: first2.cursor } },
+    );
+    expect(zeroLast.rows).toHaveLength(0);
+    expect(zeroLast.state.cumulativeCounterUnsafe).toBe(true);
+  });
+
+  it("retains optional reasoning observation across incremental state", async () => {
+    const explicit = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":4,"reasoning_output_tokens":2}}}}\n',
+      ),
+      { scan: {} },
+    );
+    expect(explicit.state.totals?.reasoningOutput).toBe(2);
+    const omitted = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:01Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":12,"output_tokens":5}}}}\n',
+      ),
+      { state: explicit.state, scan: { cursor: explicit.cursor } },
+    );
+    expect(omitted.state.totals?.reasoningOutput).toBeUndefined();
+    expect(omitted.rows[0]?.tokens.reasoningOutput).toBe(0);
+    const explicitZero = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"event_msg","timestamp":"2026-08-20T10:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":14,"output_tokens":6,"reasoning_output_tokens":0}}}}\n',
+      ),
+      { state: omitted.state, scan: { cursor: omitted.cursor } },
+    );
+    expect(explicitZero.state.totals?.reasoningOutput).toBe(0);
+    expect(explicitZero.rows[0]?.tokens).toMatchObject({ input: 2, output: 1, reasoningOutput: 0 });
   });
 });
 

@@ -25,6 +25,15 @@ cache subtraction when the ordinary Codex pricing path consumes that split. A fo
 locks that choice so a future upstream correction can be reviewed explicitly rather than changing
 money semantics accidentally.
 
-The remaining behavior from `d92783689`—including stale counter policy, optional reasoning
-semantics, dashboard work, and unrelated Antigravity changes—remains outside this review.
-Component and provider `lastReviewedCommit` values therefore do not advance.
+Light cumulative regressions now use the same tokscale predicate as Swift. A stale snapshot is
+skipped before it can replace the accepted baseline or make the compact TypeScript scanner enter
+its fail-closed unsafe state; raw fork evidence is still collected first. Codex cumulative state
+also retains the distinction between an omitted reasoning counter and an explicit zero across
+incremental scans, clamps observed reasoning to output, and compares reasoning regressions only
+when both snapshots supplied the field.
+
+This slice intentionally does not yet port Swift's last-event preference, monotonic watermark,
+seen-snapshot set, interleaved-lineage containment, or fork snapshot accumulator. Non-stale hard
+regressions therefore continue to use the existing TypeScript fail-closed policy. Dashboard work
+and unrelated Antigravity changes from `d92783689` also remain outside this review. Component and
+provider `lastReviewedCommit` values therefore do not advance.

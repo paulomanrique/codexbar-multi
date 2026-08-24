@@ -11,8 +11,8 @@ import {
   type CodexJsonlForkBaseline,
   type CodexJsonlPriorityTurn,
   type CodexJsonlState,
+  type CodexJsonlTotals,
   type CostJsonlCursor,
-  type CostJsonlTokens,
   type PricingCatalog,
 } from "@codexbar/core";
 
@@ -528,10 +528,10 @@ export const scanNodeCodexForkFamily = async (options: {
 };
 
 const latestTotalsAtOrBefore = (
-  snapshots: readonly { readonly timestamp: number; readonly totals: CostJsonlTokens }[],
+  snapshots: readonly { readonly timestamp: number; readonly totals: CodexJsonlTotals }[],
   cutoff: number,
-): CostJsonlTokens | undefined => {
-  let selected: CostJsonlTokens | undefined;
+): CodexJsonlTotals | undefined => {
+  let selected: CodexJsonlTotals | undefined;
   let selectedTimestamp = Number.NEGATIVE_INFINITY;
   for (const snapshot of snapshots) {
     if (snapshot.timestamp <= cutoff && snapshot.timestamp >= selectedTimestamp) {

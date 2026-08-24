@@ -27,6 +27,15 @@ export interface CostJsonlTokens {
   readonly reasoningOutput: number;
 }
 
+/** Serializable Codex cumulative totals; omitted reasoning remains unknown. */
+export interface CodexJsonlTotals {
+  readonly input: number;
+  readonly cachedInput: number;
+  readonly cacheCreationInput: number;
+  readonly output: number;
+  readonly reasoningOutput?: number;
+}
+
 export interface CostJsonlUsageRow {
   readonly provider: "codex" | "claude";
   readonly timestamp: number;
@@ -191,11 +200,11 @@ export interface CodexJsonlState {
   readonly currentModel?: string;
   /** The last `task_started` turn applies to subsequent token observations. */
   readonly currentTurnId?: string;
-  readonly totals?: CostJsonlTokens;
+  readonly totals?: CodexJsonlTotals;
   /** Session metadata read from the leaf `session_meta` record, when present. */
   readonly session?: CodexJsonlSessionMetadata;
   /** Parent totals whose copied child prefix has not reached the fork boundary yet. */
-  readonly awaitingForkBaseline?: CostJsonlTokens;
+  readonly awaitingForkBaseline?: CodexJsonlTotals;
   /**
    * A cumulative counter regressed/interleaved. This compact port suppresses
    * later cumulative rows rather than guessing; fork lineage #2037 remains a
@@ -222,7 +231,7 @@ export interface CodexJsonlSessionMetadata {
 /** A parent cumulative snapshot resolved by the host for a child rollout. */
 export interface CodexJsonlForkBaseline {
   readonly parentSessionId: string;
-  readonly totals: CostJsonlTokens;
+  readonly totals: CodexJsonlTotals;
 }
 
 /**
@@ -237,7 +246,7 @@ export interface CodexJsonlPriorityTurn {
 /** One raw cumulative observation used only by the platform fork resolver. */
 export interface CodexJsonlTotalSnapshot {
   readonly timestamp: number;
-  readonly totals: CostJsonlTokens;
+  readonly totals: CodexJsonlTotals;
 }
 
 const maximumCodexForkBaselineSnapshots = 50_000;
@@ -277,12 +286,12 @@ export async function parseCodexCostJsonl(
   let currentModel = optionalText(options.state?.currentModel);
   let currentTurnId = optionalText(options.state?.currentTurnId);
   let totals =
-    options.state?.totals === undefined ? undefined : normalizedTokens(options.state.totals);
+    options.state?.totals === undefined ? undefined : normalizedCodexTotals(options.state.totals);
   let session = normalizedCodexSession(options.state?.session);
   let awaitingForkBaseline =
     options.state?.awaitingForkBaseline === undefined
       ? undefined
-      : normalizedTokens(options.state.awaitingForkBaseline);
+      : normalizedCodexTotals(options.state.awaitingForkBaseline);
   let cumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
   const lastEventKeys = boundedSet(options.state?.lastEventKeys, 1024);
   let lastBareUsageTimestamp = (() => {
@@ -371,7 +380,7 @@ export async function parseCodexCostJsonl(
           options.forkBaseline !== undefined &&
           session?.forkedFromId === options.forkBaseline.parentSessionId
         ) {
-          awaitingForkBaseline = normalizedTokens(options.forkBaseline.totals);
+          awaitingForkBaseline = normalizedCodexTotals(options.forkBaseline.totals);
         }
         return;
       }
@@ -426,15 +435,27 @@ export async function parseCodexCostJsonl(
           // Child rollouts replay the parent's cumulative prefix from a lower
           // counter. Do not compare that prefix to the parent's final value;
           // wait until the copied stream reaches the resolved boundary.
-          if (!hasReachedTotals(total, awaitingForkBaseline)) return;
-          delta = positiveDifference(total, awaitingForkBaseline);
+          if (!hasReachedTotalsInternal(total, awaitingForkBaseline)) return;
+          delta = positiveDifferenceInternal(total, awaitingForkBaseline);
           totals = total;
           awaitingForkBaseline = undefined;
         } else {
-          if (totals !== undefined && hasCounterRegression(total, totals)) {
-            cumulativeCounterUnsafe = true;
+          if (totals !== undefined) {
+            const lastForStale: CodexJsonlTotals = last ?? {
+              input: 0,
+              cachedInput: 0,
+              cacheCreationInput: 0,
+              output: 0,
+            };
+            if (isStaleRegression(total, totals, lastForStale)) return;
+            if (hasCounterRegressionInternal(total, totals)) {
+              cumulativeCounterUnsafe = true;
+            }
           }
-          delta = totals === undefined ? total : positiveDifference(total, totals);
+          delta =
+            totals === undefined
+              ? codexTotalsToTokens(total)
+              : positiveDifferenceInternal(total, totals);
           totals = total;
           // Do not substitute `last` after a detected total regression. It may
           // be a copied fork prefix; omitting a row is safer than billing it.
@@ -445,12 +466,12 @@ export async function parseCodexCostJsonl(
         // ends, so it is not billable until a cumulative total reaches the
         // resolved parent boundary.
         if (awaitingForkBaseline !== undefined) return;
-        const key = `${timestamp}:${model}:${last.input}:${last.cachedInput}:${last.cacheCreationInput}:${last.output}:${last.reasoningOutput}`;
+        const key = `${timestamp}:${model}:${last.input}:${last.cachedInput}:${last.cacheCreationInput}:${last.output}:${last.reasoningOutput === undefined ? "_" : last.reasoningOutput}`;
         if (lastEventKeys.has(key)) return;
         lastEventKeys.add(key);
         trimSet(lastEventKeys, 1024);
-        delta = last;
-        totals = addTokens(totals, last);
+        delta = codexTotalsToTokens(last);
+        totals = addTokensInternal(totals, last);
       }
       if (delta === undefined || tokenCount(delta) === 0) return;
       emitCodexRow(timestamp, model, turnId, delta);
@@ -711,18 +732,29 @@ function integer(value: unknown): number {
   return Number.isSafeInteger(truncated) ? Math.max(0, truncated) : 0;
 }
 
-function totalsFrom(value: unknown): CostJsonlTokens | undefined {
+function totalsFrom(value: unknown): CodexJsonlTotals | undefined {
   const usage = asObject(value);
   if (usage === undefined) return undefined;
-  return normalizedTokens({
-    input: integer(usage.input_tokens),
-    cachedInput: Math.max(
-      integer(usage.cached_input_tokens),
-      integer(usage.cache_read_input_tokens),
-    ),
-    cacheCreationInput: integer(usage.cache_creation_input_tokens),
-    output: integer(usage.output_tokens),
-    reasoningOutput: integer(usage.reasoning_output_tokens),
+  const input = integer(usage.input_tokens);
+  const cachedInput = Math.max(
+    integer(usage.cached_input_tokens),
+    integer(usage.cache_read_input_tokens),
+  );
+  const cacheCreationInput = integer(usage.cache_creation_input_tokens);
+  const output = integer(usage.output_tokens);
+  const rawReasoning = usage.reasoning_output_tokens;
+  let reasoning: number | undefined;
+  if (typeof rawReasoning === "number" && Number.isFinite(rawReasoning)) {
+    const truncated = Math.trunc(rawReasoning);
+    const safe = Number.isSafeInteger(truncated) ? Math.max(0, truncated) : 0;
+    reasoning = Math.min(safe, output);
+  }
+  return normalizedCodexTotals({
+    input,
+    cachedInput,
+    cacheCreationInput,
+    output,
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
   });
 }
 
@@ -737,6 +769,31 @@ function normalizedTokens(tokens: CostJsonlTokens): CostJsonlTokens {
   };
 }
 
+function normalizedCodexTotals(tokens: CodexJsonlTotals): CodexJsonlTotals {
+  const output = integer(tokens.output);
+  const reasoning =
+    tokens.reasoningOutput === undefined
+      ? undefined
+      : Math.min(output, integer(tokens.reasoningOutput));
+  return {
+    input: integer(tokens.input),
+    cachedInput: integer(tokens.cachedInput),
+    cacheCreationInput: integer(tokens.cacheCreationInput),
+    output,
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexTotalsToTokens(tokens: CodexJsonlTotals): CostJsonlTokens {
+  return {
+    input: tokens.input,
+    cachedInput: tokens.cachedInput,
+    cacheCreationInput: tokens.cacheCreationInput,
+    output: tokens.output,
+    reasoningOutput: tokens.reasoningOutput ?? 0,
+  };
+}
+
 function positiveDifference(current: CostJsonlTokens, previous: CostJsonlTokens): CostJsonlTokens {
   return {
     input: Math.max(0, current.input - previous.input),
@@ -744,6 +801,23 @@ function positiveDifference(current: CostJsonlTokens, previous: CostJsonlTokens)
     cacheCreationInput: Math.max(0, current.cacheCreationInput - previous.cacheCreationInput),
     output: Math.max(0, current.output - previous.output),
     reasoningOutput: Math.max(0, current.reasoningOutput - previous.reasoningOutput),
+  };
+}
+
+function positiveDifferenceInternal(
+  current: CodexJsonlTotals,
+  previous: CodexJsonlTotals,
+): CostJsonlTokens {
+  const reasoningDelta =
+    current.reasoningOutput === undefined || previous.reasoningOutput === undefined
+      ? 0
+      : Math.max(0, current.reasoningOutput - previous.reasoningOutput);
+  return {
+    input: Math.max(0, current.input - previous.input),
+    cachedInput: Math.max(0, current.cachedInput - previous.cachedInput),
+    cacheCreationInput: Math.max(0, current.cacheCreationInput - previous.cacheCreationInput),
+    output: Math.max(0, current.output - previous.output),
+    reasoningOutput: reasoningDelta,
   };
 }
 
@@ -757,26 +831,76 @@ function hasCounterRegression(current: CostJsonlTokens, previous: CostJsonlToken
   );
 }
 
-function hasReachedTotals(current: CostJsonlTokens, boundary: CostJsonlTokens): boolean {
+function hasCounterRegressionInternal(
+  current: CodexJsonlTotals,
+  previous: CodexJsonlTotals,
+): boolean {
+  const reasoningRegressed =
+    current.reasoningOutput !== undefined &&
+    previous.reasoningOutput !== undefined &&
+    current.reasoningOutput < previous.reasoningOutput;
   return (
-    current.input >= boundary.input &&
-    current.cachedInput >= boundary.cachedInput &&
-    current.cacheCreationInput >= boundary.cacheCreationInput &&
-    current.output >= boundary.output &&
-    current.reasoningOutput >= boundary.reasoningOutput
+    current.input < previous.input ||
+    current.cachedInput < previous.cachedInput ||
+    current.cacheCreationInput < previous.cacheCreationInput ||
+    current.output < previous.output ||
+    reasoningRegressed
   );
 }
 
-function addTokens(previous: CostJsonlTokens | undefined, delta: CostJsonlTokens): CostJsonlTokens {
-  return previous === undefined
-    ? delta
-    : {
-        input: previous.input + delta.input,
-        cachedInput: previous.cachedInput + delta.cachedInput,
-        cacheCreationInput: previous.cacheCreationInput + delta.cacheCreationInput,
-        output: previous.output + delta.output,
-        reasoningOutput: previous.reasoningOutput + delta.reasoningOutput,
-      };
+function hasReachedTotalsInternal(current: CodexJsonlTotals, boundary: CodexJsonlTotals): boolean {
+  if (current.input < boundary.input) return false;
+  if (current.cachedInput < boundary.cachedInput) return false;
+  if (current.cacheCreationInput < boundary.cacheCreationInput) return false;
+  if (current.output < boundary.output) return false;
+  if (boundary.reasoningOutput !== undefined) {
+    if (current.reasoningOutput === undefined) return false;
+    if (current.reasoningOutput < boundary.reasoningOutput) return false;
+  }
+  return true;
+}
+
+function addTokensInternal(
+  previous: CodexJsonlTotals | undefined,
+  delta: CodexJsonlTotals,
+): CodexJsonlTotals {
+  if (previous === undefined) return delta;
+  const newOutput = previous.output + delta.output;
+  const newReasoning =
+    previous.reasoningOutput === undefined || delta.reasoningOutput === undefined
+      ? undefined
+      : Math.min(previous.reasoningOutput + delta.reasoningOutput, newOutput);
+  return {
+    input: previous.input + delta.input,
+    cachedInput: previous.cachedInput + delta.cachedInput,
+    cacheCreationInput: previous.cacheCreationInput + delta.cacheCreationInput,
+    output: newOutput,
+    ...(newReasoning === undefined ? {} : { reasoningOutput: newReasoning }),
+  };
+}
+
+function isStaleRegression(
+  current: CodexJsonlTotals,
+  previous: CodexJsonlTotals,
+  last: CodexJsonlTotals,
+): boolean {
+  const reasoningRegressed =
+    current.reasoningOutput !== undefined &&
+    previous.reasoningOutput !== undefined &&
+    current.reasoningOutput < previous.reasoningOutput;
+  const hasRegression =
+    current.input < previous.input ||
+    current.cachedInput < previous.cachedInput ||
+    current.output < previous.output ||
+    reasoningRegressed;
+  if (!hasRegression) return false;
+  const previousTotal =
+    previous.input + previous.cachedInput + previous.output + (previous.reasoningOutput ?? 0);
+  const currentTotal =
+    current.input + current.cachedInput + current.output + (current.reasoningOutput ?? 0);
+  const lastTotal = last.input + last.cachedInput + last.output + (last.reasoningOutput ?? 0);
+  if (previousTotal <= 0 || currentTotal <= 0 || lastTotal <= 0) return false;
+  return currentTotal * 100 >= previousTotal * 98 || currentTotal + lastTotal * 2 >= previousTotal;
 }
 
 function tokenCount(tokens: CostJsonlTokens): number {
