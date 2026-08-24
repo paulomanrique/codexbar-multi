@@ -200,15 +200,25 @@ export interface CodexJsonlState {
   readonly currentModel?: string;
   /** The last `task_started` turn applies to subsequent token observations. */
   readonly currentTurnId?: string;
+  /** Counted cumulative totals after the shared Codex totals accumulator policy. */
   readonly totals?: CodexJsonlTotals;
+  /** Raw cumulative counter used as the next total-delta baseline. */
+  readonly rawTotalsBaseline?: CodexJsonlTotals;
+  /** Monotonic raw cumulative high watermark used for containment. */
+  readonly rawTotalsWatermark?: CodexJsonlTotals;
+  /** Bounded raw cumulative snapshots used only for exact re-emission suppression. */
+  readonly seenRawTotals?: readonly CodexJsonlTotals[];
+  readonly sawInterleavedTotals?: boolean;
+  readonly sawDivergentTotals?: boolean;
   /** Session metadata read from the leaf `session_meta` record, when present. */
   readonly session?: CodexJsonlSessionMetadata;
   /** Parent totals whose copied child prefix has not reached the fork boundary yet. */
   readonly awaitingForkBaseline?: CodexJsonlTotals;
+  /** Parent totals still being consumed from fork `last_token_usage` records. */
+  readonly remainingInheritedTotals?: CodexJsonlTotals;
   /**
-   * A cumulative counter regressed/interleaved. This compact port suppresses
-   * later cumulative rows rather than guessing; fork lineage #2037 remains a
-   * separate parity item.
+   * Legacy incoming fail-closed flag from the pre-containment port. Fresh scans
+   * must use `sawInterleavedTotals`/watermark containment instead of setting it.
    */
   readonly cumulativeCounterUnsafe?: boolean;
   /** A bounded exact-event cache for `last_token_usage` fallback records. */
@@ -246,8 +256,40 @@ export interface CodexJsonlPriorityTurn {
 /** One raw cumulative observation used only by the platform fork resolver. */
 export interface CodexJsonlTotalSnapshot {
   readonly timestamp: number;
-  readonly totals: CodexJsonlTotals;
+  readonly totals?: CodexJsonlTotals;
+  readonly last?: CodexJsonlTotals;
 }
+
+export interface CodexTotalsAccumulatorState {
+  readonly countedTotals?: CodexJsonlTotals;
+  readonly rawTotalsBaseline?: CodexJsonlTotals;
+  readonly rawTotalsWatermark?: CodexJsonlTotals;
+  readonly seenRawTotals?: readonly CodexJsonlTotals[];
+  readonly sawInterleavedTotals?: boolean;
+  readonly sawDivergentTotals?: boolean;
+}
+
+export interface CodexTotalsAccumulatorEvent {
+  readonly last?: CodexJsonlTotals;
+  readonly total?: CodexJsonlTotals;
+}
+
+export interface CodexTotalsAccumulatorApplyResult {
+  /** Public billable event delta; optional reasoning is projected to zero. */
+  readonly delta: CostJsonlTokens;
+  readonly countedTotals: CodexJsonlTotals;
+  readonly state: CodexTotalsAccumulatorState;
+  readonly skipped?: "duplicate" | "stale" | "empty";
+}
+
+type CodexTotalsAccumulatorStateInput = {
+  readonly countedTotals?: CodexJsonlTotals | undefined;
+  readonly rawTotalsBaseline?: CodexJsonlTotals | undefined;
+  readonly rawTotalsWatermark?: CodexJsonlTotals | undefined;
+  readonly seenRawTotals?: readonly CodexJsonlTotals[] | undefined;
+  readonly sawInterleavedTotals?: boolean | undefined;
+  readonly sawDivergentTotals?: boolean | undefined;
+};
 
 const maximumCodexForkBaselineSnapshots = 50_000;
 
@@ -285,14 +327,47 @@ export async function parseCodexCostJsonl(
 ): Promise<CodexJsonlParseResult> {
   let currentModel = optionalText(options.state?.currentModel);
   let currentTurnId = optionalText(options.state?.currentTurnId);
-  let totals =
+  const legacyCountedTotals =
     options.state?.totals === undefined ? undefined : normalizedCodexTotals(options.state.totals);
+  let accumulatorState = normalizedCodexAccumulatorState({
+    countedTotals: legacyCountedTotals,
+    rawTotalsBaseline:
+      options.state?.rawTotalsBaseline === undefined
+        ? legacyCountedTotals
+        : normalizedCodexTotals(options.state.rawTotalsBaseline),
+    rawTotalsWatermark:
+      options.state?.rawTotalsWatermark === undefined
+        ? options.state?.rawTotalsBaseline === undefined
+          ? legacyCountedTotals
+          : normalizedCodexTotals(options.state.rawTotalsBaseline)
+        : normalizedCodexTotals(options.state.rawTotalsWatermark),
+    seenRawTotals: options.state?.seenRawTotals,
+    sawInterleavedTotals: options.state?.sawInterleavedTotals === true,
+    sawDivergentTotals: options.state?.sawDivergentTotals === true,
+  });
   let session = normalizedCodexSession(options.state?.session);
+  let activeForkBaseline =
+    session?.forkedFromId !== undefined &&
+    options.forkBaseline?.parentSessionId === session.forkedFromId
+      ? normalizedCodexTotals(options.forkBaseline.totals)
+      : undefined;
   let awaitingForkBaseline =
     options.state?.awaitingForkBaseline === undefined
       ? undefined
       : normalizedCodexTotals(options.state.awaitingForkBaseline);
-  let cumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
+  let remainingInheritedTotals =
+    options.state?.remainingInheritedTotals === undefined
+      ? awaitingForkBaseline
+      : normalizedCodexTotals(options.state.remainingInheritedTotals);
+  if (
+    awaitingForkBaseline === undefined &&
+    accumulatorState.countedTotals === undefined &&
+    activeForkBaseline !== undefined
+  ) {
+    awaitingForkBaseline = activeForkBaseline;
+    remainingInheritedTotals = activeForkBaseline;
+  }
+  const legacyCumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
   const lastEventKeys = boundedSet(options.state?.lastEventKeys, 1024);
   let lastBareUsageTimestamp = (() => {
     const value = options.state?.lastBareUsageTimestamp;
@@ -374,13 +449,18 @@ export async function parseCodexCostJsonl(
       if (value.type === "session_meta") {
         const metadata = codexSessionMetadata(value);
         session = mergeCodexSession(session, metadata);
+        activeForkBaseline =
+          session?.forkedFromId !== undefined &&
+          options.forkBaseline?.parentSessionId === session.forkedFromId
+            ? normalizedCodexTotals(options.forkBaseline.totals)
+            : undefined;
         if (
-          totals === undefined &&
+          accumulatorState.countedTotals === undefined &&
           awaitingForkBaseline === undefined &&
-          options.forkBaseline !== undefined &&
-          session?.forkedFromId === options.forkBaseline.parentSessionId
+          activeForkBaseline !== undefined
         ) {
-          awaitingForkBaseline = normalizedCodexTotals(options.forkBaseline.totals);
+          awaitingForkBaseline = activeForkBaseline;
+          remainingInheritedTotals = activeForkBaseline;
         }
         return;
       }
@@ -418,61 +498,91 @@ export async function parseCodexCostJsonl(
       // A host-provided fork baseline is only trustworthy after the leaf has
       // identified its parent. Avoid charging a prefix if malformed input
       // places token records before its `session_meta` record.
-      if (options.forkBaseline !== undefined && totals === undefined && session === undefined)
+      if (
+        options.forkBaseline !== undefined &&
+        accumulatorState.countedTotals === undefined &&
+        session === undefined
+      )
         return;
       const total = totalsFrom(info?.total_token_usage);
       const last = totalsFrom(info?.last_token_usage);
-      if (options.collectTotalsForForkBaseline === true && total !== undefined) {
+      if (
+        options.collectTotalsForForkBaseline === true &&
+        (total !== undefined || last !== undefined)
+      ) {
         if (totalSnapshots.length >= maximumCodexForkBaselineSnapshots) {
           totalSnapshotsComplete = false;
         } else {
-          totalSnapshots.push({ timestamp, totals: total });
+          totalSnapshots.push({
+            timestamp,
+            ...(total === undefined ? {} : { totals: total }),
+            ...(last === undefined ? {} : { last }),
+          });
         }
       }
-      let delta: CostJsonlTokens | undefined;
-      if (total !== undefined) {
-        if (awaitingForkBaseline !== undefined) {
-          // Child rollouts replay the parent's cumulative prefix from a lower
-          // counter. Do not compare that prefix to the parent's final value;
-          // wait until the copied stream reaches the resolved boundary.
-          if (!hasReachedTotalsInternal(total, awaitingForkBaseline)) return;
-          delta = positiveDifferenceInternal(total, awaitingForkBaseline);
-          totals = total;
+      let accumulatorTotal = total;
+      let accumulatorLast = last;
+      if (total !== undefined && activeForkBaseline !== undefined) {
+        // Normalize every fork cumulative snapshot against the resolved
+        // parent baseline. A total-bearing event switches to totals-owned fork
+        // accounting and ends component-wise inherited `last` consumption.
+        accumulatorTotal = positiveTotalsDifference(total, activeForkBaseline);
+        accumulatorLast = undefined;
+        awaitingForkBaseline = undefined;
+        remainingInheritedTotals = undefined;
+      } else if (last !== undefined && awaitingForkBaseline !== undefined) {
+        // Consume the inherited parent prefix component-wise. Any overflow is
+        // child-owned usage and must remain billable even in last-only streams.
+        const inherited = remainingInheritedTotals ?? awaitingForkBaseline;
+        accumulatorLast = positiveTotalsDifference(last, inherited);
+        remainingInheritedTotals = positiveTotalsDifference(inherited, last);
+        if (codexNonReasoningTokenCount(remainingInheritedTotals) === 0) {
+          remainingInheritedTotals = undefined;
           awaitingForkBaseline = undefined;
-        } else {
-          if (totals !== undefined) {
-            const lastForStale: CodexJsonlTotals = last ?? {
-              input: 0,
-              cachedInput: 0,
-              cacheCreationInput: 0,
-              output: 0,
-            };
-            if (isStaleRegression(total, totals, lastForStale)) return;
-            if (hasCounterRegressionInternal(total, totals)) {
-              cumulativeCounterUnsafe = true;
-            }
-          }
-          delta =
-            totals === undefined
-              ? codexTotalsToTokens(total)
-              : positiveDifferenceInternal(total, totals);
-          totals = total;
-          // Do not substitute `last` after a detected total regression. It may
-          // be a copied fork prefix; omitting a row is safer than billing it.
-          if (cumulativeCounterUnsafe) return;
         }
-      } else if (last !== undefined) {
-        // A `last_token_usage` record cannot prove where a replayed prefix
-        // ends, so it is not billable until a cumulative total reaches the
-        // resolved parent boundary.
-        if (awaitingForkBaseline !== undefined) return;
-        const key = `${timestamp}:${model}:${last.input}:${last.cachedInput}:${last.cacheCreationInput}:${last.output}:${last.reasoningOutput === undefined ? "_" : last.reasoningOutput}`;
+      }
+      if (legacyCumulativeCounterUnsafe && accumulatorTotal !== undefined) return;
+      if (accumulatorTotal === undefined && accumulatorLast !== undefined) {
+        const key = [
+          timestamp,
+          model,
+          accumulatorLast.input,
+          accumulatorLast.cachedInput,
+          accumulatorLast.cacheCreationInput,
+          accumulatorLast.output,
+          accumulatorLast.reasoningOutput ?? "_",
+        ].join(":");
         if (lastEventKeys.has(key)) return;
         lastEventKeys.add(key);
         trimSet(lastEventKeys, 1024);
-        delta = codexTotalsToTokens(last);
-        totals = addTokensInternal(totals, last);
       }
+      let accountingLast = accumulatorLast;
+      if (activeForkBaseline !== undefined && accumulatorTotal !== undefined) {
+        const staleBaseline =
+          accumulatorState.rawTotalsWatermark ?? accumulatorState.rawTotalsBaseline;
+        if (
+          staleBaseline !== undefined &&
+          isStaleRegression(
+            accumulatorTotal,
+            staleBaseline,
+            accumulatorLast ?? zeroCodexTotals(false),
+          )
+        ) {
+          return;
+        }
+        const isInterleavedForkEvent =
+          accumulatorState.sawInterleavedTotals === true ||
+          isBelowRawWatermark(accumulatorTotal, accumulatorState.rawTotalsWatermark);
+        // Swift keeps fork accounting totals-only until an interleaved lineage
+        // is observed. After the latch, `last` caps the contained totals delta.
+        accountingLast = isInterleavedForkEvent ? accumulatorLast : undefined;
+      }
+      const applied = applyCodexTotalsAccumulatorEvent(accumulatorState, {
+        ...(accumulatorTotal === undefined ? {} : { total: accumulatorTotal }),
+        ...(accountingLast === undefined ? {} : { last: accountingLast }),
+      });
+      accumulatorState = applied.state;
+      const delta = applied.delta;
       if (delta === undefined || tokenCount(delta) === 0) return;
       emitCodexRow(timestamp, model, turnId, delta);
     },
@@ -483,10 +593,24 @@ export async function parseCodexCostJsonl(
     state: {
       ...(currentModel === undefined ? {} : { currentModel }),
       ...(currentTurnId === undefined ? {} : { currentTurnId }),
-      ...(totals === undefined ? {} : { totals }),
+      ...(accumulatorState.countedTotals === undefined
+        ? {}
+        : { totals: accumulatorState.countedTotals }),
+      ...(accumulatorState.rawTotalsBaseline === undefined
+        ? {}
+        : { rawTotalsBaseline: accumulatorState.rawTotalsBaseline }),
+      ...(accumulatorState.rawTotalsWatermark === undefined
+        ? {}
+        : { rawTotalsWatermark: accumulatorState.rawTotalsWatermark }),
+      ...((accumulatorState.seenRawTotals?.length ?? 0) === 0
+        ? {}
+        : { seenRawTotals: accumulatorState.seenRawTotals }),
+      ...(accumulatorState.sawInterleavedTotals === true ? { sawInterleavedTotals: true } : {}),
+      ...(accumulatorState.sawDivergentTotals === true ? { sawDivergentTotals: true } : {}),
       ...(session === undefined ? {} : { session }),
       ...(awaitingForkBaseline === undefined ? {} : { awaitingForkBaseline }),
-      ...(cumulativeCounterUnsafe ? { cumulativeCounterUnsafe: true } : {}),
+      ...(remainingInheritedTotals === undefined ? {} : { remainingInheritedTotals }),
+      ...(legacyCumulativeCounterUnsafe ? { cumulativeCounterUnsafe: true } : {}),
       lastEventKeys: [...lastEventKeys],
       ...(lastBareUsageTimestamp === undefined ? {} : { lastBareUsageTimestamp }),
     },
@@ -784,6 +908,167 @@ function normalizedCodexTotals(tokens: CodexJsonlTotals): CodexJsonlTotals {
   };
 }
 
+const codexSeenRawTotalsLimit = 64;
+
+/**
+ * Conservative TS extension: Codex currently supplies zero cache-creation
+ * tokens, but when present the component participates in raw equality,
+ * watermarks, min/max, deltas, and containment just like cached input.
+ */
+export function applyCodexTotalsAccumulatorEvent(
+  state: CodexTotalsAccumulatorState | undefined,
+  event: CodexTotalsAccumulatorEvent,
+): CodexTotalsAccumulatorApplyResult {
+  const previous = normalizedCodexAccumulatorState(state);
+  const total = event.total === undefined ? undefined : normalizedCodexTotals(event.total);
+  const last = event.last === undefined ? undefined : normalizedCodexTotals(event.last);
+  const hasReasoning = total?.reasoningOutput !== undefined || last?.reasoningOutput !== undefined;
+  const base = previous.countedTotals ?? zeroCodexTotals(hasReasoning);
+
+  if (total === undefined && last === undefined) {
+    return {
+      delta: codexTotalsToTokens(zeroCodexTotals(hasReasoning)),
+      countedTotals: base,
+      state: previous,
+      skipped: "empty",
+    };
+  }
+
+  if (total !== undefined) {
+    if ((previous.seenRawTotals ?? []).some((seen) => codexTotalsEqual(seen, total))) {
+      return {
+        delta: codexTotalsToTokens(zeroCodexTotals(hasReasoning)),
+        countedTotals: base,
+        state: previous,
+        skipped: "duplicate",
+      };
+    }
+    const staleBaseline = previous.rawTotalsWatermark ?? previous.rawTotalsBaseline;
+    if (
+      staleBaseline !== undefined &&
+      isStaleRegression(total, staleBaseline, last ?? zeroCodexTotals(false))
+    ) {
+      return {
+        delta: codexTotalsToTokens(zeroCodexTotals(hasReasoning)),
+        countedTotals: base,
+        state: previous,
+        skipped: "stale",
+      };
+    }
+  }
+
+  const watermarkBaseline = previous.rawTotalsWatermark ?? previous.rawTotalsBaseline;
+  const sawInterleavedTotals =
+    previous.sawInterleavedTotals === true ||
+    (total !== undefined && isBelowRawWatermark(total, previous.rawTotalsWatermark));
+  let sawDivergentTotals = previous.sawDivergentTotals === true;
+  let countedTotals = base;
+  let rawTotalsBaseline = previous.rawTotalsBaseline;
+  let rawTotalsWatermark = previous.rawTotalsWatermark;
+  let countedDelta = zeroCodexTotals(hasReasoning);
+
+  if (last !== undefined) {
+    countedDelta = last;
+    if (total !== undefined) {
+      if (sawInterleavedTotals) {
+        countedDelta = codexPostLatchEventDelta({
+          watermark: watermarkBaseline,
+          counted: previous.countedTotals,
+          current: total,
+          adjustedLast: last,
+        });
+      } else {
+        const totalDelta = codexTotalDelta(watermarkBaseline, total);
+        if (
+          codexShouldPreferTotalDelta({
+            rawBaseline: watermarkBaseline,
+            currentTotal: total,
+            totalDelta,
+            lastDelta: last,
+            sawDivergentTotals,
+          })
+        ) {
+          countedDelta = totalDelta;
+        }
+      }
+      countedTotals = codexAddTotals(base, countedDelta);
+      rawTotalsBaseline = total;
+      if (!codexTotalsEqual(total, countedTotals)) sawDivergentTotals = true;
+    } else {
+      countedTotals = codexAddTotals(base, countedDelta);
+      rawTotalsBaseline = countedTotals;
+      rawTotalsWatermark = codexMaxTotals(rawTotalsWatermark, countedTotals);
+    }
+  } else if (total !== undefined) {
+    countedDelta = sawInterleavedTotals
+      ? codexContainedTotalDelta({
+          watermark: watermarkBaseline,
+          counted: previous.countedTotals,
+          current: total,
+        })
+      : sawDivergentTotals
+        ? codexDivergentTotalDelta({
+            rawBaseline: watermarkBaseline,
+            countedBaseline: previous.countedTotals,
+            current: total,
+          })
+        : codexTotalDelta(watermarkBaseline, total);
+    countedTotals = codexAddTotals(base, countedDelta);
+    rawTotalsBaseline = total;
+    if (!codexTotalsEqual(total, countedTotals)) sawDivergentTotals = true;
+  }
+
+  let seenRawTotals = previous.seenRawTotals ?? [];
+  if (total !== undefined) {
+    rawTotalsWatermark = codexMaxTotals(rawTotalsWatermark, total);
+    if (!seenRawTotals.some((seen) => codexTotalsEqual(seen, total))) {
+      seenRawTotals = [...seenRawTotals, total].slice(-codexSeenRawTotalsLimit);
+    }
+  }
+
+  const nextState = compactCodexAccumulatorState({
+    countedTotals,
+    rawTotalsBaseline,
+    rawTotalsWatermark,
+    seenRawTotals,
+    sawInterleavedTotals,
+    sawDivergentTotals,
+  });
+  return {
+    delta: codexTotalsToTokens(countedDelta),
+    countedTotals,
+    state: nextState,
+  };
+}
+
+export function replayCodexTotalSnapshotsAtOrBefore(
+  snapshots: readonly CodexJsonlTotalSnapshot[],
+  cutoff: number,
+): CodexJsonlTotals | undefined {
+  if (!Number.isFinite(cutoff)) return undefined;
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
+  let timestampsAreMonotonic = true;
+  for (const snapshot of snapshots) {
+    if (!Number.isFinite(snapshot.timestamp)) continue;
+    if (snapshot.timestamp < previousTimestamp) timestampsAreMonotonic = false;
+    previousTimestamp = snapshot.timestamp;
+  }
+  let state: CodexTotalsAccumulatorState | undefined;
+  let counted: CodexJsonlTotals | undefined;
+  for (const snapshot of snapshots) {
+    if (!Number.isFinite(snapshot.timestamp)) continue;
+    const isAtOrBeforeCutoff = snapshot.timestamp <= cutoff;
+    if (timestampsAreMonotonic && !isAtOrBeforeCutoff) break;
+    const applied = applyCodexTotalsAccumulatorEvent(state, {
+      ...(snapshot.totals === undefined ? {} : { total: snapshot.totals }),
+      ...(snapshot.last === undefined ? {} : { last: snapshot.last }),
+    });
+    state = applied.state;
+    if (isAtOrBeforeCutoff) counted = applied.countedTotals;
+  }
+  return counted;
+}
+
 function codexTotalsToTokens(tokens: CodexJsonlTotals): CostJsonlTokens {
   return {
     input: tokens.input,
@@ -792,6 +1077,292 @@ function codexTotalsToTokens(tokens: CodexJsonlTotals): CostJsonlTokens {
     output: tokens.output,
     reasoningOutput: tokens.reasoningOutput ?? 0,
   };
+}
+
+function zeroCodexTotals(withReasoning: boolean): CodexJsonlTotals {
+  return {
+    input: 0,
+    cachedInput: 0,
+    cacheCreationInput: 0,
+    output: 0,
+    ...(withReasoning ? { reasoningOutput: 0 } : {}),
+  };
+}
+
+function normalizedCodexAccumulatorState(
+  state: CodexTotalsAccumulatorStateInput | undefined,
+): CodexTotalsAccumulatorState {
+  const countedTotals =
+    state?.countedTotals === undefined ? undefined : normalizedCodexTotals(state.countedTotals);
+  const rawTotalsBaseline =
+    state?.rawTotalsBaseline === undefined
+      ? undefined
+      : normalizedCodexTotals(state.rawTotalsBaseline);
+  const rawTotalsWatermark =
+    state?.rawTotalsWatermark === undefined
+      ? undefined
+      : normalizedCodexTotals(state.rawTotalsWatermark);
+  const seenRawTotals = (state?.seenRawTotals ?? [])
+    .map((totals) => normalizedCodexTotals(totals))
+    .slice(-codexSeenRawTotalsLimit);
+  return compactCodexAccumulatorState({
+    countedTotals,
+    rawTotalsBaseline,
+    rawTotalsWatermark,
+    seenRawTotals,
+    sawInterleavedTotals: state?.sawInterleavedTotals === true,
+    sawDivergentTotals: state?.sawDivergentTotals === true,
+  });
+}
+
+function compactCodexAccumulatorState(
+  state: CodexTotalsAccumulatorStateInput,
+): CodexTotalsAccumulatorState {
+  return {
+    ...(state.countedTotals === undefined ? {} : { countedTotals: state.countedTotals }),
+    ...(state.rawTotalsBaseline === undefined
+      ? {}
+      : { rawTotalsBaseline: state.rawTotalsBaseline }),
+    ...(state.rawTotalsWatermark === undefined
+      ? {}
+      : { rawTotalsWatermark: state.rawTotalsWatermark }),
+    ...(state.seenRawTotals === undefined || state.seenRawTotals.length === 0
+      ? {}
+      : { seenRawTotals: state.seenRawTotals }),
+    ...(state.sawInterleavedTotals === true ? { sawInterleavedTotals: true } : {}),
+    ...(state.sawDivergentTotals === true ? { sawDivergentTotals: true } : {}),
+  };
+}
+
+function codexTotalsEqual(
+  left: CodexJsonlTotals | undefined,
+  right: CodexJsonlTotals | undefined,
+): boolean {
+  return (
+    left?.input === right?.input &&
+    left?.cachedInput === right?.cachedInput &&
+    left?.cacheCreationInput === right?.cacheCreationInput &&
+    left?.output === right?.output
+  );
+}
+
+function codexTotalsAtLeast(left: CodexJsonlTotals, right: CodexJsonlTotals): boolean {
+  return (
+    left.input >= right.input &&
+    left.cachedInput >= right.cachedInput &&
+    left.cacheCreationInput >= right.cacheCreationInput &&
+    left.output >= right.output
+  );
+}
+
+function codexTotalsAtMost(left: CodexJsonlTotals, right: CodexJsonlTotals): boolean {
+  return (
+    left.input <= right.input &&
+    left.cachedInput <= right.cachedInput &&
+    left.cacheCreationInput <= right.cacheCreationInput &&
+    left.output <= right.output
+  );
+}
+
+function codexAddTotals(left: CodexJsonlTotals, right: CodexJsonlTotals): CodexJsonlTotals {
+  const output = left.output + right.output;
+  const reasoning =
+    left.reasoningOutput === undefined || right.reasoningOutput === undefined
+      ? undefined
+      : Math.min(output, left.reasoningOutput + right.reasoningOutput);
+  return {
+    input: left.input + right.input,
+    cachedInput: left.cachedInput + right.cachedInput,
+    cacheCreationInput: left.cacheCreationInput + right.cacheCreationInput,
+    output,
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexMinTotals(left: CodexJsonlTotals, right: CodexJsonlTotals): CodexJsonlTotals {
+  const reasoning =
+    left.reasoningOutput === undefined || right.reasoningOutput === undefined
+      ? undefined
+      : Math.min(left.reasoningOutput, right.reasoningOutput);
+  return {
+    input: Math.min(left.input, right.input),
+    cachedInput: Math.min(left.cachedInput, right.cachedInput),
+    cacheCreationInput: Math.min(left.cacheCreationInput, right.cacheCreationInput),
+    output: Math.min(left.output, right.output),
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexMaxTotals(
+  left: CodexJsonlTotals | undefined,
+  right: CodexJsonlTotals,
+): CodexJsonlTotals {
+  if (left === undefined) return right;
+  const reasoning = codexMaxOptional(left.reasoningOutput, right.reasoningOutput);
+  return {
+    input: Math.max(left.input, right.input),
+    cachedInput: Math.max(left.cachedInput, right.cachedInput),
+    cacheCreationInput: Math.max(left.cacheCreationInput, right.cacheCreationInput),
+    output: Math.max(left.output, right.output),
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexMaxOptional(left: number | undefined, right: number | undefined): number | undefined {
+  if (left === undefined) return right;
+  if (right === undefined) return left;
+  return Math.max(left, right);
+}
+
+function codexOptionalDelta(
+  baseline: number | undefined,
+  current: number | undefined,
+  hasBaseline: boolean,
+): number | undefined {
+  if (current === undefined) return undefined;
+  if (!hasBaseline) return current;
+  if (baseline === undefined) return undefined;
+  return Math.max(0, current - baseline);
+}
+
+function codexTotalDelta(
+  baseline: CodexJsonlTotals | undefined,
+  current: CodexJsonlTotals,
+): CodexJsonlTotals {
+  const zero = zeroCodexTotals(false);
+  const base = baseline ?? zero;
+  const reasoning = codexOptionalDelta(
+    baseline?.reasoningOutput,
+    current.reasoningOutput,
+    baseline !== undefined,
+  );
+  return {
+    input: Math.max(0, current.input - base.input),
+    cachedInput: Math.max(0, current.cachedInput - base.cachedInput),
+    cacheCreationInput: Math.max(0, current.cacheCreationInput - base.cacheCreationInput),
+    output: Math.max(0, current.output - base.output),
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexDivergentTotalDelta(options: {
+  readonly rawBaseline?: CodexJsonlTotals | undefined;
+  readonly countedBaseline?: CodexJsonlTotals | undefined;
+  readonly current: CodexJsonlTotals;
+}): CodexJsonlTotals {
+  const raw = options.rawBaseline ?? zeroCodexTotals(false);
+  const counted = options.countedBaseline ?? zeroCodexTotals(false);
+  const component = (rawValue: number, countedValue: number, current: number): number =>
+    current >= rawValue ? Math.max(0, current - rawValue) : Math.max(0, current - countedValue);
+  const reasoning = codexDivergentOptionalDelta(
+    raw.reasoningOutput,
+    counted.reasoningOutput,
+    options.current.reasoningOutput,
+  );
+  return {
+    input: component(raw.input, counted.input, options.current.input),
+    cachedInput: component(raw.cachedInput, counted.cachedInput, options.current.cachedInput),
+    cacheCreationInput: component(
+      raw.cacheCreationInput,
+      counted.cacheCreationInput,
+      options.current.cacheCreationInput,
+    ),
+    output: component(raw.output, counted.output, options.current.output),
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexDivergentOptionalDelta(
+  raw: number | undefined,
+  counted: number | undefined,
+  current: number | undefined,
+): number | undefined {
+  if (raw === undefined || counted === undefined || current === undefined) return undefined;
+  return current >= raw ? Math.max(0, current - raw) : Math.max(0, current - counted);
+}
+
+function codexContainedTotalDelta(options: {
+  readonly watermark?: CodexJsonlTotals | undefined;
+  readonly counted?: CodexJsonlTotals | undefined;
+  readonly current: CodexJsonlTotals;
+}): CodexJsonlTotals {
+  const watermark = options.watermark ?? zeroCodexTotals(false);
+  const counted = options.counted ?? zeroCodexTotals(false);
+  const component = (water: number, countedValue: number, current: number): number =>
+    current >= water
+      ? Math.max(0, current - Math.max(water, countedValue))
+      : Math.max(0, current - countedValue);
+  const reasoning = codexContainedOptionalDelta(
+    watermark.reasoningOutput,
+    counted.reasoningOutput,
+    options.current.reasoningOutput,
+  );
+  return {
+    input: component(watermark.input, counted.input, options.current.input),
+    cachedInput: component(watermark.cachedInput, counted.cachedInput, options.current.cachedInput),
+    cacheCreationInput: component(
+      watermark.cacheCreationInput,
+      counted.cacheCreationInput,
+      options.current.cacheCreationInput,
+    ),
+    output: component(watermark.output, counted.output, options.current.output),
+    ...(reasoning === undefined ? {} : { reasoningOutput: reasoning }),
+  };
+}
+
+function codexContainedOptionalDelta(
+  water: number | undefined,
+  counted: number | undefined,
+  current: number | undefined,
+): number | undefined {
+  if (water === undefined || counted === undefined || current === undefined) return undefined;
+  return current >= water
+    ? Math.max(0, current - Math.max(water, counted))
+    : Math.max(0, current - counted);
+}
+
+function codexPostLatchEventDelta(options: {
+  readonly watermark?: CodexJsonlTotals | undefined;
+  readonly counted?: CodexJsonlTotals | undefined;
+  readonly current: CodexJsonlTotals;
+  readonly adjustedLast?: CodexJsonlTotals | undefined;
+}): CodexJsonlTotals {
+  const contained = codexContainedTotalDelta({
+    watermark: options.watermark,
+    counted: options.counted,
+    current: options.current,
+  });
+  return options.adjustedLast === undefined
+    ? contained
+    : codexMinTotals(options.adjustedLast, contained);
+}
+
+function codexShouldPreferTotalDelta(options: {
+  readonly rawBaseline?: CodexJsonlTotals | undefined;
+  readonly currentTotal: CodexJsonlTotals;
+  readonly totalDelta: CodexJsonlTotals;
+  readonly lastDelta: CodexJsonlTotals;
+  readonly sawDivergentTotals: boolean;
+}): boolean {
+  return (
+    !options.sawDivergentTotals &&
+    options.rawBaseline !== undefined &&
+    codexTotalsAtLeast(options.currentTotal, options.rawBaseline) &&
+    codexTotalsAtMost(options.totalDelta, options.lastDelta)
+  );
+}
+
+function isBelowRawWatermark(
+  current: CodexJsonlTotals,
+  watermark: CodexJsonlTotals | undefined,
+): boolean {
+  if (watermark === undefined) return false;
+  return (
+    current.input < watermark.input ||
+    current.cachedInput < watermark.cachedInput ||
+    current.cacheCreationInput < watermark.cacheCreationInput ||
+    current.output < watermark.output
+  );
 }
 
 function positiveDifference(current: CostJsonlTokens, previous: CostJsonlTokens): CostJsonlTokens {
@@ -804,20 +1375,20 @@ function positiveDifference(current: CostJsonlTokens, previous: CostJsonlTokens)
   };
 }
 
-function positiveDifferenceInternal(
+function positiveTotalsDifference(
   current: CodexJsonlTotals,
   previous: CodexJsonlTotals,
-): CostJsonlTokens {
+): CodexJsonlTotals {
   const reasoningDelta =
     current.reasoningOutput === undefined || previous.reasoningOutput === undefined
-      ? 0
+      ? undefined
       : Math.max(0, current.reasoningOutput - previous.reasoningOutput);
   return {
     input: Math.max(0, current.input - previous.input),
     cachedInput: Math.max(0, current.cachedInput - previous.cachedInput),
     cacheCreationInput: Math.max(0, current.cacheCreationInput - previous.cacheCreationInput),
     output: Math.max(0, current.output - previous.output),
-    reasoningOutput: reasoningDelta,
+    ...(reasoningDelta === undefined ? {} : { reasoningOutput: reasoningDelta }),
   };
 }
 
@@ -829,54 +1400,6 @@ function hasCounterRegression(current: CostJsonlTokens, previous: CostJsonlToken
     current.output < previous.output ||
     current.reasoningOutput < previous.reasoningOutput
   );
-}
-
-function hasCounterRegressionInternal(
-  current: CodexJsonlTotals,
-  previous: CodexJsonlTotals,
-): boolean {
-  const reasoningRegressed =
-    current.reasoningOutput !== undefined &&
-    previous.reasoningOutput !== undefined &&
-    current.reasoningOutput < previous.reasoningOutput;
-  return (
-    current.input < previous.input ||
-    current.cachedInput < previous.cachedInput ||
-    current.cacheCreationInput < previous.cacheCreationInput ||
-    current.output < previous.output ||
-    reasoningRegressed
-  );
-}
-
-function hasReachedTotalsInternal(current: CodexJsonlTotals, boundary: CodexJsonlTotals): boolean {
-  if (current.input < boundary.input) return false;
-  if (current.cachedInput < boundary.cachedInput) return false;
-  if (current.cacheCreationInput < boundary.cacheCreationInput) return false;
-  if (current.output < boundary.output) return false;
-  if (boundary.reasoningOutput !== undefined) {
-    if (current.reasoningOutput === undefined) return false;
-    if (current.reasoningOutput < boundary.reasoningOutput) return false;
-  }
-  return true;
-}
-
-function addTokensInternal(
-  previous: CodexJsonlTotals | undefined,
-  delta: CodexJsonlTotals,
-): CodexJsonlTotals {
-  if (previous === undefined) return delta;
-  const newOutput = previous.output + delta.output;
-  const newReasoning =
-    previous.reasoningOutput === undefined || delta.reasoningOutput === undefined
-      ? undefined
-      : Math.min(previous.reasoningOutput + delta.reasoningOutput, newOutput);
-  return {
-    input: previous.input + delta.input,
-    cachedInput: previous.cachedInput + delta.cachedInput,
-    cacheCreationInput: previous.cacheCreationInput + delta.cacheCreationInput,
-    output: newOutput,
-    ...(newReasoning === undefined ? {} : { reasoningOutput: newReasoning }),
-  };
 }
 
 function isStaleRegression(
@@ -891,19 +1414,37 @@ function isStaleRegression(
   const hasRegression =
     current.input < previous.input ||
     current.cachedInput < previous.cachedInput ||
+    current.cacheCreationInput < previous.cacheCreationInput ||
     current.output < previous.output ||
     reasoningRegressed;
   if (!hasRegression) return false;
   const previousTotal =
-    previous.input + previous.cachedInput + previous.output + (previous.reasoningOutput ?? 0);
+    previous.input +
+    previous.cachedInput +
+    previous.cacheCreationInput +
+    previous.output +
+    (previous.reasoningOutput ?? 0);
   const currentTotal =
-    current.input + current.cachedInput + current.output + (current.reasoningOutput ?? 0);
-  const lastTotal = last.input + last.cachedInput + last.output + (last.reasoningOutput ?? 0);
+    current.input +
+    current.cachedInput +
+    current.cacheCreationInput +
+    current.output +
+    (current.reasoningOutput ?? 0);
+  const lastTotal =
+    last.input +
+    last.cachedInput +
+    last.cacheCreationInput +
+    last.output +
+    (last.reasoningOutput ?? 0);
   if (previousTotal <= 0 || currentTotal <= 0 || lastTotal <= 0) return false;
   return currentTotal * 100 >= previousTotal * 98 || currentTotal + lastTotal * 2 >= previousTotal;
 }
 
 function tokenCount(tokens: CostJsonlTokens): number {
+  return tokens.input + tokens.cachedInput + tokens.cacheCreationInput + tokens.output;
+}
+
+function codexNonReasoningTokenCount(tokens: CodexJsonlTotals): number {
   return tokens.input + tokens.cachedInput + tokens.cacheCreationInput + tokens.output;
 }
 

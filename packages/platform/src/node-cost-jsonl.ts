@@ -5,13 +5,13 @@ import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   parseClaudeCostJsonl,
   parseCodexCostJsonl,
+  replayCodexTotalSnapshotsAtOrBefore,
   type ClaudeJsonlParseResult,
   type ClaudeJsonlState,
   type CodexJsonlParseResult,
   type CodexJsonlForkBaseline,
   type CodexJsonlPriorityTurn,
   type CodexJsonlState,
-  type CodexJsonlTotals,
   type CostJsonlCursor,
   type PricingCatalog,
 } from "@codexbar/core";
@@ -477,7 +477,7 @@ export const scanNodeCodexForkFamily = async (options: {
           results.set(path, unresolved);
           return unresolved;
         }
-        const totals = latestTotalsAtOrBefore(
+        const totals = replayCodexTotalSnapshotsAtOrBefore(
           parentEvidence.totalSnapshots ?? [],
           session.forkTimestamp,
         );
@@ -525,21 +525,6 @@ export const scanNodeCodexForkFamily = async (options: {
     members,
     hasUnresolvedLineage: members.some((member) => member.status === "unresolved"),
   };
-};
-
-const latestTotalsAtOrBefore = (
-  snapshots: readonly { readonly timestamp: number; readonly totals: CodexJsonlTotals }[],
-  cutoff: number,
-): CodexJsonlTotals | undefined => {
-  let selected: CodexJsonlTotals | undefined;
-  let selectedTimestamp = Number.NEGATIVE_INFINITY;
-  for (const snapshot of snapshots) {
-    if (snapshot.timestamp <= cutoff && snapshot.timestamp >= selectedTimestamp) {
-      selected = snapshot.totals;
-      selectedTimestamp = snapshot.timestamp;
-    }
-  }
-  return selected;
 };
 
 const isCompleteCodexScan = (

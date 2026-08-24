@@ -242,6 +242,39 @@ describe("Node cost JSONL adapter", () => {
     }
   });
 
+  it("replays parent fork baselines through stale and nonmonotonic snapshots", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "codexbar-cost-jsonl-family-stale-"));
+    const parent = join(directory, "parent.jsonl");
+    const child = join(directory, "child.jsonl");
+    try {
+      await writeFile(
+        parent,
+        [
+          '{"type":"session_meta","timestamp":"2030-01-01T12:00:00Z","payload":{"id":"parent"}}',
+          '{"type":"event_msg","timestamp":"2030-01-01T12:00:01Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":10,"output_tokens":3}}}}',
+          '{"type":"event_msg","timestamp":"2030-01-01T12:00:03Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":15,"output_tokens":5}}}}',
+          '{"type":"event_msg","timestamp":"2030-01-01T12:00:02Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":8,"output_tokens":2},"last_token_usage":{"input_tokens":5,"output_tokens":1}}}}',
+        ].join("\n") + "\n",
+      );
+      await writeFile(
+        child,
+        [
+          '{"type":"session_meta","timestamp":"2030-01-01T12:00:02Z","payload":{"id":"child","forked_from_id":"parent","timestamp":"2030-01-01T12:00:02Z"}}',
+          '{"type":"event_msg","timestamp":"2030-01-01T12:00:02Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":10,"output_tokens":3}}}}',
+          '{"type":"event_msg","timestamp":"2030-01-01T12:00:03Z","payload":{"type":"token_count","info":{"model":"gpt-5.6-terra","total_token_usage":{"input_tokens":12,"output_tokens":4}}}}',
+        ].join("\n") + "\n",
+      );
+      const family = await scanNodeCodexForkFamily({
+        sources: [{ path: child }, { path: parent }],
+      });
+      const byPath = new Map(family.members.map((member) => [member.path, member]));
+      expect(family.hasUnresolvedLineage).toBe(false);
+      expect(byPath.get(resolve(child))?.scan?.result.rows).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("matches the Swift #2037 archived parent-present fixture's copied-prefix boundary", async () => {
     const fixture = join(
       import.meta.dirname,
