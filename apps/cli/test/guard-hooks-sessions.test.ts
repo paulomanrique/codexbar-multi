@@ -116,6 +116,11 @@ describe("CLI hooks", () => {
       save: async (value) => {
         saved.push(value);
       },
+      modify: async (mutation) => {
+        const result = await mutation(saved.at(-1) ?? initial);
+        saved.push(result.config);
+        return result;
+      },
       saved,
     };
   };

@@ -65,6 +65,25 @@ for (const root of ownerIsolationRoots) {
   }
 }
 
+const ipcBoundaryRoots = [
+  "packages/contracts/src/ipc.ts",
+  "apps/desktop/src/ipc",
+  "apps/desktop/src/preload",
+  "apps/desktop/src/renderer",
+] as const;
+const persistedSecretSchemaPattern =
+  /\b(?:ProviderTokenAccount|ProviderTokenAccountData|ProviderConfig|CodexBarConfig)\b/;
+for (const root of ipcBoundaryRoots) {
+  const paths = root.endsWith(".ts") ? [join(repositoryRoot, root)] : await walk(join(repositoryRoot, root));
+  for (const path of paths) {
+    if (persistedSecretSchemaPattern.test(await readFile(path, "utf8"))) {
+      failures.push(
+        `${relative(repositoryRoot, path)}: secret-bearing persisted schema crosses IPC boundary`,
+      );
+    }
+  }
+}
+
 for (const relativePath of [
   "packages/core/src/provider-fetch-pipeline.ts",
   "packages/core/src/services.ts",

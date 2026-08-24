@@ -21,6 +21,10 @@ import {
   RefreshProviderRequestDTO,
   ActivateClaudeSwapAccountRequestDTO,
   DefaultBrowserSessionStatusesDTO,
+  ListTokenAccountsRequestDTO,
+  SelectTokenAccountRequestDTO,
+  TokenAccountMetadataDTO,
+  TokenAccountRosterDTO,
   SpendDashboardDTO,
   SpendOverviewDTO,
 } from "@codexbar/contracts";
@@ -145,6 +149,54 @@ describe("desktop IPC boundary", () => {
     ).toThrow();
   });
 
+  it("keeps token-account IPC metadata-only and rejects token-bearing accounts", () => {
+    const decodeList = Schema.decodeUnknownSync(ListTokenAccountsRequestDTO);
+    const decodeSelect = Schema.decodeUnknownSync(SelectTokenAccountRequestDTO);
+    const decodeAccount = Schema.decodeUnknownSync(TokenAccountMetadataDTO);
+    const decodeRoster = Schema.decodeUnknownSync(TokenAccountRosterDTO);
+    expect(decodeList({ provider: "claude" })).toEqual({ provider: "claude" });
+    expect(() => decodeList({ provider: "fixture-plugin" })).toThrow();
+    expect(
+      decodeSelect({
+        provider: "claude",
+        accountId: "account-1",
+        expectedRevision: "a".repeat(64),
+      }),
+    ).toEqual({ provider: "claude", accountId: "account-1", expectedRevision: "a".repeat(64) });
+    expect(() =>
+      decodeSelect({ provider: "claude", accountId: "", expectedRevision: "a".repeat(64) }),
+    ).toThrow();
+    expect(decodeAccount({ id: "account-1", label: "", addedAt: 1.25 })).toEqual({
+      id: "account-1",
+      label: "",
+      addedAt: 1.25,
+    });
+    expect(() =>
+      decodeAccount({ id: "account-1", label: "Main", addedAt: 1.25, token: "redacted" }),
+    ).toThrow();
+    expect(
+      decodeRoster({
+        provider: "claude",
+        accounts: [{ id: "account-1", label: "Main", addedAt: 1, vaultKey: "private" }],
+        activeIndex: 0,
+        revision: "b".repeat(64),
+      }),
+    ).toEqual({
+      provider: "claude",
+      accounts: [{ id: "account-1", label: "Main", addedAt: 1 }],
+      activeIndex: 0,
+      revision: "b".repeat(64),
+    });
+    expect(() =>
+      decodeRoster({
+        provider: "claude",
+        accounts: [{ id: "account-1", label: "Main", addedAt: 1, token: "redacted" }],
+        activeIndex: 0,
+        revision: "b".repeat(64),
+      }),
+    ).toThrow();
+  });
+
   it("allows only a bounded first-party provider settings projection", () => {
     const decodeSettings = Schema.decodeUnknownSync(ProviderSettingsDTO);
     const decodeList = Schema.decodeUnknownSync(ProviderSettingsListDTO);
@@ -206,6 +258,8 @@ describe("desktop IPC boundary", () => {
   it("uses unique, high-level channels", () => {
     const channels = Object.values(DesktopChannels);
     expect(DesktopChannels.overviewUpdated).toBe("codexbar-multi:overview-updated");
+    expect(DesktopChannels.listTokenAccounts).toBe("codexbar-multi:list-token-accounts");
+    expect(DesktopChannels.selectTokenAccount).toBe("codexbar-multi:select-token-account");
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
   });

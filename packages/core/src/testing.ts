@@ -68,6 +68,12 @@ export const makeMemoryConfigRepository = (initial: PersistedCodexBarConfig) =>
         Effect.sync(() => {
           config = structuredClone(next);
         }),
+      modify: (mutation) =>
+        Effect.gen(function* () {
+          const result = yield* mutation(structuredClone(config));
+          config = structuredClone(result.config);
+          return result;
+        }),
     };
   });
 

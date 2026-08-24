@@ -159,15 +159,24 @@ export const runHooks = async (
     return { exitCode: 0 };
   }
   if (parsed.action === "enable" || parsed.action === "disable") {
-    const hooks = config.hooks ?? { enabled: false, events: [] };
-    const updated = { ...config, hooks: { ...hooks, enabled: parsed.action === "enable" } };
+    if (store.modify === undefined) return failure(io, out, "Unable to save config");
+    let updatedHooks: PersistedCodexBarConfig["hooks"];
     try {
-      await store.save(updated);
+      const result = await store.modify(async (current) => {
+        const fresh = normalizeCodexBarConfig(current ?? makeDefaultCodexBarConfig());
+        const hooks = fresh.hooks ?? { enabled: false, events: [] };
+        const updated = {
+          ...fresh,
+          hooks: { ...hooks, enabled: parsed.action === "enable" },
+        };
+        return { config: updated, value: updated.hooks };
+      });
+      updatedHooks = result.value;
     } catch (error) {
       return failure(io, out, error instanceof Error ? error.message : String(error));
     }
-    if (out.json) result(io, out, updated.hooks);
-    else if (!out.jsonOnly) io.stdout(`Hooks: ${updated.hooks.enabled ? "enabled" : "disabled"}`);
+    if (out.json) result(io, out, updatedHooks);
+    else if (!out.jsonOnly) io.stdout(`Hooks: ${updatedHooks?.enabled ? "enabled" : "disabled"}`);
     return { exitCode: 0 };
   }
   const event =

@@ -147,6 +147,20 @@ const migrateTokenAccountsToVault = (
     return migrated;
   });
 
+const loadFreshAndMigrateUnderHeldLock = (
+  repository: ConfigRepositoryService,
+  credentials: CredentialStoreService,
+): Effect.Effect<PersistedCodexBarConfig | undefined, InfrastructureError> =>
+  repository.load.pipe(
+    Effect.mapError((error) => vaultError("load config", error)),
+    Effect.flatMap((freshConfig) => {
+      if (freshConfig === undefined || !containsLegacyTokenAccountData(freshConfig)) {
+        return Effect.succeed(freshConfig);
+      }
+      return migrateTokenAccountsToVault(freshConfig, repository, credentials);
+    }),
+  );
+
 export const makeTokenAccountVaultConfigRepository = (
   repository: ConfigRepositoryService,
   credentials: CredentialStoreService,
@@ -158,17 +172,7 @@ export const makeTokenAccountVaultConfigRepository = (
       if (config === undefined || !containsLegacyTokenAccountData(config)) {
         return Effect.succeed(config);
       }
-      return lock.runExclusive(
-        repository.load.pipe(
-          Effect.mapError((error) => vaultError("load config", error)),
-          Effect.flatMap((freshConfig) => {
-            if (freshConfig === undefined || !containsLegacyTokenAccountData(freshConfig)) {
-              return Effect.succeed(freshConfig);
-            }
-            return migrateTokenAccountsToVault(freshConfig, repository, credentials);
-          }),
-        ),
-      );
+      return lock.runExclusive(loadFreshAndMigrateUnderHeldLock(repository, credentials));
     }),
   ),
   save: (config) => {
@@ -178,6 +182,19 @@ export const makeTokenAccountVaultConfigRepository = (
       .save(config)
       .pipe(Effect.mapError((error) => vaultError("save config", error)));
   },
+  modify: (mutation) =>
+    lock.runExclusive(
+      Effect.gen(function* () {
+        const current = yield* loadFreshAndMigrateUnderHeldLock(repository, credentials);
+        const result = yield* mutation(current);
+        const invalid = assertMetadataOnlyV2(result.config);
+        if (invalid !== undefined) return yield* Effect.fail(invalid);
+        yield* repository
+          .save(result.config)
+          .pipe(Effect.mapError((error) => vaultError("save config", error)));
+        return result;
+      }),
+    ),
 });
 
 const explicit = (value: string | undefined): string | null => value ?? null;

@@ -25,6 +25,11 @@ export interface CLIConfigStore {
   readonly path: string;
   readonly load: () => Promise<PersistedCodexBarConfig | undefined>;
   readonly save: (config: PersistedCodexBarConfig) => Promise<void>;
+  readonly modify?: <Value>(
+    mutation: (
+      config: PersistedCodexBarConfig | undefined,
+    ) => Promise<{ readonly config: PersistedCodexBarConfig; readonly value: Value }>,
+  ) => Promise<{ readonly config: PersistedCodexBarConfig; readonly value: Value }>;
 }
 
 export interface ConfigCommandRuntime {
@@ -310,14 +315,21 @@ export const runConfig = async (
       "args",
     );
   const enabled = action === "enable";
-  const updated: PersistedCodexBarConfig = {
-    ...config,
-    providers: config.providers.map((entry) =>
-      entry.id === provider.id ? { ...entry, enabled } : entry,
-    ),
-  };
+  if (runtime.config.modify === undefined)
+    return writeFailure(io, output, "Unable to save config", 1, "config");
   try {
-    await runtime.config.save(updated);
+    await runtime.config.modify(async (current) => {
+      const fresh = normalizeCodexBarConfig(current ?? makeDefaultCodexBarConfig());
+      return {
+        config: {
+          ...fresh,
+          providers: fresh.providers.map((entry) =>
+            entry.id === provider.id ? { ...entry, enabled } : entry,
+          ),
+        },
+        value: undefined,
+      };
+    });
   } catch {
     return writeFailure(io, output, "Unable to save config", 1, "config");
   }
@@ -339,4 +351,12 @@ export const makeNodeCLIConfigStore = (
   path,
   load: () => Effect.runPromise(repository.load),
   save: (config) => Effect.runPromise(repository.save(config)),
+  modify: (mutation) =>
+    Effect.runPromise(
+      repository.modify((config) =>
+        Effect.promise(() => mutation(config)).pipe(
+          Effect.map((result) => ({ config: result.config, value: result.value })),
+        ),
+      ),
+    ),
 });

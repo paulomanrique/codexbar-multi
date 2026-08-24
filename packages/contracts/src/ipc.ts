@@ -77,6 +77,14 @@ const TimestampMilliseconds = Schema.Natural;
 const QueryLimit = Schema.Natural.pipe(
   Schema.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(10_000)),
 );
+const TokenAccountId = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+);
+const TokenAccountMetadataString = Schema.String.pipe(Schema.check(Schema.isMaxLength(256)));
+const TokenAccountSeconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)));
+const TokenAccountRevision = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+);
 
 /** A bounded, provider-scoped history query. Export stays renderer-local; it never writes a file. */
 export const HistoryQueryDTO = Schema.Struct({
@@ -254,6 +262,42 @@ export const DefaultBrowserSessionStatusesDTO = Schema.Struct({
 export type DefaultBrowserSessionStatusesDTO = Schema.Schema.Type<
   typeof DefaultBrowserSessionStatusesDTO
 >;
+
+export const TokenAccountMetadataDTO = Schema.Struct({
+  id: TokenAccountId,
+  label: TokenAccountMetadataString,
+  addedAt: TokenAccountSeconds,
+  lastUsed: Schema.optional(TokenAccountSeconds),
+  externalIdentifier: Schema.optional(TokenAccountMetadataString),
+  usageScope: Schema.optional(TokenAccountMetadataString),
+  organizationId: Schema.optional(TokenAccountMetadataString),
+  workspaceID: Schema.optional(TokenAccountMetadataString),
+  /** Secret-bearing legacy input is never valid on renderer IPC. */
+  token: Schema.optional(Schema.Never),
+});
+export type TokenAccountMetadataDTO = Schema.Schema.Type<typeof TokenAccountMetadataDTO>;
+
+export const TokenAccountRosterDTO = Schema.Struct({
+  provider: ProviderId,
+  accounts: Schema.Array(TokenAccountMetadataDTO).pipe(Schema.check(Schema.isMaxLength(64))),
+  activeIndex: Schema.Natural.pipe(
+    Schema.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(63)),
+  ),
+  revision: TokenAccountRevision,
+});
+export type TokenAccountRosterDTO = Schema.Schema.Type<typeof TokenAccountRosterDTO>;
+
+export const ListTokenAccountsRequestDTO = Schema.Struct({
+  provider: ProviderId,
+});
+export type ListTokenAccountsRequestDTO = Schema.Schema.Type<typeof ListTokenAccountsRequestDTO>;
+
+export const SelectTokenAccountRequestDTO = Schema.Struct({
+  provider: ProviderId,
+  accountId: TokenAccountId,
+  expectedRevision: TokenAccountRevision,
+});
+export type SelectTokenAccountRequestDTO = Schema.Schema.Type<typeof SelectTokenAccountRequestDTO>;
 
 /** Explicit, provider-scoped refresh request. The renderer cannot supply endpoints, headers, or secrets. */
 export const RefreshProviderRequestDTO = Schema.Struct({

@@ -35,6 +35,9 @@ import {
   DashboardSnapshotDTO,
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
+  ListTokenAccountsRequestDTO,
+  SelectTokenAccountRequestDTO,
+  TokenAccountRosterDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
   UpdateProviderSettingsRequestDTO,
@@ -96,13 +99,18 @@ import {
   PlanUtilizationHistoryCoordinator,
   SessionQuotaCoordinator,
   makeDefaultCodexBarConfig,
+  makeTokenAccountRosterService,
   refreshProviderAndPersist,
   GROK_LOCAL_SESSION_TOKEN_SOURCE,
   XAI_DAILY_SPEND_SOURCE,
   type PersistedCodexBarConfig,
   type ProviderRuntimeService,
 } from "@codexbar/core";
-import { FIRST_PARTY_PROVIDERS, PROVIDERS } from "@codexbar/providers";
+import {
+  FIRST_PARTY_PROVIDERS,
+  PROVIDERS,
+  PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID,
+} from "@codexbar/providers";
 import { Effect } from "effect";
 import * as Schema from "effect/Schema";
 
@@ -526,13 +534,16 @@ void desktopReady?.then(async () => {
       }>,
     ): Promise<Value> =>
       desktopConfigMutations.run(async () => {
-        const current = desktopConfig;
-        if (current === undefined) throw new Error("Desktop config is not ready");
-        const result = await mutation(current);
-        // The repository performs a same-directory atomic replacement. Do not
-        // update the in-memory view until that replacement has succeeded.
-        await Effect.runPromise(configRepository.save(result.next));
-        desktopConfig = result.next;
+        const result = await Effect.runPromise(
+          configRepository.modify((current) => {
+            if (current === undefined) return Effect.fail(new Error("Desktop config is not ready"));
+            return Effect.promise(async () => {
+              const mutated = await mutation(current);
+              return { config: mutated.next, value: mutated.value };
+            });
+          }),
+        );
+        desktopConfig = result.config;
         return result.value;
       });
     claudeOAuthHistoryOwnerCapture = makeClaudeOAuthHistoryOwnerCapture({
@@ -608,8 +619,13 @@ void desktopReady?.then(async () => {
     for (const plugin of installedPlugins.plugins) pluginProviderIds.add(plugin.id);
     desktopConfig = await Effect.runPromise(configRepository.load);
     if (desktopConfig === undefined) {
-      desktopConfig = makeDefaultCodexBarConfig();
-      await Effect.runPromise(configRepository.save(desktopConfig));
+      const initialized = await Effect.runPromise(
+        configRepository.modify((current) => {
+          const config = current ?? makeDefaultCodexBarConfig();
+          return Effect.succeed({ config, value: config });
+        }),
+      );
+      desktopConfig = initialized.config;
     }
 
     hostLifecycle.advanceBootstrapStage("runtime");
@@ -739,6 +755,9 @@ void desktopReady?.then(async () => {
     );
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
+    const decodeListTokenAccounts = Schema.decodeUnknownPromise(ListTokenAccountsRequestDTO);
+    const decodeSelectTokenAccount = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
+    const decodeTokenAccountRoster = Schema.decodeUnknownPromise(TokenAccountRosterDTO);
     const decodeActivateClaudeSwapAccount = Schema.decodeUnknownPromise(
       ActivateClaudeSwapAccountRequestDTO,
     );
@@ -906,6 +925,37 @@ void desktopReady?.then(async () => {
           source: outcome.source,
           snapshot: outcome.snapshot,
         });
+      }),
+    );
+    const tokenAccounts = makeTokenAccountRosterService({
+      config: configRepository,
+      support: PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID,
+    });
+    ipcMain.handle(DesktopChannels.listTokenAccounts, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeListTokenAccounts(input);
+        return decodeTokenAccountRoster(
+          await Effect.runPromise(tokenAccounts.list(request.provider)),
+        );
+      }),
+    );
+    ipcMain.handle(DesktopChannels.selectTokenAccount, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeSelectTokenAccount(input);
+        const roster = await Effect.runPromise(tokenAccounts.select(request));
+        desktopConfig = await Effect.runPromise(configRepository.load);
+        await Effect.runPromise(
+          refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
+            sourceMode: "auto",
+            includeCredits: true,
+          }).pipe(
+            Effect.provideService(Clock, providerClock),
+            Effect.provideService(HistoryRepository, activePersistence().history),
+            Effect.provideService(CostUsageRepository, activePersistence().costs),
+            Effect.orElseSucceed(() => undefined),
+          ),
+        );
+        return decodeTokenAccountRoster(roster);
       }),
     );
     ipcMain.handle(DesktopChannels.activateClaudeSwapAccount, (_event, input: unknown) =>

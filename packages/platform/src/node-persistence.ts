@@ -231,6 +231,40 @@ export const makeNodeConfigRepository = (
         catch: (error) =>
           new InfrastructureError("write config", `Unable to encode config file: ${path}`, error),
       }).pipe(Effect.flatMap((content) => files.writeAtomic(path, content))),
+    modify: (mutation) =>
+      Effect.gen(function* () {
+        const current = yield* files.read(path).pipe(
+          Effect.flatMap((content) => {
+            if (content === undefined) return Effect.succeed(undefined);
+            return Effect.try({
+              try: () =>
+                normalizeCodexBarConfig(
+                  decodeCodexBarConfig(JSON.parse(new TextDecoder().decode(content)), options),
+                  DEFAULT_PROVIDER_CONFIG_NORMALIZERS,
+                ),
+              catch: (error) =>
+                new InfrastructureError(
+                  "read config",
+                  `Unable to validate config file: ${path}`,
+                  error,
+                ),
+            });
+          }),
+        );
+        const result = yield* mutation(current);
+        yield* Effect.try({
+          try: () => {
+            const validated = normalizeCodexBarConfig(
+              decodeCodexBarConfig(encodeCodexBarConfig(result.config), options),
+              DEFAULT_PROVIDER_CONFIG_NORMALIZERS,
+            );
+            return new TextEncoder().encode(`${JSON.stringify(encodeCodexBarConfig(validated))}\n`);
+          },
+          catch: (error) =>
+            new InfrastructureError("write config", `Unable to encode config file: ${path}`, error),
+        }).pipe(Effect.flatMap((content) => files.writeAtomic(path, content)));
+        return result;
+      }),
   };
 };
 

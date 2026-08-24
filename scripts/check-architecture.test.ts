@@ -31,3 +31,11 @@ test("keeps production composition roots on the token account vault wrapper", as
   assert.match(source, /selectedFirstPartyAccountFromConfig/);
   assert.match(source, /selectedClaudeHistoryBindingFromConfig/);
 });
+
+test("keeps secret-bearing persisted schemas off the IPC boundary", async () => {
+  const source = await readFile(new URL("./check-architecture.ts", import.meta.url), "utf8");
+
+  assert.match(source, /persistedSecretSchemaPattern/);
+  assert.match(source, /ProviderTokenAccountData/);
+  assert.match(source, /secret-bearing persisted schema crosses IPC boundary/);
+});

@@ -144,6 +144,19 @@ export const RefreshCoordinator = Context.Service<RefreshCoordinatorService>(
 export interface ConfigRepositoryService {
   readonly load: Effect.Effect<PersistedCodexBarConfig | undefined, InfrastructureError>;
   readonly save: (config: PersistedCodexBarConfig) => Effect.Effect<void, InfrastructureError>;
+  readonly modify: <Value, Error = never, Requirements = never>(
+    mutation: (
+      config: PersistedCodexBarConfig | undefined,
+    ) => Effect.Effect<
+      { readonly config: PersistedCodexBarConfig; readonly value: Value },
+      Error,
+      Requirements
+    >,
+  ) => Effect.Effect<
+    { readonly config: PersistedCodexBarConfig; readonly value: Value },
+    Error | InfrastructureError,
+    Requirements
+  >;
 }
 export const ConfigRepository = Context.Service<ConfigRepositoryService>(
   "@codexbar/core/ConfigRepository",

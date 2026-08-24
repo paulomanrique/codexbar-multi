@@ -49,6 +49,12 @@ const runtime = (
         current = next;
         value.current = next;
       },
+      modify: async (mutation) => {
+        const result = await mutation(current);
+        current = result.config;
+        value.current = result.config;
+        return result;
+      },
     },
   };
   return value;

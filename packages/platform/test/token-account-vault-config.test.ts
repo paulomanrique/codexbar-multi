@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Effect, Fiber } from "effect";
+import { Effect, Fiber, Semaphore } from "effect";
 import {
   InfrastructureError,
   type ConfigRepositoryService,
@@ -63,6 +63,14 @@ const memoryRepository = (
             repository.saves.push(config);
             repository.current = config;
           }),
+    modify: (mutation) =>
+      Effect.gen(function* () {
+        const result = yield* mutation(repository.current);
+        if (failSave) return yield* Effect.fail(new InfrastructureError("save", "save failed"));
+        repository.saves.push(result.config);
+        repository.current = result.config;
+        return result;
+      }),
   };
   return repository;
 };
@@ -119,26 +127,29 @@ const memoryLock = (
   let acquisitions = 0;
   let releases = 0;
   let held = false;
+  const semaphore = Semaphore.makeUnsafe(1);
   return {
     events,
     acquisitions: () => acquisitions,
     releases: () => releases,
     isHeld: () => held,
     runExclusive: (operation) =>
-      Effect.acquireUseRelease(
-        Effect.sync(() => {
-          events.push("acquire");
-          acquisitions += 1;
-          held = true;
-          onAcquire?.();
-        }),
-        () => operation,
-        () =>
+      semaphore.withPermits(1)(
+        Effect.acquireUseRelease(
           Effect.sync(() => {
-            events.push("release");
-            releases += 1;
-            held = false;
+            events.push("acquire");
+            acquisitions += 1;
+            held = true;
+            onAcquire?.();
           }),
+          () => operation,
+          () =>
+            Effect.sync(() => {
+              events.push("release");
+              releases += 1;
+              held = false;
+            }),
+        ),
       ),
   };
 };
@@ -363,6 +374,13 @@ describe("token-account vault config repository", () => {
           repository.saves.push(config);
           events.push("save");
         }),
+      modify: (mutation) =>
+        Effect.gen(function* () {
+          const result = yield* mutation(loads === 0 ? legacy : migrated);
+          repository.saves.push(result.config);
+          events.push("save");
+          return result;
+        }),
     };
     const credentials = memoryCredentials();
     const lock = memoryLock(() => events.push("lock"));
@@ -447,5 +465,67 @@ describe("token-account vault config repository", () => {
       ),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(repository.saves).toEqual([]);
+  });
+
+  it("modifies a v1 config under the held lock without reacquiring it", async () => {
+    const input = v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]);
+    const repository = memoryRepository(input);
+    const credentials = memoryCredentials();
+    const lock = memoryLock();
+    const wrapped = vaultRepository(repository, credentials, lock);
+
+    const result = await Effect.runPromise(
+      wrapped.modify((current) =>
+        Effect.succeed({
+          config: {
+            ...current!,
+            sessionQuotaNotificationsEnabled: false,
+          },
+          value: current?.providers[0]?.tokenAccounts?.version,
+        }),
+      ),
+    );
+
+    expect(result.value).toBe(2);
+    expect(result.config.sessionQuotaNotificationsEnabled).toBe(false);
+    expect(repository.current?.providers[0]?.tokenAccounts?.version).toBe(2);
+    expect(lock.acquisitions()).toBe(1);
+    expect(lock.releases()).toBe(1);
+  });
+
+  it("serializes concurrent modifies so both fresh changes persist", async () => {
+    const input = v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]);
+    const repository = memoryRepository(input);
+    const credentials = memoryCredentials();
+    const wrapped = vaultRepository(repository, credentials, memoryLock());
+
+    await Promise.all([
+      Effect.runPromise(
+        wrapped.modify((current) =>
+          Effect.succeed({
+            config: {
+              ...current!,
+              providers: current!.providers.map((provider) =>
+                provider.id === "claude" ? { ...provider, enabled: false } : provider,
+              ),
+            },
+            value: undefined,
+          }),
+        ),
+      ),
+      Effect.runPromise(
+        wrapped.modify((current) =>
+          Effect.succeed({
+            config: { ...current!, sessionQuotaNotificationsEnabled: false },
+            value: undefined,
+          }),
+        ),
+      ),
+    ]);
+
+    const saved = repository.current;
+    expect(saved?.providers.find((provider) => provider.id === "claude")?.enabled).toBe(false);
+    expect(saved?.sessionQuotaNotificationsEnabled).toBe(false);
+    expect(saved?.providers[0]?.tokenAccounts?.version).toBe(2);
   });
 });
