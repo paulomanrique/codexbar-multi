@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { DashboardSnapshotDTO, ProviderSettingsListDTO } from "@codexbar/contracts";
 
 import {
   browserLoginActionState,
   browserLoginStatusFromDefaultSessionState,
   makeBrowserLoginMutationGate,
   makeDefaultBrowserSessionStatusLoader,
+  makeOverviewLoader,
   costTotals,
   displayPercent,
   firstPartyProviderId,
@@ -13,6 +15,26 @@ import {
   claudeSwapActivationRequest,
   safeDateFromTimestamp,
 } from "../src/renderer/view-model.ts";
+
+const deferred = <Value>(): {
+  readonly promise: Promise<Value>;
+  readonly resolve: (value: Value) => void;
+  readonly reject: (error: Error) => void;
+} => {
+  let resolve!: (value: Value) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Value>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+const overviewFixture = (id: string): DashboardSnapshotDTO =>
+  ({ providers: [{ id }] }) as unknown as DashboardSnapshotDTO;
+
+const settingsFixture = (id: string): ProviderSettingsListDTO =>
+  ({ providers: [{ provider: id }] }) as unknown as ProviderSettingsListDTO;
 
 describe("desktop renderer view model", () => {
   it("forwards only an eligible opaque Claude account ID", () => {
@@ -137,6 +159,111 @@ describe("desktop renderer view model", () => {
     ]);
   });
 
+  it("publishes only the newest overview/settings response", async () => {
+    const firstOverview = deferred<DashboardSnapshotDTO>();
+    const firstSettings = deferred<ProviderSettingsListDTO>();
+    const secondOverview = deferred<DashboardSnapshotDTO>();
+    const secondSettings = deferred<ProviderSettingsListDTO>();
+    const overviewReads = [firstOverview, secondOverview];
+    const settingsReads = [firstSettings, secondSettings];
+    const published: unknown[] = [];
+    const errors: string[] = [];
+    const loader = makeOverviewLoader({
+      readOverview: () => overviewReads.shift()!.promise,
+      readProviderSettings: () => settingsReads.shift()!.promise,
+      publish: (publication) => published.push(publication),
+      publishError: () => errors.push("error"),
+    });
+    loader.activate();
+
+    const staleLoad = loader.load();
+    const latestLoad = loader.load();
+    secondOverview.resolve(overviewFixture("second"));
+    secondSettings.resolve(settingsFixture("second"));
+    await latestLoad;
+    expect(published).toEqual([
+      { overview: overviewFixture("second"), providerSettings: settingsFixture("second") },
+    ]);
+
+    firstOverview.resolve(overviewFixture("first"));
+    firstSettings.resolve(settingsFixture("first"));
+    await staleLoad;
+    expect(published).toEqual([
+      { overview: overviewFixture("second"), providerSettings: settingsFixture("second") },
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it("ignores stale overview errors after a newer success", async () => {
+    const firstOverview = deferred<DashboardSnapshotDTO>();
+    const firstSettings = deferred<ProviderSettingsListDTO>();
+    const secondOverview = deferred<DashboardSnapshotDTO>();
+    const secondSettings = deferred<ProviderSettingsListDTO>();
+    const overviewReads = [firstOverview, secondOverview];
+    const settingsReads = [firstSettings, secondSettings];
+    const published: unknown[] = [];
+    const errors: string[] = [];
+    const loader = makeOverviewLoader({
+      readOverview: () => overviewReads.shift()!.promise,
+      readProviderSettings: () => settingsReads.shift()!.promise,
+      publish: (publication) => published.push(publication),
+      publishError: () => errors.push("error"),
+    });
+    loader.activate();
+
+    const staleLoad = loader.load();
+    const latestLoad = loader.load();
+    secondOverview.resolve(overviewFixture("latest"));
+    secondSettings.resolve(settingsFixture("latest"));
+    await latestLoad;
+
+    firstOverview.reject(new Error("stale"));
+    firstSettings.resolve(settingsFixture("stale"));
+    await staleLoad;
+
+    expect(published).toEqual([
+      { overview: overviewFixture("latest"), providerSettings: settingsFixture("latest") },
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it("does not publish overview success or error after dispose", async () => {
+    const pendingOverview = deferred<DashboardSnapshotDTO>();
+    const pendingSettings = deferred<ProviderSettingsListDTO>();
+    const published: unknown[] = [];
+    const errors: string[] = [];
+    const loader = makeOverviewLoader({
+      readOverview: () => pendingOverview.promise,
+      readProviderSettings: () => pendingSettings.promise,
+      publish: (publication) => published.push(publication),
+      publishError: () => errors.push("error"),
+    });
+    loader.activate();
+
+    const load = loader.load();
+    loader.dispose();
+    loader.dispose();
+    pendingOverview.resolve(overviewFixture("disposed"));
+    pendingSettings.resolve(settingsFixture("disposed"));
+    await load;
+
+    expect(published).toEqual([]);
+    expect(errors).toEqual([]);
+
+    await loader.load();
+    expect(published).toEqual([]);
+    expect(errors).toEqual([]);
+
+    loader.activate();
+    await loader.load();
+    expect(published).toEqual([
+      {
+        overview: overviewFixture("disposed"),
+        providerSettings: settingsFixture("disposed"),
+      },
+    ]);
+  });
+
   it("keeps the default browser login UI requests closed over Claude, T3, and Grok", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(new URL("../src/renderer/index.tsx", import.meta.url), "utf8"),
@@ -148,6 +275,21 @@ describe("desktop renderer view model", () => {
     expect(source).toContain("setClaudeStatus(statuses.claude)");
     expect(source).toContain('startBrowserLogin("claude", setClaudeStatus)');
     expect(source).toContain('logoutBrowserLogin("claude", setClaudeStatus)');
+  });
+
+  it("wires overview startup, background invalidation, cleanup, and manual refresh through one loader", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../src/renderer/index.tsx", import.meta.url), "utf8"),
+    );
+    expect(source).toContain("makeOverviewLoader");
+    expect(source).toContain("const loadOverview = (): Promise<void> => overviewLoader.load()");
+    expect(source).toContain("overviewLoader.activate();");
+    expect(source).toContain("void overviewLoader.load();");
+    expect(source).toContain("window.codexbar.onOverviewUpdated");
+    expect(source).toContain("const unsubscribe");
+    expect(source).toContain("unsubscribe();");
+    expect(source).toContain("overviewLoader.dispose();");
+    expect(source).toContain(".then(loadOverview)");
   });
 
   it("never represents a partial implementation as release-ready", () => {

@@ -44,6 +44,7 @@ import { makeSessionQuotaNotificationSettingsApi } from "./session-quota-notific
 import { makeLegacyImportApi } from "./legacy-import-api.js";
 import { makeHostStatusApi } from "./host-status-api.js";
 import { makeDefaultBrowserSessionStatusesApi } from "./default-browser-session-statuses-api.js";
+import { makeOverviewUpdatedApi } from "./overview-updated-api.js";
 
 const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
 const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -74,6 +75,14 @@ const decodePluginSecretResult = Schema.decodeUnknownPromise(PluginSecretResultD
 const api: CodexBarDesktopApi = Object.freeze({
   ...makeHostStatusApi((channel, input) => ipcRenderer.invoke(channel, input)),
   getOverview: async () => decodeOverview(await ipcRenderer.invoke(DesktopChannels.overview)),
+  ...makeOverviewUpdatedApi(
+    (channel, listener) => {
+      ipcRenderer.on(channel, listener);
+    },
+    (channel, listener) => {
+      ipcRenderer.removeListener(channel, listener);
+    },
+  ),
   getHistory: async (query: HistoryQuery) =>
     decodeHistoryResult(
       await ipcRenderer.invoke(DesktopChannels.history, await decodeHistoryQuery(query)),

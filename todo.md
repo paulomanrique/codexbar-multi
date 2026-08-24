@@ -82,6 +82,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
       - [ ] Port the warm `agy` CLI lifecycle, readiness polling, idle teardown, and one-shot reset policy.
 - [ ] Port adaptive refresh wiring, cache, status, redaction, and cancellation ownership.
   - [x] Add the desktop adaptive timer with generation replacement, abort propagation, persisted refresh, and error redaction.
+  - [x] Invalidate renderer overview/settings with a payload-free IPC event after a background round persists at least one snapshot.
   - [ ] Add persistent snapshot/cache TTL, status probes, real low-power/thermal/activity adapters, plugin refresh, and CLI orchestration.
 - [ ] Implement all CLI commands, output formats, exit codes, and Node SEA artifacts.
   - [x] Add usage, providers, cost, cards, dashboard, diagnose, cache, config, guard, hooks, sessions, cookie, plugins, and bounded serve command surfaces.

@@ -1,9 +1,11 @@
 import type {
   CostUsageRecordDTO,
   DashboardAccountDTO,
+  DashboardSnapshotDTO,
   DashboardProviderDTO,
   DefaultBrowserSessionStatusesDTO,
   DefaultBrowserSessionStatusStateDTO,
+  ProviderSettingsListDTO,
   ProviderId,
 } from "@codexbar/contracts";
 import { PROVIDER_IDS } from "@codexbar/contracts";
@@ -103,6 +105,47 @@ export const makeDefaultBrowserSessionStatusLoader = (options: {
         if (requestGeneration !== generation) return;
         options.publish({ claude: "unavailable", t3chat: "unavailable", grok: "unavailable" });
       }
+    },
+  };
+};
+
+export interface OverviewLoaderPublication {
+  readonly overview: DashboardSnapshotDTO;
+  readonly providerSettings: ProviderSettingsListDTO;
+}
+
+export const makeOverviewLoader = (options: {
+  readonly readOverview: () => Promise<DashboardSnapshotDTO>;
+  readonly readProviderSettings: () => Promise<ProviderSettingsListDTO>;
+  readonly publish: (publication: OverviewLoaderPublication) => void;
+  readonly publishError: () => void;
+}) => {
+  let generation = 0;
+  let active = false;
+  return {
+    activate: (): void => {
+      active = true;
+      generation += 1;
+    },
+    load: async (): Promise<void> => {
+      if (!active) return;
+      const requestGeneration = ++generation;
+      try {
+        const [overview, providerSettings] = await Promise.all([
+          options.readOverview(),
+          options.readProviderSettings(),
+        ]);
+        if (!active || requestGeneration !== generation) return;
+        options.publish({ overview, providerSettings });
+      } catch {
+        if (!active || requestGeneration !== generation) return;
+        options.publishError();
+      }
+    },
+    dispose: (): void => {
+      if (!active) return;
+      active = false;
+      generation += 1;
     },
   };
 };

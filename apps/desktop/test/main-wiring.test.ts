@@ -92,6 +92,19 @@ describe("main wiring for visible startup shell", () => {
     expect(source).toContain("window.hide()");
   });
 
+  it("publishes overview invalidation as one channel-only background event", async () => {
+    const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
+    expect(source).toContain("refreshOverviewAndPublish");
+    expect(source).toContain("refresh: (signal) =>");
+    expect(source).toContain("signal,");
+    expect(source).toContain("refresh: refreshEnabledProvidersInBackground");
+    expect(source).toContain("publish: publishOverviewUpdated");
+    expect(source).toContain("{ immediate: true }");
+    expect(source).toContain("webContents.send(DesktopChannels.overviewUpdated);");
+    expect(source).not.toContain("webContents.send(DesktopChannels.overviewUpdated,");
+    expect(source).not.toContain("OverviewUpdatedDTO");
+  });
+
   it("enforces startup lifecycle hardening from independent review", async () => {
     const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
 

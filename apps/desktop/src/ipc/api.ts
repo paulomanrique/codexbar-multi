@@ -42,6 +42,7 @@ import type {
 export const DesktopChannels = Object.freeze({
   hostStatus: "codexbar-multi:host-status",
   overview: "codexbar-multi:overview",
+  overviewUpdated: "codexbar-multi:overview-updated",
   history: "codexbar-multi:history",
   exportHistory: "codexbar-multi:export-history",
   costs: "codexbar-multi:costs",
@@ -74,6 +75,7 @@ export const DesktopChannels = Object.freeze({
 export interface CodexBarDesktopApi {
   readonly getHostStatus: () => Promise<HostStatusDTO>;
   readonly getOverview: () => Promise<DashboardSnapshotDTO>;
+  readonly onOverviewUpdated: (listener: () => void) => () => void;
   readonly getHistory: (query: HistoryQueryDTO) => Promise<HistoryQueryResultDTO>;
   readonly exportHistory: (query: HistoryQueryDTO) => Promise<HistoryExportDTO>;
   readonly getCosts: (query: CostUsageQueryDTO) => Promise<CostUsageQueryResultDTO>;

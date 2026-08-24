@@ -26,6 +26,7 @@ import {
   browserLoginActionState,
   makeBrowserLoginMutationGate,
   makeDefaultBrowserSessionStatusLoader,
+  makeOverviewLoader,
   costTotals,
   claudeSwapActivationRequest,
   displayPercent,
@@ -632,6 +633,21 @@ function App() {
       }),
     [],
   );
+  const overviewLoader = useMemo(
+    () =>
+      makeOverviewLoader({
+        readOverview: () => window.codexbar.getOverview(),
+        readProviderSettings: () => window.codexbar.getProviderSettings(),
+        publish: ({ overview, providerSettings: nextProviderSettings }) => {
+          setSnapshot(overview);
+          setProviderSettings(nextProviderSettings);
+          setSelectedProviderId((current) => current ?? overview.providers[0]?.id);
+          setError(undefined);
+        },
+        publishError: () => setError(localization.upstream("Unavailable")),
+      }),
+    [localization],
+  );
   const selectedProvider = snapshot?.providers.find(
     (provider) => provider.id === selectedProviderId,
   );
@@ -649,20 +665,7 @@ function App() {
         provider.id.toLocaleLowerCase(localization.locale).includes(query)
       );
     }) ?? [];
-  const loadOverview = async (): Promise<void> => {
-    try {
-      const [overview, settings] = await Promise.all([
-        window.codexbar.getOverview(),
-        window.codexbar.getProviderSettings(),
-      ]);
-      setSnapshot(overview);
-      setProviderSettings(settings);
-      setSelectedProviderId((current) => current ?? overview.providers[0]?.id);
-      setError(undefined);
-    } catch {
-      setError(localization.upstream("Unavailable"));
-    }
-  };
+  const loadOverview = (): Promise<void> => overviewLoader.load();
   const loadSessionQuotaNotificationSettings = async (): Promise<void> => {
     try {
       const settings = await window.codexbar.getSessionQuotaNotificationSettings();
@@ -702,8 +705,16 @@ function App() {
     };
   }, [localization]);
   useEffect(() => {
-    void loadOverview();
-  }, []);
+    overviewLoader.activate();
+    void overviewLoader.load();
+    const unsubscribe = window.codexbar.onOverviewUpdated(() => {
+      void overviewLoader.load();
+    });
+    return () => {
+      unsubscribe();
+      overviewLoader.dispose();
+    };
+  }, [overviewLoader]);
   useEffect(() => {
     void loadSessionQuotaNotificationSettings();
   }, []);

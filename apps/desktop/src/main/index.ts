@@ -137,6 +137,7 @@ import { recordDesktopPlanUtilization } from "./plan-utilization-history.js";
 import { loadTrayIcon } from "./tray-icon.js";
 import { activateWindow } from "./single-instance.js";
 import { createHostLifecycle } from "./host-lifecycle.js";
+import { refreshAndReportPersistence, refreshOverviewAndPublish } from "./overview-publication.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -281,15 +282,16 @@ const publishSessionQuotaNotification = (
  * Main-process-only background refresh. Failures stay provider-local and do
  * not surface their text through a renderer, console, or adaptive scheduler.
  */
-const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise<void> => {
-  await Promise.all(
-    filterProvidersForClaudeBackgroundPolicy(overviewProviders(), "background").map(
-      async (provider) => {
-        try {
+const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise<boolean> => {
+  const persistedByProvider = await Promise.all(
+    filterProvidersForClaudeBackgroundPolicy(overviewProviders(), "background").map((provider) =>
+      refreshAndReportPersistence({
+        signal,
+        persist: async (refreshSignal) => {
           // Local Grok tokens are independent of the remote billing session;
           // retain that source even when the following web refresh fails.
-          if (provider.id === "grok") await activeGrokLocalTokenScanner().refresh(signal);
-          const outcome = await activeClaudeOAuthHistoryOwnerCapture().captureFetch(
+          if (provider.id === "grok") await activeGrokLocalTokenScanner().refresh(refreshSignal);
+          return activeClaudeOAuthHistoryOwnerCapture().captureFetch(
             provider.id,
             () =>
               Effect.runPromise(
@@ -301,45 +303,50 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
                   Effect.provideService(HistoryRepository, activePersistence().history),
                   Effect.provideService(CostUsageRepository, activePersistence().costs),
                 ),
-                { signal },
+                { signal: refreshSignal },
               ),
-            signal,
+            refreshSignal,
           );
-          if (!signal.aborted) {
-            const claudeHistoryBinding =
-              await activeClaudeOAuthHistoryOwnerCapture().consumeHistoryBinding(
-                provider.id,
-                outcome,
-                signal,
-              );
-            if (signal.aborted) throw new Error("Adaptive refresh was cancelled.");
-            publishSessionQuotaNotification(provider.id, outcome.snapshot);
-            await recordDesktopPlanUtilization({
-              coordinator: activePlanUtilizationHistory(),
-              providerId: provider.id,
-              snapshot: outcome.snapshot,
-              capturedAt: new Date(),
-              signal,
-              strategyId: outcome.strategyId,
-              ...(claudeHistoryBinding.oauthHistoryOwnerIdentifier === undefined
-                ? {}
-                : {
-                    claudeOAuthHistoryOwnerIdentifier:
-                      claudeHistoryBinding.oauthHistoryOwnerIdentifier,
-                  }),
-              ...(claudeHistoryBinding.selectedTokenAccountKey === undefined
-                ? {}
-                : { claudeSelectedTokenAccountKey: claudeHistoryBinding.selectedTokenAccountKey }),
-            });
-          }
-        } catch {
-          // The provider refresh path owns classified errors. Avoid retaining
-          // transport text here because it can contain sensitive context.
-          if (signal.aborted) throw new Error("Adaptive refresh was cancelled.");
-        }
-      },
+        },
+        afterPersist: async (outcome, refreshSignal) => {
+          const claudeHistoryBinding =
+            await activeClaudeOAuthHistoryOwnerCapture().consumeHistoryBinding(
+              provider.id,
+              outcome,
+              refreshSignal,
+            );
+          if (refreshSignal.aborted) throw new Error("Adaptive refresh was cancelled.");
+          publishSessionQuotaNotification(provider.id, outcome.snapshot);
+          await recordDesktopPlanUtilization({
+            coordinator: activePlanUtilizationHistory(),
+            providerId: provider.id,
+            snapshot: outcome.snapshot,
+            capturedAt: new Date(),
+            signal: refreshSignal,
+            strategyId: outcome.strategyId,
+            ...(claudeHistoryBinding.oauthHistoryOwnerIdentifier === undefined
+              ? {}
+              : {
+                  claudeOAuthHistoryOwnerIdentifier:
+                    claudeHistoryBinding.oauthHistoryOwnerIdentifier,
+                }),
+            ...(claudeHistoryBinding.selectedTokenAccountKey === undefined
+              ? {}
+              : { claudeSelectedTokenAccountKey: claudeHistoryBinding.selectedTokenAccountKey }),
+          });
+        },
+      }),
     ),
   );
+  return persistedByProvider.some(Boolean);
+};
+
+const publishOverviewUpdated = (): void => {
+  const currentWindow = window;
+  if (currentWindow === undefined || currentWindow.isDestroyed()) return;
+  const { webContents } = currentWindow;
+  if (webContents.isDestroyed()) return;
+  webContents.send(DesktopChannels.overviewUpdated);
 };
 
 /**
@@ -630,7 +637,12 @@ void desktopReady?.then(async () => {
             }, milliseconds);
             signal.addEventListener("abort", cancel, { once: true });
           }),
-        refresh: refreshEnabledProvidersInBackground,
+        refresh: (signal) =>
+          refreshOverviewAndPublish({
+            signal,
+            refresh: refreshEnabledProvidersInBackground,
+            publish: publishOverviewUpdated,
+          }),
         // Electron does not expose the OS low-power-mode state or thermal
         // pressure consistently across all three targets. Keep both neutral
         // until a dedicated platform adapter can supply the real semantics;

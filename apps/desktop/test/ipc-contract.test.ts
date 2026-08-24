@@ -205,6 +205,7 @@ describe("desktop IPC boundary", () => {
 
   it("uses unique, high-level channels", () => {
     const channels = Object.values(DesktopChannels);
+    expect(DesktopChannels.overviewUpdated).toBe("codexbar-multi:overview-updated");
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
   });
