@@ -147,9 +147,9 @@ Current session
     ).toThrow();
   });
 
-  it("exposes strategy ids and app-auto order oauth->cli->web", () => {
+  it("exposes strategy ids and app-auto order admin->oauth->cli->web", () => {
     const ids = (claude.descriptor.strategies ?? []).map((s) => s.id);
-    expect(ids).toEqual(["claude.oauth", "claude.cli", "claude.web"]);
-    expect(claude.descriptor.strategy?.id).toBe("claude.oauth");
+    expect(ids).toEqual(["claude.admin-api", "claude.oauth", "claude.cli", "claude.web"]);
+    expect(claude.descriptor.strategy?.id).toBe("claude.auto");
   });
 });

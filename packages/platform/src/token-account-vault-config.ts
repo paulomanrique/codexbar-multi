@@ -264,7 +264,7 @@ const normalizeCookieHeader = (raw: string | undefined): string | undefined => {
 type ClaudeCredentialRoute =
   | { readonly kind: "oauth"; readonly accessToken: string }
   | { readonly kind: "web"; readonly cookieHeader: string }
-  | { readonly kind: "admin" };
+  | { readonly kind: "admin"; readonly apiKey: string };
 
 type GrokCredentialRoute =
   | { readonly kind: "oauth"; readonly accessToken: string }
@@ -320,7 +320,8 @@ const normalizeGrokWebCookie = (raw: string | undefined): string | undefined => 
 };
 
 const resolveClaudeCredentialRoute = (raw: string): ClaudeCredentialRoute | undefined => {
-  if (normalizeClaudeAdminAPIKey(raw) !== undefined) return { kind: "admin" };
+  const apiKey = normalizeClaudeAdminAPIKey(raw);
+  if (apiKey !== undefined) return { kind: "admin", apiKey };
   const accessToken = normalizeClaudeOAuthToken(raw);
   if (accessToken !== undefined) return { kind: "oauth", accessToken };
   const cookieHeader = normalizeClaudeWebCookie(raw);
@@ -353,11 +354,17 @@ const resolveSelectedMaterial = (
 const selectedClaudeAccount = (
   accountId: string,
   raw: string,
+  metadata: { readonly organizationId?: string | undefined },
 ): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
   const route = resolveClaudeCredentialRoute(raw);
-  if (route === undefined || route.kind === "admin") {
+  if (route === undefined) {
     return Effect.fail(selectedAccountFailure("Selected Claude account credential is invalid."));
   }
+  const organizationId = sanitizedOrganizationId(metadata.organizationId);
+  if (organizationId === "invalid") {
+    return Effect.fail(selectedAccountFailure("Selected Claude organization metadata is invalid."));
+  }
+  const plainSettings = { CLAUDE_ORGANIZATION_ID: organizationId ?? null };
   const tokenAccountKey = claudeSelectedTokenAccountPlanUtilizationAccountKey("claude", accountId);
   const historyBinding =
     tokenAccountKey === undefined
@@ -368,26 +375,55 @@ const selectedClaudeAccount = (
             tokenAccountKey,
           },
         };
+  if (route.kind === "admin") {
+    return Effect.succeed({
+      id: accountId,
+      secureSettings: {
+        ANTHROPIC_ADMIN_KEY: route.apiKey,
+        ANTHROPIC_ADMIN_API_KEY: null,
+        CLAUDE_OAUTH_ACCESS_TOKEN: null,
+        CLAUDE_COOKIE_HEADER: null,
+        CLAUDE_CLI_USAGE_JSON: null,
+      },
+      plainSettings,
+      ...historyBinding,
+    });
+  }
   if (route.kind === "oauth") {
     return Effect.succeed({
       id: accountId,
       secureSettings: {
+        ANTHROPIC_ADMIN_KEY: null,
+        ANTHROPIC_ADMIN_API_KEY: null,
         CLAUDE_OAUTH_ACCESS_TOKEN: route.accessToken,
         CLAUDE_COOKIE_HEADER: null,
         CLAUDE_CLI_USAGE_JSON: null,
       },
+      plainSettings,
       ...historyBinding,
     });
   }
   return Effect.succeed({
     id: accountId,
     secureSettings: {
+      ANTHROPIC_ADMIN_KEY: null,
+      ANTHROPIC_ADMIN_API_KEY: null,
       CLAUDE_OAUTH_ACCESS_TOKEN: null,
       CLAUDE_COOKIE_HEADER: route.cookieHeader,
       CLAUDE_CLI_USAGE_JSON: null,
     },
+    plainSettings,
     ...historyBinding,
   });
+};
+
+const sanitizedOrganizationId = (raw: string | undefined): string | "invalid" | undefined => {
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed === "") return undefined;
+  if (trimmed.includes("\u0000") || new TextEncoder().encode(trimmed).byteLength > 256) {
+    return "invalid";
+  }
+  return trimmed;
 };
 
 const selectedGrokAccount = (
@@ -470,7 +506,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
   }
   return resolveSelectedMaterial(credentials, providerId, account.id).pipe(
     Effect.flatMap((material) => {
-      if (providerId === "claude") return selectedClaudeAccount(account.id, material);
+      if (providerId === "claude") return selectedClaudeAccount(account.id, material, account);
       if (providerId === "grok") return selectedGrokAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),

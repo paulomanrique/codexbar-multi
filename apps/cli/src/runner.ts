@@ -738,6 +738,7 @@ export const makeNodeCLIProviderRuntime = (
   const claudeSwapRetentionPath = join(dirname(configPath), "claude-swap-retained-usage.json");
   const agentSessions = makeNodeAgentSessionRuntime(environment);
   const runtime: ProviderRuntimeService = makeFirstPartyProviderRuntime({
+    runtime: "cli",
     providers: FIRST_PARTY_PROVIDERS,
     http: makeFetchHttpTransport(),
     credentials,

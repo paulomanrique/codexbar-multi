@@ -146,7 +146,7 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
-  it("selects Claude OAuth and cookie accounts with Swift-compatible normalization", async () => {
+  it("selects Claude Admin, OAuth, and cookie accounts with Swift-compatible normalization", async () => {
     await expect(
       resolve(config("claude", 1, ["first", "selected"]), "claude", {
         [tokenAccountVaultKey("claude", "selected")]: "Bearer sk-ant-oat-second",
@@ -178,13 +178,26 @@ describe("first-party selected accounts from the token-account vault", () => {
       },
     });
 
-    for (const material of ["Cookie:", "Bearer sk-ant-admin-test"]) {
-      await expect(
-        resolve(config("claude"), "claude", {
-          [tokenAccountVaultKey("claude", "account-0")]: material,
-        }),
-      ).rejects.toMatchObject({ kind: "missing-credential" });
-    }
+    await expect(
+      resolve(config("claude"), "claude", {
+        [tokenAccountVaultKey("claude", "account-0")]: "Bearer sk-ant-admin-test",
+      }),
+    ).resolves.toMatchObject({
+      id: "account-0",
+      secureSettings: {
+        ANTHROPIC_ADMIN_KEY: "sk-ant-admin-test",
+        ANTHROPIC_ADMIN_API_KEY: null,
+        CLAUDE_OAUTH_ACCESS_TOKEN: null,
+        CLAUDE_COOKIE_HEADER: null,
+        CLAUDE_CLI_USAGE_JSON: null,
+      },
+    });
+
+    await expect(
+      resolve(config("claude"), "claude", {
+        [tokenAccountVaultKey("claude", "account-0")]: "Cookie:",
+      }),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
   it("selects Grok bearer and cookie credentials while controlling both routes", async () => {

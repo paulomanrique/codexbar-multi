@@ -93,16 +93,21 @@ providers:
       tsGlobs:
         - packages/providers/test/claude-antigravity-parity.test.ts
         - packages/providers/test/claude-swap-retention.test.ts
+        - packages/providers/test/claude-admin-api.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Claude/**/*
     tsPaths:
-      expected: [packages/providers/src/providers/claude.ts]
+      expected:
+        - packages/providers/src/providers/claude.ts
+        - packages/providers/src/providers/claude-admin-api.ts
       real:
         - packages/providers/src/providers/claude.ts
+        - packages/providers/src/providers/claude-admin-api.ts
         - packages/providers/src/providers/claude-swap-retention.ts
     tsTestGlobs:
       - packages/providers/test/claude-antigravity-parity.test.ts
       - packages/providers/test/claude-swap-retention.test.ts
+      - packages/providers/test/claude-admin-api.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 63bf039cc076d9cd91ab5b96774c5c990320107e

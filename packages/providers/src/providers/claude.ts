@@ -6,6 +6,7 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { number, object, status, string } from "./_http.ts";
+import { cleanClaudeAdminAPIKey, fetchClaudeAdminAPIUsage } from "./claude-admin-api.ts";
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
 /** Upstream app-auto order; the CLI runtime uses web → cli and is selected by the host. */
@@ -283,6 +284,21 @@ const oauthUsage = async (ctx: ProviderContext, token: string) => {
   return parseClaudeUsage(response.json, ctx);
 };
 
+const selectedOrganizationID = (ctx: ProviderContext): string | undefined => {
+  const raw = ctx.settings.get("CLAUDE_ORGANIZATION_ID");
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  if (trimmed.includes("\u0000") || new TextEncoder().encode(trimmed).byteLength > 256) {
+    throw ctx.fail.apiFailure("Claude organization ID is invalid.");
+  }
+  return trimmed;
+};
+
+const configuredAdminAPIKey = (ctx: ProviderContext): string | undefined =>
+  cleanClaudeAdminAPIKey(ctx.settings.getSecret("ANTHROPIC_ADMIN_KEY")) ??
+  cleanClaudeAdminAPIKey(ctx.settings.getSecret("ANTHROPIC_ADMIN_API_KEY"));
+
 const webUsage = async (ctx: ProviderContext, cookie: string) => {
   const headers = {
     Cookie: cookie.includes("=") ? cookie : `sessionKey=${cookie}`,
@@ -290,9 +306,21 @@ const webUsage = async (ctx: ProviderContext, cookie: string) => {
   };
   const organizations = await ctx.http.getJSON("https://claude.ai/api/organizations", { headers });
   status(ctx, "Claude web", organizations);
-  const selected = (Array.isArray(organizations.json) ? organizations.json : [])
+  const targetOrganizationID = selectedOrganizationID(ctx);
+  const organizationList = (Array.isArray(organizations.json) ? organizations.json : [])
     .map(object)
-    .find((organization) => Boolean(string(organization?.uuid)));
+    .filter((organization) => Boolean(string(organization?.uuid)));
+  const selected =
+    targetOrganizationID === undefined
+      ? organizationList[0]
+      : organizationList.find(
+          (organization) => string(organization?.uuid) === targetOrganizationID,
+        );
+  if (targetOrganizationID !== undefined && selected === undefined) {
+    throw ctx.fail.permissionDenied(
+      `Claude organization '${targetOrganizationID}' was not found for this session.`,
+    );
+  }
   const organizationID = string(selected?.uuid);
   if (!organizationID)
     throw ctx.fail.parseFailure("Claude web response is missing an organization.");
@@ -318,15 +346,24 @@ const definition: ProviderDefinition = {
   name: "Claude",
   endpoints: ["https://api.anthropic.com", "https://claude.ai"],
   settings: [
+    { key: "ANTHROPIC_ADMIN_KEY", title: "Anthropic Admin API key", type: "secure" },
+    {
+      key: "ANTHROPIC_ADMIN_API_KEY",
+      title: "Anthropic Admin API key (alternate)",
+      type: "secure",
+    },
     { key: "CLAUDE_OAUTH_ACCESS_TOKEN", title: "OAuth access token", type: "secure" },
     { key: "CLAUDE_COOKIE_HEADER", title: "Cookie header", type: "secure" },
     { key: "CLAUDE_CLI_USAGE_JSON", title: "CLI usage JSON", type: "secure" },
+    { key: "CLAUDE_ORGANIZATION_ID", title: "Organization ID", type: "plain" },
   ],
   capabilities: ["browser-cookies"],
   cookieDomains: ["claude.ai"],
   fetchUsage: async (ctx) => {
     // The TypeScript provider keeps the app-auto ordering. Runtime-specific
     // source planning belongs in core, where ProcessRunner availability is known.
+    const adminKey = configuredAdminAPIKey(ctx);
+    if (adminKey) return fetchClaudeAdminAPIUsage(ctx, adminKey);
     const token = ctx.settings.getSecret("CLAUDE_OAUTH_ACCESS_TOKEN")?.trim();
     if (token) return oauthUsage(ctx, token);
     const cliUsage = ctx.settings.getSecret("CLAUDE_CLI_USAGE_JSON")?.trim();
@@ -350,6 +387,27 @@ const claudeOAuthFallbackOn = [
   "permission-denied",
   "api-failure",
 ] as const;
+
+const claudeAdminAutoFallbackOn = [...claudeOAuthFallbackOn, "rate-limited"] as const;
+
+const adminStrategy: ProviderStrategy = {
+  id: "claude.admin-api",
+  kind: "api",
+  fallbackOn: claudeAdminAutoFallbackOn,
+  fetchUsage: async (ctx) => {
+    const apiKey = configuredAdminAPIKey(ctx);
+    if (!apiKey)
+      throw ctx.fail.missingCredential("Claude Admin API needs an Anthropic Admin API key.");
+    return fetchClaudeAdminAPIUsage(ctx, apiKey);
+  },
+};
+
+const compatibilityStrategy: ProviderStrategy = {
+  id: "claude.auto",
+  kind: "oauth",
+  fallbackOn: [...claudeOAuthFallbackOn],
+  fetchUsage: definition.fetchUsage,
+};
 
 const oauthStrategy: ProviderStrategy = {
   id: "claude.oauth",
@@ -400,11 +458,11 @@ export const descriptor: ProviderDescriptor = {
   ...definition,
   status: "partial",
   isPrimaryProvider: true,
-  strategies: [oauthStrategy, cliStrategy, webStrategy],
-  strategy: oauthStrategy,
+  strategies: [adminStrategy, oauthStrategy, cliStrategy, webStrategy],
+  strategy: compatibilityStrategy,
 };
 export const claude: FirstPartyProvider = {
-  ...oauthStrategy,
+  ...compatibilityStrategy,
   descriptor,
-  strategies: [oauthStrategy, cliStrategy, webStrategy],
+  strategies: [adminStrategy, oauthStrategy, cliStrategy, webStrategy],
 };

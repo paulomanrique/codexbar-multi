@@ -630,6 +630,7 @@ void desktopReady?.then(async () => {
 
     hostLifecycle.advanceBootstrapStage("runtime");
     providerRuntime = makeFirstPartyProviderRuntime({
+      runtime: "app",
       providers: FIRST_PARTY_PROVIDERS,
       settings: makeNodeDiscoveredProviderSettings(),
       credentials,

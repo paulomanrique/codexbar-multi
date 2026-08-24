@@ -131,6 +131,8 @@ export interface FirstPartyLocalCapabilities {
 }
 
 export interface FirstPartyProviderRuntimeOptions {
+  /** Swift runtime policy: app-auto may fall back from Admin API; CLI never does. */
+  readonly runtime?: "app" | "cli";
   readonly providers: readonly FirstPartyProvider[];
   readonly settings: FirstPartySettings;
   readonly browserSessions: FirstPartyBrowserSessions;
@@ -753,6 +755,7 @@ export const makeFirstPartyProviderRuntime = (
               executeProvider(provider, strategy, context, selectedAccount, options, keyFor),
             shouldFallback: (error, fetchContext) =>
               fetchContext.sourceMode === "auto" &&
+              (strategy.id !== "claude.admin-api" || options.runtime !== "cli") &&
               error instanceof ClassifiedFetchFailure &&
               strategy.fallbackOn?.includes(error.kind) === true,
           }),
@@ -794,9 +797,11 @@ const selectedStrategyAllowed = (
   if (providerId !== "claude") return true;
   const selected = selectedClaudeStrategyMode(selectedAccount);
   if (selected !== undefined) return strategy.id === selected;
+  const admin = ownSetting(selectedAccount.secureSettings, "ANTHROPIC_ADMIN_KEY");
+  const alternateAdmin = ownSetting(selectedAccount.secureSettings, "ANTHROPIC_ADMIN_API_KEY");
   const oauth = ownSetting(selectedAccount.secureSettings, "CLAUDE_OAUTH_ACCESS_TOKEN");
   const cookie = ownSetting(selectedAccount.secureSettings, "CLAUDE_COOKIE_HEADER");
-  if (oauth.present || cookie.present) return false;
+  if (admin.present || alternateAdmin.present || oauth.present || cookie.present) return false;
   return true;
 };
 
@@ -804,8 +809,15 @@ const selectedClaudeStrategyMode = (
   selectedAccount: FirstPartySelectedAccount | undefined,
 ): string | undefined => {
   if (selectedAccount === undefined) return undefined;
+  const admin = ownSetting(selectedAccount.secureSettings, "ANTHROPIC_ADMIN_KEY");
+  const alternateAdmin = ownSetting(selectedAccount.secureSettings, "ANTHROPIC_ADMIN_API_KEY");
   const oauth = ownSetting(selectedAccount.secureSettings, "CLAUDE_OAUTH_ACCESS_TOKEN");
   const cookie = ownSetting(selectedAccount.secureSettings, "CLAUDE_COOKIE_HEADER");
+  if (
+    (admin.present && admin.value?.trim()) ||
+    (alternateAdmin.present && alternateAdmin.value?.trim())
+  )
+    return "claude.admin-api";
   if (oauth.present && oauth.value?.trim()) return "claude.oauth";
   if (cookie.present && cookie.value?.trim()) return "claude.web";
   return undefined;

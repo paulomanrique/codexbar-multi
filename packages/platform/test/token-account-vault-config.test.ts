@@ -8,6 +8,7 @@ import {
 } from "@codexbar/core";
 import {
   makeTokenAccountVaultConfigRepository,
+  resolveSelectedFirstPartyAccountFromVault,
   tokenAccountVaultKey,
   type TokenAccountMigrationLock,
 } from "../src/token-account-vault-config.ts";
@@ -559,5 +560,99 @@ describe("token-account vault config repository", () => {
     expect(saved?.providers.find((provider) => provider.id === "claude")?.enabled).toBe(false);
     expect(saved?.sessionQuotaNotificationsEnabled).toBe(false);
     expect(saved?.providers[0]?.tokenAccounts?.version).toBe(2);
+  });
+
+  it("maps selected Claude Admin API accounts and nulls ambient credential channels", async () => {
+    const account = {
+      id: "account-admin",
+      label: "Admin",
+      addedAt: 0,
+      organizationId: " org-selected ",
+    };
+    const key = tokenAccountVaultKey("claude", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "claude",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: "Bearer sk-ant-admin-selected" }),
+        "claude",
+      ),
+    );
+
+    expect(selected).toMatchObject({
+      id: "account-admin",
+      secureSettings: {
+        ANTHROPIC_ADMIN_KEY: "sk-ant-admin-selected",
+        ANTHROPIC_ADMIN_API_KEY: null,
+        CLAUDE_OAUTH_ACCESS_TOKEN: null,
+        CLAUDE_COOKIE_HEADER: null,
+        CLAUDE_CLI_USAGE_JSON: null,
+      },
+      plainSettings: { CLAUDE_ORGANIZATION_ID: "org-selected" },
+      claudeHistoryBinding: {
+        tokenAccountKey: expect.any(String),
+        selectionKey: expect.any(String),
+      },
+    });
+  });
+
+  it("maps selected Claude OAuth and web accounts with explicit Admin nulling", async () => {
+    for (const [label, token, expected] of [
+      [
+        "OAuth",
+        "Bearer sk-ant-oat-selected",
+        {
+          CLAUDE_OAUTH_ACCESS_TOKEN: "sk-ant-oat-selected",
+          CLAUDE_COOKIE_HEADER: null,
+        },
+      ],
+      [
+        "Web",
+        "sk-ant-session-selected",
+        {
+          CLAUDE_OAUTH_ACCESS_TOKEN: null,
+          CLAUDE_COOKIE_HEADER: "sessionKey=sk-ant-session-selected",
+        },
+      ],
+    ] as const) {
+      const account = { id: `account-${label}`, label, addedAt: 0 };
+      const key = tokenAccountVaultKey("claude", account.id);
+      const config: PersistedCodexBarConfig = {
+        version: 1,
+        providers: [
+          {
+            id: "claude",
+            extensions: {},
+            tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+          },
+        ],
+      };
+
+      const selected = await Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: token }),
+          "claude",
+        ),
+      );
+
+      expect(selected?.secureSettings).toMatchObject({
+        ANTHROPIC_ADMIN_KEY: null,
+        ANTHROPIC_ADMIN_API_KEY: null,
+        ...expected,
+        CLAUDE_CLI_USAGE_JSON: null,
+      });
+      expect(selected?.plainSettings).toEqual({ CLAUDE_ORGANIZATION_ID: null });
+    }
   });
 });
