@@ -204,6 +204,8 @@ export interface CodexJsonlState {
   readonly cumulativeCounterUnsafe?: boolean;
   /** A bounded exact-event cache for `last_token_usage` fallback records. */
   readonly lastEventKeys: readonly string[];
+  /** Last accepted bare-usage timestamp, reused only by timestamp-less bare rows. */
+  readonly lastBareUsageTimestamp?: number;
 }
 
 /**
@@ -283,14 +285,83 @@ export async function parseCodexCostJsonl(
       : normalizedTokens(options.state.awaitingForkBaseline);
   let cumulativeCounterUnsafe = options.state?.cumulativeCounterUnsafe === true;
   const lastEventKeys = boundedSet(options.state?.lastEventKeys, 1024);
+  let lastBareUsageTimestamp = (() => {
+    const value = options.state?.lastBareUsageTimestamp;
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? value
+      : undefined;
+  })();
   const rows: CostJsonlUsageRow[] = [];
   const totalSnapshots: CodexJsonlTotalSnapshot[] = [];
   let totalSnapshotsComplete = true;
+  const emitCodexRow = (
+    timestamp: number,
+    model: string,
+    turnId: string | undefined,
+    tokens: CostJsonlTokens,
+  ): void => {
+    const normalizedModel = normalizeCodexModel(model);
+    const priority = turnId === undefined ? undefined : options.priorityTurns?.[turnId];
+    // Swift only promotes the trace model when it is one of the API Fast
+    // routes. An arbitrary trace alias must not cross-charge a token row.
+    const priorityModel = optionalText(priority?.model);
+    const pricingModel =
+      priorityModel !== undefined && codexAPIFastMultiplier(priorityModel) !== undefined
+        ? normalizeCodexModel(priorityModel)
+        : normalizedModel;
+    const pricingInput = {
+      model: pricingModel,
+      inputTokens: tokens.input,
+      cachedInputTokens: tokens.cachedInput,
+      cacheWriteInputTokens: tokens.cacheCreationInput,
+      outputTokens: tokens.output,
+      options: {
+        ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+        pricingDate: (options.pricingDate ?? dateFromMilliseconds)(timestamp),
+      },
+    };
+    const standardCostUsd = codexCostUSD(pricingInput);
+    const priorityCostUsd = priority === undefined ? undefined : codexAPIFastCostUSD(pricingInput);
+    // The upstream overlay never makes a priority turn cheaper than its
+    // standard calculation and declines Fast pricing for long context.
+    const costUsd =
+      priorityCostUsd === undefined
+        ? standardCostUsd
+        : Math.max(priorityCostUsd, standardCostUsd ?? priorityCostUsd);
+    rows.push({
+      provider: "codex",
+      timestamp,
+      model: normalizedModel,
+      tokens,
+      ...(costUsd === undefined ? {} : { costUsd }),
+      provenance: costUsd === undefined ? "unknown" : "list-price-estimate",
+      ...(turnId === undefined ? {} : { turnId }),
+      ...(pricingModel === normalizedModel ? {} : { pricingModel }),
+      ...(priority === undefined ? {} : { pricingMode: "priority" as const }),
+    });
+  };
   const scan = await scanCostJsonlChunks(chunks, {
     ...options.scan,
     onLine: (line) => {
       const value = parseObject(line);
       if (value === undefined) return;
+      if (value.type === undefined) {
+        const bare = codexBareUsageFrom(value);
+        if (bare === undefined) return;
+        const timestamp = parseTimestamp(value.timestamp) ?? lastBareUsageTimestamp;
+        if (timestamp === undefined) return;
+        const data = asObject(value.data);
+        const model =
+          optionalText(value.model) ??
+          optionalText(value.model_name) ??
+          optionalText(data?.model) ??
+          optionalText(data?.model_name) ??
+          currentModel ??
+          codexUnattributedModel;
+        emitCodexRow(timestamp, model, currentTurnId, bare);
+        lastBareUsageTimestamp = timestamp;
+        return;
+      }
       if (value.type === "session_meta") {
         const metadata = codexSessionMetadata(value);
         session = mergeCodexSession(session, metadata);
@@ -382,46 +453,7 @@ export async function parseCodexCostJsonl(
         totals = addTokens(totals, last);
       }
       if (delta === undefined || tokenCount(delta) === 0) return;
-      const normalizedModel = normalizeCodexModel(model);
-      const priority = turnId === undefined ? undefined : options.priorityTurns?.[turnId];
-      // Swift only promotes the trace model when it is one of the API Fast
-      // routes. An arbitrary trace alias must not cross-charge a token row.
-      const priorityModel = optionalText(priority?.model);
-      const pricingModel =
-        priorityModel !== undefined && codexAPIFastMultiplier(priorityModel) !== undefined
-          ? normalizeCodexModel(priorityModel)
-          : normalizedModel;
-      const pricingInput = {
-        model: pricingModel,
-        inputTokens: delta.input,
-        cachedInputTokens: delta.cachedInput,
-        cacheWriteInputTokens: delta.cacheCreationInput,
-        outputTokens: delta.output,
-        options: {
-          ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
-          pricingDate: (options.pricingDate ?? dateFromMilliseconds)(timestamp),
-        },
-      };
-      const standardCostUsd = codexCostUSD(pricingInput);
-      const priorityCostUsd =
-        priority === undefined ? undefined : codexAPIFastCostUSD(pricingInput);
-      // The upstream overlay never makes a priority turn cheaper than its
-      // standard calculation and declines Fast pricing for long context.
-      const costUsd =
-        priorityCostUsd === undefined
-          ? standardCostUsd
-          : Math.max(priorityCostUsd, standardCostUsd ?? priorityCostUsd);
-      rows.push({
-        provider: "codex",
-        timestamp,
-        model: normalizedModel,
-        tokens: delta,
-        ...(costUsd === undefined ? {} : { costUsd }),
-        provenance: costUsd === undefined ? "unknown" : "list-price-estimate",
-        ...(turnId === undefined ? {} : { turnId }),
-        ...(pricingModel === normalizedModel ? {} : { pricingModel }),
-        ...(priority === undefined ? {} : { pricingMode: "priority" as const }),
-      });
+      emitCodexRow(timestamp, model, turnId, delta);
     },
   });
   return {
@@ -435,6 +467,7 @@ export async function parseCodexCostJsonl(
       ...(awaitingForkBaseline === undefined ? {} : { awaitingForkBaseline }),
       ...(cumulativeCounterUnsafe ? { cumulativeCounterUnsafe: true } : {}),
       lastEventKeys: [...lastEventKeys],
+      ...(lastBareUsageTimestamp === undefined ? {} : { lastBareUsageTimestamp }),
     },
     ...(options.collectTotalsForForkBaseline === true
       ? {
@@ -632,6 +665,44 @@ function mergeCodexSession(
     ...(forkedFromId === undefined ? {} : { forkedFromId }),
     ...(forkTimestamp === undefined ? {} : { forkTimestamp }),
   };
+}
+
+function codexBareUsageFrom(value: Record<string, unknown>): CostJsonlTokens | undefined {
+  const usage =
+    asObject(value.usage) ??
+    asObject(asObject(value.data)?.usage) ??
+    asObject(asObject(value.result)?.usage) ??
+    asObject(asObject(value.response)?.usage);
+  if (usage === undefined) return undefined;
+  const input = firstBareUsageInteger(usage, ["input_tokens", "prompt_tokens", "input"]);
+  const output = firstBareUsageInteger(usage, ["output_tokens", "completion_tokens", "output"]);
+  if (input === undefined || output === undefined) return undefined;
+  const cached =
+    firstBareUsageInteger(usage, [
+      "cached_input_tokens",
+      "cache_read_input_tokens",
+      "cached_tokens",
+    ]) ?? 0;
+  const billedInput = Math.max(0, input - cached);
+  if (billedInput === 0 && cached === 0 && output === 0) return undefined;
+  return {
+    input: billedInput,
+    cachedInput: cached,
+    cacheCreationInput: 0,
+    output,
+    reasoningOutput: 0,
+  };
+}
+
+function firstBareUsageInteger(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return integer(candidate);
+  }
+  return undefined;
 }
 
 function integer(value: unknown): number {

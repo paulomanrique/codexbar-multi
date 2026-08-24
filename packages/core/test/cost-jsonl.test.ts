@@ -370,6 +370,161 @@ describe("Codex cost JSONL parser (Swift parity)", () => {
   });
 });
 
+describe("Codex bare usage envelopes (Swift d927 parity)", () => {
+  const timestamp = "2026-08-21T12:00:00Z";
+
+  it("parses canonical envelopes, aliases, cached subtraction, and container precedence", async () => {
+    const result = await parseCodexCostJsonl(
+      chunks(
+        `${JSON.stringify({
+          timestamp,
+          model: "openai/gpt-5.2-codex",
+          usage: { prompt_tokens: 120, completion_tokens: 30, cached_tokens: 20 },
+          data: { usage: { input_tokens: 999, output_tokens: 999 } },
+        })}\n`,
+        `${JSON.stringify({ timestamp, data: { usage: { input: 10, output: 4 } } })}\n`,
+        `${JSON.stringify({ timestamp, result: { usage: { input_tokens: 7, output_tokens: 3 } } })}\n`,
+        `${JSON.stringify({ timestamp, response: { usage: { input_tokens: 5, output_tokens: 1 } } })}\n`,
+      ),
+      { scan: {} },
+    );
+
+    expect(result.rows.map((row) => row.tokens)).toEqual([
+      tokens(100, 20, 0, 30),
+      tokens(10, 0, 0, 4),
+      tokens(7, 0, 0, 3),
+      tokens(5, 0, 0, 1),
+    ]);
+    expect(result.rows.map((row) => row.model)).toEqual([
+      "gpt-5.2-codex",
+      "unknown",
+      "unknown",
+      "unknown",
+    ]);
+    // Swift stores billed input and cached input separately for bare rows,
+    // then feeds those same fields into its ordinary Codex pricing path.
+    expect(result.rows[0]?.costUsd).toBeCloseTo(0.0005635, 12);
+  });
+
+  it("uses the first numeric alias and clamps bare counters with Swift-compatible normalization", async () => {
+    const result = await parseCodexCostJsonl(
+      chunks(
+        `${JSON.stringify({
+          timestamp,
+          usage: {
+            input_tokens: "ignored",
+            prompt_tokens: 10.9,
+            input: 999,
+            output_tokens: Number.NaN,
+            completion_tokens: 3.7,
+            cached_input_tokens: -4,
+            cache_read_input_tokens: 8,
+          },
+        })}\n`,
+        `${JSON.stringify({
+          timestamp,
+          usage: {
+            input_tokens: Number.MAX_SAFE_INTEGER + 1,
+            output_tokens: 2,
+            cached_input_tokens: 1,
+          },
+        })}\n`,
+      ),
+      { scan: {} },
+    );
+
+    expect(result.rows.map((row) => row.tokens)).toEqual([tokens(10, 0, 0, 3), tokens(0, 1, 0, 2)]);
+  });
+
+  it("persists only the last accepted bare timestamp for incremental fallback", async () => {
+    const first = await parseCodexCostJsonl(
+      chunks(`${JSON.stringify({ timestamp, usage: { input_tokens: 7, output_tokens: 3 } })}\n`),
+      { scan: {} },
+    );
+    const second = await parseCodexCostJsonl(
+      chunks(`${JSON.stringify({ result: { usage: { input_tokens: 5, output_tokens: 1 } } })}\n`),
+      { state: first.state, scan: { cursor: first.cursor } },
+    );
+    const withoutPriorBare = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"turn_context","timestamp":"2026-08-22T12:00:00Z","payload":{"model":"gpt-5.2-codex"}}\n',
+        `${JSON.stringify({ result: { usage: { input_tokens: 5, output_tokens: 1 } } })}\n`,
+      ),
+      { scan: {} },
+    );
+
+    expect(first.state.lastBareUsageTimestamp).toBe(Date.parse(timestamp));
+    expect(second.rows[0]?.timestamp).toBe(Date.parse(timestamp));
+    expect(second.state.lastBareUsageTimestamp).toBe(Date.parse(timestamp));
+    expect(withoutPriorBare.rows).toEqual([]);
+    expect(withoutPriorBare.state.lastBareUsageTimestamp).toBeUndefined();
+  });
+
+  it("rejects typed and invalid envelopes without mutating cumulative accounting", async () => {
+    const initial = await parseCodexCostJsonl(
+      chunks(
+        `${JSON.stringify({
+          type: "event_msg",
+          timestamp,
+          payload: {
+            type: "token_count",
+            info: { total_token_usage: { input_tokens: 100, output_tokens: 10 } },
+          },
+        })}\n`,
+      ),
+      { scan: {} },
+    );
+    const result = await parseCodexCostJsonl(
+      chunks(
+        `${JSON.stringify({ type: "response", timestamp, usage: { input_tokens: 9, output_tokens: 2 } })}\n`,
+        `${JSON.stringify({ timestamp, usage: { input_tokens: 9 } })}\n`,
+        `${JSON.stringify({ timestamp, usage: { input_tokens: "9", output_tokens: 2 } })}\n`,
+        `${JSON.stringify({ timestamp, usage: { input_tokens: 0, output_tokens: 0 } })}\n`,
+        `${JSON.stringify({ timestamp, prompt: { usage: { input_tokens: 999, output_tokens: 999 } } })}\n`,
+        `${JSON.stringify({ timestamp, usage: { input_tokens: 7, output_tokens: 2 } })}\n`,
+      ),
+      { state: initial.state, scan: { cursor: initial.cursor } },
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.tokens).toEqual(tokens(7, 0, 0, 2));
+    expect(result.state.totals).toEqual(initial.state.totals);
+  });
+
+  it("preserves current model, turn, and priority pricing on bare rows", async () => {
+    const result = await parseCodexCostJsonl(
+      chunks(
+        '{"type":"turn_context","timestamp":"2026-08-21T11:59:58Z","payload":{"model":"openai/gpt-5.4-mini"}}\n',
+        '{"type":"event_msg","timestamp":"2026-08-21T11:59:59Z","payload":{"type":"task_started","turn_id":"priority-turn"}}\n',
+        `${JSON.stringify({ timestamp, usage: { input_tokens: 10, output_tokens: 2 } })}\n`,
+        `${JSON.stringify({
+          timestamp,
+          model_name: "openai/gpt-5.6-luna",
+          data: { model: "gpt-5.6-terra" },
+          usage: { input_tokens: 10, output_tokens: 2 },
+        })}\n`,
+      ),
+      {
+        priorityTurns: { "priority-turn": { model: "gpt-5.6-terra" } },
+        scan: {},
+      },
+    );
+
+    expect(result.rows[0]).toMatchObject({
+      model: "gpt-5.4-mini",
+      turnId: "priority-turn",
+      pricingModel: "gpt-5.6-terra",
+      pricingMode: "priority",
+    });
+    expect(result.rows[1]).toMatchObject({
+      model: "gpt-5.6-luna",
+      turnId: "priority-turn",
+      pricingModel: "gpt-5.6-terra",
+      pricingMode: "priority",
+    });
+  });
+});
+
 describe("Claude cost JSONL parser (Swift parity)", () => {
   it("deduplicates cumulative streaming message chunks across refreshes", async () => {
     const first = await parseClaudeCostJsonl(
