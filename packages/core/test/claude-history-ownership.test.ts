@@ -7,6 +7,7 @@ import {
   claudePlanUtilizationLegacyEmailAccountKey,
   isClaudeOAuthPlanUtilizationAccountKey,
   sha256Hex,
+  stableClaudeOAuthHistoryOwner,
 } from "../src/index.ts";
 
 const snapshot = (identity: NonNullable<UsageSnapshot["identity"]>): UsageSnapshot => ({
@@ -29,6 +30,14 @@ describe("Claude history ownership", () => {
     expect(first?.slice("__claude_oauth__:".length)).toHaveLength(64);
     expect(isClaudeOAuthPlanUtilizationAccountKey(first)).toBe(true);
     expect(claudeOAuthPlanUtilizationAccountKey("not-hex")).toBeUndefined();
+  });
+
+  it("accepts only a stable owner around the winning Claude OAuth strategy", () => {
+    const owner = "a".repeat(64);
+    expect(stableClaudeOAuthHistoryOwner("claude.oauth", ` ${owner} `, owner)).toBe(owner);
+    expect(stableClaudeOAuthHistoryOwner("claude.oauth", owner, "b".repeat(64))).toBeUndefined();
+    expect(stableClaudeOAuthHistoryOwner("claude.oauth", owner, undefined)).toBeUndefined();
+    expect(stableClaudeOAuthHistoryOwner("claude.cli", owner, owner)).toBeUndefined();
   });
 
   it("parses current compatibility plan labels", () => {

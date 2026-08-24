@@ -69,6 +69,7 @@ import {
   inspectNodeLegacyImport,
   executeNodeLegacyImport,
   rollbackNodeLegacyImport,
+  resolveNodeClaudeOAuthHistoryOwner,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
 import {
@@ -77,8 +78,12 @@ import {
   recordClaudeCliUserInitiatedSuccess,
 } from "@codexbar/platform/node-claude-cli";
 import { makeDesktopNodePtyRunner } from "./node-pty-adapter.ts";
-import { selectedFirstPartyAccountFromConfig } from "@codexbar/platform";
-import { makeNodePlanUtilizationHistoryStore } from "@codexbar/platform";
+import {
+  makeClaudeOAuthHistoryOwnerCapture,
+  makeNodePlanUtilizationHistoryStore,
+  selectedFirstPartyAccountFromConfig,
+  type ClaudeOAuthHistoryOwnerCapture,
+} from "@codexbar/platform";
 import {
   Clock,
   CostUsageRepository,
@@ -147,6 +152,7 @@ let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | un
 let legacyImport: DesktopLegacyImportController | undefined;
 let adaptiveRefresh: DesktopAdaptiveRefreshController | undefined;
 let planUtilizationHistory: PlanUtilizationHistoryCoordinator | undefined;
+let claudeOAuthHistoryOwnerCapture: ClaudeOAuthHistoryOwnerCapture | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
 const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
@@ -197,6 +203,11 @@ const activePlanUtilizationHistory = (): PlanUtilizationHistoryCoordinator => {
   if (planUtilizationHistory === undefined)
     throw new Error("Plan-utilization history is not ready");
   return planUtilizationHistory;
+};
+const activeClaudeOAuthHistoryOwnerCapture = (): ClaudeOAuthHistoryOwnerCapture => {
+  if (claudeOAuthHistoryOwnerCapture === undefined)
+    throw new Error("Claude OAuth history owner capture is not ready");
+  return claudeOAuthHistoryOwnerCapture;
 };
 
 const overviewProviders = () => {
@@ -267,18 +278,26 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
           // Local Grok tokens are independent of the remote billing session;
           // retain that source even when the following web refresh fails.
           if (provider.id === "grok") await activeGrokLocalTokenScanner().refresh(signal);
-          const outcome = await Effect.runPromise(
-            refreshProviderAndPersist(activeProviderRuntime(), provider.id, {
-              sourceMode: provider.source,
-              includeCredits: false,
-            }).pipe(
-              Effect.provideService(Clock, providerClock),
-              Effect.provideService(HistoryRepository, activePersistence().history),
-              Effect.provideService(CostUsageRepository, activePersistence().costs),
-            ),
-            { signal },
+          const outcome = await activeClaudeOAuthHistoryOwnerCapture().captureFetch(
+            provider.id,
+            () =>
+              Effect.runPromise(
+                refreshProviderAndPersist(activeProviderRuntime(), provider.id, {
+                  sourceMode: provider.source,
+                  includeCredits: false,
+                }).pipe(
+                  Effect.provideService(Clock, providerClock),
+                  Effect.provideService(HistoryRepository, activePersistence().history),
+                  Effect.provideService(CostUsageRepository, activePersistence().costs),
+                ),
+                { signal },
+              ),
+            signal,
           );
           if (!signal.aborted) {
+            const claudeOAuthHistoryOwnerIdentifier =
+              await activeClaudeOAuthHistoryOwnerCapture().consume(provider.id, outcome, signal);
+            if (signal.aborted) throw new Error("Adaptive refresh was cancelled.");
             publishSessionQuotaNotification(provider.id, outcome.snapshot);
             await recordDesktopPlanUtilization({
               coordinator: activePlanUtilizationHistory(),
@@ -286,6 +305,10 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
               snapshot: outcome.snapshot,
               capturedAt: new Date(),
               signal,
+              strategyId: outcome.strategyId,
+              ...(claudeOAuthHistoryOwnerIdentifier === undefined
+                ? {}
+                : { claudeOAuthHistoryOwnerIdentifier }),
             });
           }
         } catch {
@@ -438,6 +461,16 @@ void desktopReady
         return result.value;
       });
     const credentials = makeNativeCredentialStore();
+    claudeOAuthHistoryOwnerCapture = makeClaudeOAuthHistoryOwnerCapture({
+      resolveOwner: (signal) =>
+        Effect.runPromise(
+          resolveNodeClaudeOAuthHistoryOwner({
+            credentialStore: credentials,
+            environment: process.env,
+          }),
+          signal === undefined ? {} : { signal },
+        ),
+    });
     const processRunner = makeNodeProcessRunner();
     const baseLocal = makeNodeFirstPartyLocalCapabilities({ processRunner });
     providerRuntime = makeFirstPartyProviderRuntime({
@@ -727,25 +760,35 @@ void desktopReady
             .refresh()
             .catch(() => undefined);
         }
-        const outcome = await Effect.runPromise(
-          refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
-            sourceMode: request.source ?? "auto",
-            includeCredits: true,
-          }).pipe(
-            Effect.provideService(Clock, providerClock),
-            Effect.provideService(HistoryRepository, activePersistence().history),
-            Effect.provideService(CostUsageRepository, activePersistence().costs),
-          ),
+        const outcome = await activeClaudeOAuthHistoryOwnerCapture().captureFetch(
+          request.provider,
+          () =>
+            Effect.runPromise(
+              refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
+                sourceMode: request.source ?? "auto",
+                includeCredits: true,
+              }).pipe(
+                Effect.provideService(Clock, providerClock),
+                Effect.provideService(HistoryRepository, activePersistence().history),
+                Effect.provideService(CostUsageRepository, activePersistence().costs),
+              ),
+            ),
         );
         if (request.provider === "claude" && outcome.strategyId === "claude.cli") {
           recordClaudeCliUserInitiatedSuccess();
         }
+        const claudeOAuthHistoryOwnerIdentifier =
+          await activeClaudeOAuthHistoryOwnerCapture().consume(request.provider, outcome);
         publishSessionQuotaNotification(request.provider, outcome.snapshot);
         await recordDesktopPlanUtilization({
           coordinator: activePlanUtilizationHistory(),
           providerId: request.provider,
           snapshot: outcome.snapshot,
           capturedAt: new Date(),
+          strategyId: outcome.strategyId,
+          ...(claudeOAuthHistoryOwnerIdentifier === undefined
+            ? {}
+            : { claudeOAuthHistoryOwnerIdentifier }),
         });
         return decodeRefreshResult({
           provider: request.provider,

@@ -23,6 +23,7 @@ import {
   makeNodeLocalCostUsageScanner,
   makeNodeProcessRunner,
   makeNodePrivateFileStore,
+  resolveNodeClaudeOAuthHistoryOwner,
   resolveNodeClaudeSwapExecutablePath,
   makeNodeConfigRepository,
   makeNodeSqlitePersistence,
@@ -33,7 +34,10 @@ import {
   type NodeLegacyImportOptions,
   type NodeSqlitePersistence,
 } from "@codexbar/platform/node";
-import { selectedFirstPartyAccountFromConfig } from "@codexbar/platform";
+import {
+  makeClaudeOAuthHistoryOwnerCapture,
+  selectedFirstPartyAccountFromConfig,
+} from "@codexbar/platform";
 import {
   CLAUDE_SWAP_MAX_OUTPUT_BYTES,
   makeNodeAgentSessionRuntime,
@@ -129,7 +133,7 @@ export interface CLIProviderRuntime {
   /** Best-effort host persistence for provider plan-utilization samples. */
   readonly recordPlanUtilization?: (
     providerId: ProviderId,
-    snapshot: UsageSnapshot,
+    outcome: ProviderFetchOutcome,
     signal?: AbortSignal,
   ) => Promise<void>;
   /** Optional in-memory/host-injected configuration store used by `config`. */
@@ -572,7 +576,7 @@ const runUsage = async (
         { sourceMode: "auto", includeCredits: true },
         signal,
       );
-      await runtime.recordPlanUtilization?.(providerId, outcome.snapshot, signal).catch(() => {
+      await runtime.recordPlanUtilization?.(providerId, outcome, signal).catch(() => {
         // The CLI usage result is already complete. History remains best
         // effort and cannot replace it with a storage error.
       });
@@ -684,6 +688,13 @@ export const makeNodeCLIProviderRuntime = (
   );
   let costPersistencePromise: Promise<NodeSqlitePersistence> | undefined;
   const credentials = makeNativeCredentialStore();
+  const claudeOAuthHistoryOwners = makeClaudeOAuthHistoryOwnerCapture({
+    resolveOwner: (signal) =>
+      Effect.runPromise(
+        resolveNodeClaudeOAuthHistoryOwner({ credentialStore: credentials, environment }),
+        signal === undefined ? {} : { signal },
+      ),
+  });
   const hookEnvironment = Object.fromEntries(
     [
       "PATH",
@@ -801,14 +812,31 @@ export const makeNodeCLIProviderRuntime = (
       ...(isPrimaryProvider === true ? { isPrimaryProvider: true } : {}),
     })),
     fetch: (providerId, context, signal) =>
-      Effect.runPromise(runtime.fetch(providerId, context), signal === undefined ? {} : { signal }),
-    recordPlanUtilization: async (providerId, snapshot, signal) => {
+      claudeOAuthHistoryOwners.captureFetch(
+        providerId,
+        () =>
+          Effect.runPromise(
+            runtime.fetch(providerId, context),
+            signal === undefined ? {} : { signal },
+          ),
+        signal,
+      ),
+    recordPlanUtilization: async (providerId, outcome, signal) => {
+      const claudeOAuthHistoryOwnerIdentifier = await claudeOAuthHistoryOwners.consume(
+        providerId,
+        outcome,
+        signal,
+      );
       await Effect.runPromise(
         recordFirstPartyPlanUtilization({
           coordinator: planUtilizationHistory,
           providerId,
-          snapshot,
+          snapshot: outcome.snapshot,
           capturedAt: new Date(),
+          strategyId: outcome.strategyId,
+          ...(claudeOAuthHistoryOwnerIdentifier === undefined
+            ? {}
+            : { claudeOAuthHistoryOwnerIdentifier }),
         }),
         signal === undefined ? {} : { signal },
       );

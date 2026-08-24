@@ -30,6 +30,19 @@ export const isClaudeOAuthPlanUtilizationAccountKey = (
   accountKey: string | null | undefined,
 ): boolean => accountKey?.startsWith(CLAUDE_OAUTH_PREFIX) === true;
 
+export const stableClaudeOAuthHistoryOwner = (
+  strategyId: string | null | undefined,
+  beforeOwner: string | null | undefined,
+  afterOwner: string | null | undefined,
+): string | undefined => {
+  if (strategyId !== "claude.oauth") return undefined;
+  const before = beforeOwner?.trim();
+  const after = afterOwner?.trim();
+  if (before === undefined || before === "" || after === undefined || after === "")
+    return undefined;
+  return before === after ? after : undefined;
+};
+
 export const claudePlanUtilizationIdentityAccountKey = (
   snapshot: UsageSnapshot,
 ): string | undefined => {

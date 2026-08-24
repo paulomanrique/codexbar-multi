@@ -1,8 +1,12 @@
+import { readFile } from "node:fs/promises";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { InfrastructureError } from "@codexbar/core";
-import { recordDesktopPlanUtilization } from "../src/main/plan-utilization-history.js";
+import { InfrastructureError, PlanUtilizationHistoryCoordinator } from "@codexbar/core";
+import {
+  recordDesktopPlanUtilization,
+  type RecordDesktopPlanUtilizationInput,
+} from "../src/main/plan-utilization-history.js";
 
 const snapshot: UsageSnapshot = {
   details: [],
@@ -77,6 +81,73 @@ describe("desktop plan-utilization history", () => {
       }),
     ).resolves.toBe(true);
     expect(calls).toEqual([{ snapshot, capturedAt }]);
+  });
+
+  it("routes the winning Claude OAuth strategy only through opaque ownership", async () => {
+    const calls: unknown[] = [];
+    let identityCalls = 0;
+    const coordinator: RecordDesktopPlanUtilizationInput["coordinator"] = {
+      recordAntigravity: () => Effect.succeed(false),
+      recordClaudeIdentity: () =>
+        Effect.sync(() => {
+          identityCalls += 1;
+          return true;
+        }),
+      recordClaudeOAuth: (input) =>
+        Effect.sync(() => {
+          calls.push(input);
+          return true;
+        }),
+      recordCodex: () => Effect.succeed(false),
+      recordGenericSessionEquivalent: () => Effect.succeed(false),
+    };
+    const owner = "a".repeat(64);
+    await expect(
+      recordDesktopPlanUtilization({
+        coordinator,
+        providerId: "claude",
+        strategyId: "claude.oauth",
+        claudeOAuthHistoryOwnerIdentifier: owner,
+        snapshot,
+        capturedAt,
+      }),
+    ).resolves.toBe(true);
+    expect(calls).toEqual([{ snapshot, capturedAt, historyOwnerIdentifier: owner }]);
+    expect(identityCalls).toBe(0);
+  });
+
+  it("fails closed for ownerless Claude OAuth without loading identity history", async () => {
+    let loads = 0;
+    let saves = 0;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.sync(() => {
+        loads += 1;
+        return {};
+      }),
+      save: () =>
+        Effect.sync(() => {
+          saves += 1;
+        }),
+    });
+    await expect(
+      recordDesktopPlanUtilization({
+        coordinator,
+        providerId: "claude",
+        strategyId: "claude.oauth",
+        snapshot,
+        capturedAt,
+      }),
+    ).resolves.toBe(false);
+    expect(loads).toBe(0);
+    expect(saves).toBe(0);
+  });
+
+  it("captures Claude OAuth ownership around both desktop refresh paths", async () => {
+    const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
+    expect(source.match(/activeClaudeOAuthHistoryOwnerCapture\(\)\.captureFetch/g)).toHaveLength(2);
+    expect(source.match(/activeClaudeOAuthHistoryOwnerCapture\(\)\.consume/g)).toHaveLength(2);
+    expect(source).toContain("strategyId: outcome.strategyId");
+    expect(source).toContain("claudeOAuthHistoryOwnerIdentifier");
   });
 
   it("does not admit opt-in history providers", async () => {

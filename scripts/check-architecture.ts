@@ -46,6 +46,34 @@ for (const path of await walk(join(repositoryRoot, "apps/desktop/src/renderer"))
   }
 }
 
+const ownerIsolationRoots = [
+  "packages/contracts/src",
+  "apps/desktop/src/ipc",
+  "apps/desktop/src/preload",
+  "apps/desktop/src/renderer",
+];
+const ownerIsolationPattern =
+  /\b(?:claudeOAuthHistoryOwnerIdentifier|historyOwnerIdentifier|stableClaudeOAuthHistoryOwner)\b/;
+for (const root of ownerIsolationRoots) {
+  for (const path of await walk(join(repositoryRoot, root))) {
+    if (ownerIsolationPattern.test(await readFile(path, "utf8"))) {
+      failures.push(
+        `${relative(repositoryRoot, path)}: credential history owner crosses host boundary`,
+      );
+    }
+  }
+}
+
+for (const relativePath of [
+  "packages/core/src/provider-fetch-pipeline.ts",
+  "packages/core/src/services.ts",
+]) {
+  const path = join(repositoryRoot, relativePath);
+  if (ownerIsolationPattern.test(await readFile(path, "utf8"))) {
+    failures.push(`${relativePath}: provider outcome/service exposes credential history owner`);
+  }
+}
+
 if (failures.length > 0) {
   console.error(
     ["Architecture boundary violations:", ...failures.map((failure) => `- ${failure}`)].join("\n"),
