@@ -783,6 +783,10 @@ const selectedStrategyAllowed = (
   strategy: ProviderStrategy,
 ): boolean => {
   if (selectedAccount === undefined) return true;
+  if (providerId === "zai") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "Z_AI_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "zai.api";
+  }
   if (providerId === "grok") {
     const oauth = ownSetting(selectedAccount.secureSettings, "GROK_OAUTH_TOKEN");
     const cookie = ownSetting(selectedAccount.secureSettings, "GROK_COOKIE_HEADER");

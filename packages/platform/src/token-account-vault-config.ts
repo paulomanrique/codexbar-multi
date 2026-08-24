@@ -360,7 +360,7 @@ const selectedClaudeAccount = (
   if (route === undefined) {
     return Effect.fail(selectedAccountFailure("Selected Claude account credential is invalid."));
   }
-  const organizationId = sanitizedOrganizationId(metadata.organizationId);
+  const organizationId = sanitizedMetadataValue(metadata.organizationId);
   if (organizationId === "invalid") {
     return Effect.fail(selectedAccountFailure("Selected Claude organization metadata is invalid."));
   }
@@ -417,13 +417,51 @@ const selectedClaudeAccount = (
   });
 };
 
-const sanitizedOrganizationId = (raw: string | undefined): string | "invalid" | undefined => {
+const sanitizedMetadataValue = (raw: string | undefined): string | "invalid" | undefined => {
   const trimmed = raw?.trim();
   if (trimmed === undefined || trimmed === "") return undefined;
   if (trimmed.includes("\u0000") || new TextEncoder().encode(trimmed).byteLength > 256) {
     return "invalid";
   }
   return trimmed;
+};
+
+const normalizeZaiAPIKey = (raw: string): string | undefined => {
+  const normalized = stripWrappingQuotes(raw.trim()).trim();
+  if (normalized === "" || normalized.includes("\u0000") || normalized.length > 1024 * 1024)
+    return undefined;
+  return normalized;
+};
+
+const selectedZaiAccount = (
+  accountId: string,
+  raw: string,
+  metadata: {
+    readonly usageScope?: string | undefined;
+    readonly organizationId?: string | undefined;
+    readonly workspaceID?: string | undefined;
+  },
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeZaiAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected z.ai account credential is invalid."));
+  }
+  const usageScope = sanitizedMetadataValue(metadata.usageScope);
+  const organizationId = sanitizedMetadataValue(metadata.organizationId);
+  const workspaceID = sanitizedMetadataValue(metadata.workspaceID);
+  if (usageScope === "invalid" || organizationId === "invalid" || workspaceID === "invalid") {
+    return Effect.fail(selectedAccountFailure("Selected z.ai account metadata is invalid."));
+  }
+  const scope = usageScope?.toLowerCase() === "team" ? "team" : "personal";
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: { Z_AI_API_KEY: apiKey },
+    plainSettings: {
+      Z_AI_USAGE_SCOPE: scope,
+      Z_AI_ORGANIZATION: scope === "team" ? (organizationId ?? null) : null,
+      Z_AI_PROJECT: scope === "team" ? (workspaceID ?? null) : null,
+    },
+  });
 };
 
 const selectedGrokAccount = (
@@ -499,7 +537,12 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       selectedAccountFailure("Selected Codex accounts require a dedicated credential mapper."),
     );
   }
-  if (providerId !== "claude" && providerId !== "grok" && providerId !== "antigravity") {
+  if (
+    providerId !== "claude" &&
+    providerId !== "grok" &&
+    providerId !== "antigravity" &&
+    providerId !== "zai"
+  ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
     );
@@ -508,6 +551,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     Effect.flatMap((material) => {
       if (providerId === "claude") return selectedClaudeAccount(account.id, material, account);
       if (providerId === "grok") return selectedGrokAccount(account.id, material);
+      if (providerId === "zai") return selectedZaiAccount(account.id, material, account);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

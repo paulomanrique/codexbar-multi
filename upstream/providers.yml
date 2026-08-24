@@ -421,15 +421,21 @@ providers:
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
         - packages/providers/test/upstream-provider-deltas.test.ts
+        - packages/platform/test/first-party-runtime-zai.test.ts
     fixtures:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/platform/test/first-party-runtime-zai.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/zai.ts]
+      expected:
+        - packages/providers/src/providers/zai.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/zai.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
       - packages/providers/test/upstream-provider-deltas.test.ts
+      - packages/platform/test/first-party-runtime-zai.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: cdc456ae0

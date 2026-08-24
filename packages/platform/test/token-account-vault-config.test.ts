@@ -655,4 +655,65 @@ describe("token-account vault config repository", () => {
       expect(selected?.plainSettings).toEqual({ CLAUDE_ORGANIZATION_ID: null });
     }
   });
+
+  it("maps selected z.ai metadata and explicitly clears inherited team context", async () => {
+    for (const [account, expected] of [
+      [
+        {
+          id: "zai-team",
+          label: "Team",
+          addedAt: 0,
+          usageScope: " team ",
+          organizationId: " org-account ",
+          workspaceID: " proj-account ",
+        },
+        {
+          Z_AI_USAGE_SCOPE: "team",
+          Z_AI_ORGANIZATION: "org-account",
+          Z_AI_PROJECT: "proj-account",
+        },
+      ],
+      [
+        { id: "zai-personal", label: "Personal", addedAt: 0, usageScope: "personal" },
+        {
+          Z_AI_USAGE_SCOPE: "personal",
+          Z_AI_ORGANIZATION: null,
+          Z_AI_PROJECT: null,
+        },
+      ],
+      [
+        { id: "zai-incomplete", label: "Incomplete", addedAt: 0, usageScope: "team" },
+        {
+          Z_AI_USAGE_SCOPE: "team",
+          Z_AI_ORGANIZATION: null,
+          Z_AI_PROJECT: null,
+        },
+      ],
+    ] as const) {
+      const key = tokenAccountVaultKey("zai", account.id);
+      const config: PersistedCodexBarConfig = {
+        version: 1,
+        providers: [
+          {
+            id: "zai",
+            extensions: {},
+            tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+          },
+        ],
+      };
+
+      const selected = await Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: " 'account-token' " }),
+          "zai",
+        ),
+      );
+      expect(selected).toEqual({
+        id: account.id,
+        secureSettings: { Z_AI_API_KEY: "account-token" },
+        plainSettings: expected,
+      });
+    }
+  });
 });

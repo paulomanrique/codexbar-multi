@@ -98,7 +98,7 @@ const definition: ProviderDefinition = {
     if (region !== "global" && region !== "bigmodel-cn") throw new Error("Unsupported z.ai region");
     if (scope !== "personal" && scope !== "team") throw new Error("Unsupported z.ai usage scope");
     if (scope === "team" && (!organization || !project))
-      throw new Error("z.ai team scope needs organization and project");
+      throw ctx.fail.missingCredential("z.ai team scope needs organization and project");
     const base: any = region === "bigmodel-cn" ? "https://open.bigmodel.cn" : "https://api.z.ai";
     const knownRegionHosts = ["api.z.ai", "open.bigmodel.cn"];
     const quotaEndpoint: any =

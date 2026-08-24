@@ -137,12 +137,81 @@ describe("first-party selected accounts from the token-account vault", () => {
   });
 
   it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["zai", "cursor"] as const) {
+    for (const providerId of ["cursor"] as const) {
       await expect(
         resolve(config(providerId), providerId, {
           [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
         }),
       ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
+  it("selects z.ai team and personal accounts without inheriting team context", async () => {
+    const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
+      version: 1,
+      providers: [
+        {
+          id: "zai",
+          extensions: {},
+          tokenAccounts: {
+            version: 2,
+            activeIndex: 0,
+            accounts: [{ id: "account-0", label: "z.ai", addedAt: 0, ...metadata }],
+          },
+        },
+      ],
+    });
+    const key = tokenAccountVaultKey("zai", "account-0");
+
+    await expect(
+      resolve(
+        zaiConfig({
+          usageScope: " TEAM ",
+          organizationId: " org-account ",
+          workspaceID: " proj-account ",
+        }),
+        "zai",
+        { [key]: " 'account-token' " },
+      ),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { Z_AI_API_KEY: "account-token" },
+      plainSettings: {
+        Z_AI_USAGE_SCOPE: "team",
+        Z_AI_ORGANIZATION: "org-account",
+        Z_AI_PROJECT: "proj-account",
+      },
+    });
+
+    await expect(
+      resolve(zaiConfig({ usageScope: "personal" }), "zai", { [key]: "account-token" }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { Z_AI_API_KEY: "account-token" },
+      plainSettings: {
+        Z_AI_USAGE_SCOPE: "personal",
+        Z_AI_ORGANIZATION: null,
+        Z_AI_PROJECT: null,
+      },
+    });
+
+    for (const metadata of [
+      { usageScope: "team\u0000" },
+      { organizationId: "x".repeat(257) },
+      { workspaceID: "x".repeat(257) },
+    ]) {
+      await expect(
+        resolve(zaiConfig(metadata), "zai", { [key]: "account-token" }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
+  it("fails closed for empty or malformed selected z.ai vault material", async () => {
+    const key = tokenAccountVaultKey("zai", "account-0");
+    for (const material of ["", "   ", "''", "account\u0000token", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(resolve(config("zai"), "zai", { [key]: material })).rejects.toMatchObject({
+        kind: "missing-credential",
+      });
     }
   });
 

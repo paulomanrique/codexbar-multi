@@ -39,7 +39,7 @@ const providerTokenAccountSupportBase = [
   { provider: "zai", requiresManualCookieSource: false },
 ] as const satisfies readonly Omit<ProviderTokenAccountSupport, "runtimeSelectionAvailable">[];
 
-const runtimeSelectableProviders = new Set<ProviderId>(["antigravity", "claude", "grok"]);
+const runtimeSelectableProviders = new Set<ProviderId>(["antigravity", "claude", "grok", "zai"]);
 
 export const PROVIDER_TOKEN_ACCOUNT_SUPPORT: readonly ProviderTokenAccountSupport[] =
   providerTokenAccountSupportBase.map((support) => ({
