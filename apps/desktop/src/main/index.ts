@@ -126,6 +126,7 @@ import {
 import { DesktopLegacyImportController } from "./legacy-import.js";
 import { recordDesktopPlanUtilization } from "./plan-utilization-history.js";
 import { loadTrayIcon } from "./tray-icon.js";
+import { activateWindow } from "./single-instance.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -382,9 +383,18 @@ function trayImage() {
   });
 }
 
-void app
-  .whenReady()
-  .then(async () => {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    window = activateWindow(window, createWindow);
+  });
+}
+
+const desktopReady = hasSingleInstanceLock ? app.whenReady() : undefined;
+void desktopReady
+  ?.then(async () => {
     const userDataPath = app.getPath("userData");
     const databasePath = join(userDataPath, "usage.sqlite");
     planUtilizationHistory = new PlanUtilizationHistoryCoordinator(
