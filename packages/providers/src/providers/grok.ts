@@ -452,7 +452,7 @@ const proxyStatus = (ctx: ProviderContext, status: number): never => {
 };
 
 type GrokCreditsSnapshot = {
-  readonly usedPercent: number;
+  readonly usedPercent?: number;
   readonly resetsAt?: string;
   readonly subscriptionTier?: string;
 };
@@ -467,25 +467,25 @@ export const parseGrokCreditsProxyResponse = (value: unknown): GrokCreditsSnapsh
   const percent = config.creditUsagePercent;
   const cap = record(config.onDemandCap)?.val;
   const used = record(config.onDemandUsed)?.val;
-  const candidate =
-    typeof percent === "number" && Number.isFinite(percent)
-      ? percent
-      : typeof cap === "number" &&
-          Number.isFinite(cap) &&
-          cap > 0 &&
-          typeof used === "number" &&
-          Number.isFinite(used)
-        ? (used / cap) * 100
-        : resetsAt === undefined
-          ? undefined
-          : 0;
-  if (candidate === undefined) throw new Error("Grok CLI proxy response has no usage data.");
   const subscriptionTier = grokPlan(config.subscriptionTier ?? root?.subscriptionTier);
-  return {
-    usedPercent: Math.max(0, Math.min(100, candidate)),
+  const details = {
     ...(resetsAt === undefined ? {} : { resetsAt }),
     ...(subscriptionTier === undefined ? {} : { subscriptionTier }),
   };
+  if (typeof percent === "number" && Number.isFinite(percent)) {
+    return { ...details, usedPercent: Math.max(0, Math.min(100, percent)) };
+  }
+  if (
+    typeof cap === "number" &&
+    Number.isFinite(cap) &&
+    cap > 0 &&
+    typeof used === "number" &&
+    Number.isFinite(used)
+  ) {
+    return { ...details, usedPercent: Math.max(0, Math.min(100, (used / cap) * 100)) };
+  }
+  if (resetsAt !== undefined) return details;
+  throw new Error("Grok CLI proxy response has no usage data.");
 };
 
 const settingsTier = async (
@@ -532,12 +532,14 @@ const oauthProxyUsage = async (ctx: ProviderContext) => {
     );
   }
   const tier = (await settingsTier(ctx, credentials)) ?? parsed.subscriptionTier;
+  const identity = grokIdentity(credentials, tier);
+  if (parsed.usedPercent === undefined) return { identity };
   return {
     primary: {
       usedPercent: parsed.usedPercent,
       ...(parsed.resetsAt === undefined ? {} : { resetsAt: parsed.resetsAt }),
     },
-    identity: grokIdentity(credentials, tier),
+    identity,
   };
 };
 

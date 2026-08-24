@@ -298,6 +298,23 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
       resetsAt: "2026-08-23T00:00:00.000Z",
       subscriptionTier: "SuperGrok Heavy",
     });
+    expect(
+      parseGrokCreditsProxyResponse({
+        config: {
+          currentPeriod: { end: "2026-08-13T00:00:00.123Z" },
+        },
+      }),
+    ).toEqual({ resetsAt: "2026-08-13T00:00:00.123Z" });
+    expect(
+      parseGrokCreditsProxyResponse({
+        config: { billingPeriodEnd: "2026-08-13T00:00:00Z" },
+        subscriptionTier: "supergrok_heavy",
+      }),
+    ).toEqual({
+      resetsAt: "2026-08-13T00:00:00.000Z",
+      subscriptionTier: "SuperGrok Heavy",
+    });
+    expect(() => parseGrokCreditsProxyResponse({ config: {} })).toThrow("no usage data");
   });
 
   it("uses the fixed OAuth proxy headers and CLI RPC result without exposing a process surface", async () => {
@@ -306,6 +323,8 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
     expect(proxy).toBeDefined();
     expect(cli).toBeDefined();
     const requests: Array<{ url: string; options: Record<string, unknown> | undefined }> = [];
+    let billingBody =
+      '{"config":{"creditUsagePercent":12.5,"currentPeriod":{"end":"2026-08-23T00:00:00Z"}}}';
     const oauthContext: ProviderContext = {
       ...context(),
       settings: {
@@ -319,8 +338,7 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
             return { status: 200, bodyText: '{"subscription_tier_display":"SuperGrok Heavy"}' };
           return {
             status: 200,
-            bodyText:
-              '{"config":{"creditUsagePercent":12.5,"currentPeriod":{"end":"2026-08-23T00:00:00Z"}}}',
+            bodyText: billingBody,
           };
         },
         getJSON: async () => ({ status: 200, bodyText: "{}", json: {} }),
@@ -355,6 +373,11 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
       }),
       expect.objectContaining({ url: "https://cli-chat-proxy.grok.com/v1/settings" }),
     ]);
+    billingBody =
+      '{"config":{"currentPeriod":{"end":"2026-08-23T00:00:00Z"},"subscriptionTier":"supergrok_heavy"}}';
+    const unknownPeriod = await proxy!.fetchUsage(oauthContext);
+    expect(unknownPeriod.primary).toBeUndefined();
+    expect(unknownPeriod.identity).toMatchObject({ loginMethod: "SuperGrok Heavy" });
     await expect(cli!.fetchUsage(oauthContext)).resolves.toMatchObject({
       primary: { usedPercent: 25, windowMinutes: 10_080 },
     });
