@@ -72,6 +72,22 @@ const LOGIN_DESCRIPTORS: Readonly<Partial<Record<ProviderId, BrowserLoginDescrip
     cookieNames: ["WorkosCursorSessionToken"],
     completionCookieNames: ["WorkosCursorSessionToken"],
   }),
+  grok: descriptor({
+    startUrl: "https://grok.com/?_s=usage",
+    // The current xAI Accounts page for redirect=grok-com explicitly offers
+    // Google, Apple, and X. Keep these as exact top-level navigation origins;
+    // no cookie from an IdP is exported from the isolated partition.
+    allowedOrigins: [
+      "https://grok.com",
+      "https://accounts.x.ai",
+      "https://accounts.google.com",
+      "https://appleid.apple.com",
+      "https://x.com",
+    ],
+    cookieDomains: ["grok.com"],
+    cookieNames: ["sso", "sso-rw"],
+    completionCookieNames: ["sso", "sso-rw"],
+  }),
   opencode: descriptor({
     startUrl: "https://opencode.ai",
     allowedOrigins: ["https://opencode.ai"],

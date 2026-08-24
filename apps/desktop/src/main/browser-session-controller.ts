@@ -80,6 +80,8 @@ const exportedCookieHeaders = async (
  */
 export class BrowserLoginController {
   readonly #active = new Map<string, ActiveLogin>();
+  readonly #cleanup = new Map<string, Promise<void>>();
+  readonly #cleanupRequired = new Set<string>();
   readonly #host: BrowserLoginHost;
 
   constructor(host: BrowserLoginHost) {
@@ -91,6 +93,8 @@ export class BrowserLoginController {
     if (descriptor === undefined)
       throw new Error(`Interactive login is not declared for '${request.provider}'`);
     const key = browserLoginKey(request);
+    if (this.#cleanup.has(key) || this.#cleanupRequired.has(key))
+      throw new Error("Browser-session cleanup is incomplete for this account");
     const existing = this.#active.get(key);
     if (existing !== undefined) {
       existing.window.focus();
@@ -140,7 +144,10 @@ export class BrowserLoginController {
               browserCredentialPayload(request, cookieHeaders, this.#host.now()),
             );
             if (!isCurrent() || settled) {
-              await this.#host.removeCredential(browserCredentialKey(request));
+              // Logout owns credential removal while its per-account cleanup
+              // lock is held. A standalone cancel still rolls back its write.
+              if (!this.#cleanup.has(key))
+                await this.#host.removeCredential(browserCredentialKey(request));
               return;
             }
             finish("connected");
@@ -184,17 +191,34 @@ export class BrowserLoginController {
   }
 
   async logout(request: LoginRequestDTO): Promise<void> {
-    const active = this.#active.get(browserLoginKey(request));
-    this.cancel(request);
-    // A write that began just before cancellation must finish before deleting
-    // the exported credential, otherwise it could resurrect a logged-out key.
-    await active?.pendingPersistence?.catch(() => undefined);
-    const session = this.#host.sessionFor(request);
-    const [cleared, credentialRemoved] = await Promise.allSettled([
-      session.clear(),
-      this.#host.removeCredential(browserCredentialKey(request)),
-    ]);
-    if (cleared.status === "rejected") throw cleared.reason;
-    if (credentialRemoved.status === "rejected") throw credentialRemoved.reason;
+    const key = browserLoginKey(request);
+    const existingCleanup = this.#cleanup.get(key);
+    if (existingCleanup !== undefined) return existingCleanup;
+    const active = this.#active.get(key);
+    const cleanup = (async () => {
+      this.cancel(request);
+      // A write that began just before cancellation must finish before deleting
+      // the exported credential, otherwise it could resurrect a logged-out key.
+      await active?.pendingPersistence?.catch(() => undefined);
+      const session = this.#host.sessionFor(request);
+      const [cleared, credentialRemoved] = await Promise.allSettled([
+        session.clear(),
+        this.#host.removeCredential(browserCredentialKey(request)),
+      ]);
+      if (cleared.status === "rejected") throw cleared.reason;
+      if (credentialRemoved.status === "rejected") throw credentialRemoved.reason;
+    })();
+    this.#cleanup.set(key, cleanup);
+    try {
+      await cleanup;
+      this.#cleanupRequired.delete(key);
+    } catch (cause) {
+      // A failed partition clear must not permit a new login to reuse stale
+      // cookies. Retrying logout is allowed and clears this fail-closed gate.
+      this.#cleanupRequired.add(key);
+      throw cause;
+    } finally {
+      if (this.#cleanup.get(key) === cleanup) this.#cleanup.delete(key);
+    }
   }
 }

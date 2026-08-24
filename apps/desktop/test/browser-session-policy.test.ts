@@ -19,6 +19,7 @@ describe("isolated browser session policy", () => {
       "claude",
       "commandcode",
       "cursor",
+      "grok",
       "kimi",
       "longcat",
       "mimo",
@@ -55,6 +56,35 @@ describe("isolated browser session policy", () => {
     expect(isAllowedBrowserLoginNavigation(descriptor, "not a url")).toBe(false);
   });
 
+  it("keeps Grok browser login on exact HTTPS Grok and declared IdP origins", () => {
+    const grok = browserLoginDescriptor("grok");
+    if (grok === undefined) throw new Error("missing Grok descriptor");
+    expect(grok.startUrl).toBe("https://grok.com/?_s=usage");
+    expect([...grok.allowedOrigins]).toEqual([
+      "https://grok.com",
+      "https://accounts.x.ai",
+      "https://accounts.google.com",
+      "https://appleid.apple.com",
+      "https://x.com",
+    ]);
+    expect(grok.cookieDomains).toEqual(["grok.com"]);
+    expect(isAllowedBrowserLoginNavigation(grok, "https://grok.com/?_s=usage")).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(grok, "https://accounts.x.ai/sign-in")).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(grok, "https://www.grok.com/?_s=usage")).toBe(false);
+    expect(isAllowedBrowserLoginNavigation(grok, "https://accounts.x.ai.evil.test")).toBe(false);
+    expect(isAllowedBrowserLoginNavigation(grok, "http://grok.com/?_s=usage")).toBe(false);
+    expect(isAllowedBrowserLoginNavigation(grok, "https://accounts.google.com/o/oauth2")).toBe(
+      true,
+    );
+    expect(isAllowedBrowserLoginNavigation(grok, "https://appleid.apple.com/auth/authorize")).toBe(
+      true,
+    );
+    expect(isAllowedBrowserLoginNavigation(grok, "https://x.com/i/oauth2/authorize")).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(grok, "https://twitter.com/i/oauth2/authorize")).toBe(
+      false,
+    );
+  });
+
   it("keeps every declared entrypoint and navigation origin HTTPS", () => {
     for (const provider of browserLoginProviders()) {
       const policy = browserLoginDescriptor(provider);
@@ -82,6 +112,26 @@ describe("isolated browser session policy", () => {
     expect(exportableCookieHeader(descriptor, [{ name: "__client_uat", value: "123" }])).toBe(
       undefined,
     );
+  });
+
+  it("exports only Grok SSO cookies and requires either completion cookie", () => {
+    const grok = browserLoginDescriptor("grok");
+    if (grok === undefined) throw new Error("missing Grok descriptor");
+    expect(
+      exportableCookieHeader(grok, [
+        { name: "tracking", value: "must-not-leave-partition" },
+        { name: "sso-rw", value: "rw-secret" },
+        { name: "sso-shadow", value: "prefixes-are-not-allowed" },
+        { name: "sso", value: "sso-secret" },
+      ]),
+    ).toBe("sso=sso-secret; sso-rw=rw-secret");
+    expect(exportableCookieHeader(grok, [{ name: "sso-rw", value: "rw-secret" }])).toBe(
+      "sso-rw=rw-secret",
+    );
+    expect(exportableCookieHeader(grok, [{ name: "sso", value: "sso-secret" }])).toBe(
+      "sso=sso-secret",
+    );
+    expect(exportableCookieHeader(grok, [{ name: "tracking", value: "private" }])).toBe(undefined);
   });
 
   it("supports only explicit rotated cookie families", () => {

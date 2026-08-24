@@ -15,6 +15,7 @@ import type {
   LegacyImportExecutionResultDTO,
   LegacyImportInspectionResultDTO,
   LegacyImportRollbackResultDTO,
+  LoginRequestDTO,
   HostFailureStageDTO,
   HostStatusDTO,
 } from "@codexbar/contracts";
@@ -37,10 +38,16 @@ import { SpendDashboard } from "./spend-dashboard.tsx";
 import "./styles.css";
 
 type DashboardTab = "usage" | "history" | "costs" | "spend" | "settings";
+type BrowserLoginProvider = "t3chat" | "grok";
+type BrowserLoginStatus = "idle" | "waiting" | "connected";
 
 const HISTORY_DAYS = 30;
 const HISTORY_LIMIT = 100;
 const DASHBOARD_TABS = ["usage", "history", "costs", "spend", "settings"] as const;
+const DEFAULT_BROWSER_LOGIN_REQUESTS = {
+  t3chat: { provider: "t3chat", accountId: "default" },
+  grok: { provider: "grok", accountId: "default" },
+} as const satisfies Record<BrowserLoginProvider, LoginRequestDTO>;
 
 const formatDate = (locale: string, value: string | undefined): string | undefined => {
   if (value === undefined) return undefined;
@@ -68,6 +75,8 @@ const formatNumber = (locale: string, value: number): string =>
   new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
 const formatUsd = (locale: string, value: number): string =>
   new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(value);
+const withLoginProviderName = (template: string, providerName: string): string =>
+  template.replaceAll("T3 Chat", providerName);
 
 function ProviderCard({
   provider,
@@ -604,7 +613,8 @@ function App() {
   const [spendDashboard, setSpendDashboard] = useState<SpendDashboardDTO>();
   const [spendLoading, setSpendLoading] = useState(true);
   const [spendError, setSpendError] = useState(false);
-  const [t3Status, setT3Status] = useState<"idle" | "waiting" | "connected">("idle");
+  const [t3Status, setT3Status] = useState<BrowserLoginStatus>("idle");
+  const [grokStatus, setGrokStatus] = useState<BrowserLoginStatus>("idle");
   const selectedProvider = snapshot?.providers.find(
     (provider) => provider.id === selectedProviderId,
   );
@@ -838,6 +848,36 @@ function App() {
     stale: localization.upstream("stale data"),
     partial: localization.upstream("Partial estimate"),
   };
+  const loginActionLabel = (status: BrowserLoginStatus, providerName: string): string =>
+    status === "waiting"
+      ? `${providerName}: ${localization.t("loginWaiting")}`
+      : status === "connected"
+        ? withLoginProviderName(localization.t("loginConnected"), providerName)
+        : withLoginProviderName(localization.t("loginStart"), providerName);
+  const logoutActionLabel = (providerName: string): string =>
+    `${providerName}: ${localization.t("logout")}`;
+  const startBrowserLogin = (
+    provider: BrowserLoginProvider,
+    setStatus: (status: BrowserLoginStatus) => void,
+  ): void => {
+    setStatus("waiting");
+    window.codexbar.startLogin(DEFAULT_BROWSER_LOGIN_REQUESTS[provider]).then(
+      (result) => setStatus(result.status === "connected" ? "connected" : "idle"),
+      () => {
+        setError(copy.unavailable);
+        setStatus("idle");
+      },
+    );
+  };
+  const logoutBrowserLogin = (
+    provider: BrowserLoginProvider,
+    setStatus: (status: BrowserLoginStatus) => void,
+  ): void => {
+    void window.codexbar.logout(DEFAULT_BROWSER_LOGIN_REQUESTS[provider]).then(
+      () => setStatus("idle"),
+      () => setError(copy.unavailable),
+    );
+  };
   const focusTab = (next: DashboardTab): void => {
     setTab(next);
     document.getElementById(`tab-${next}`)?.focus();
@@ -871,34 +911,24 @@ function App() {
       <div className="login-actions">
         <button
           disabled={t3Status === "waiting"}
-          onClick={() => {
-            setT3Status("waiting");
-            window.codexbar.startLogin({ provider: "t3chat", accountId: "default" }).then(
-              (result) => setT3Status(result.status === "connected" ? "connected" : "idle"),
-              () => {
-                setError(copy.unavailable);
-                setT3Status("idle");
-              },
-            );
-          }}
+          onClick={() => startBrowserLogin("t3chat", setT3Status)}
         >
-          {t3Status === "waiting"
-            ? localization.t("loginWaiting")
-            : t3Status === "connected"
-              ? localization.t("loginConnected")
-              : localization.t("loginStart")}
+          {loginActionLabel(t3Status, "T3 Chat")}
         </button>
         {t3Status === "connected" ? (
-          <button
-            className="secondary"
-            onClick={() => {
-              void window.codexbar.logout({ provider: "t3chat", accountId: "default" }).then(
-                () => setT3Status("idle"),
-                () => setError(copy.unavailable),
-              );
-            }}
-          >
-            {localization.t("logout")}
+          <button className="secondary" onClick={() => logoutBrowserLogin("t3chat", setT3Status)}>
+            {logoutActionLabel("T3 Chat")}
+          </button>
+        ) : null}
+        <button
+          disabled={grokStatus === "waiting"}
+          onClick={() => startBrowserLogin("grok", setGrokStatus)}
+        >
+          {loginActionLabel(grokStatus, "Grok")}
+        </button>
+        {grokStatus === "connected" ? (
+          <button className="secondary" onClick={() => logoutBrowserLogin("grok", setGrokStatus)}>
+            {logoutActionLabel("Grok")}
           </button>
         ) : null}
       </div>
