@@ -529,3 +529,10 @@ h2 {
     align-self: start;
   }
 }
+.startup-shell {
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  max-width: 900px;
+  margin: 0 auto;
+}

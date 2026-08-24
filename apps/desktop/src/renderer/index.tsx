@@ -15,6 +15,8 @@ import type {
   LegacyImportExecutionResultDTO,
   LegacyImportInspectionResultDTO,
   LegacyImportRollbackResultDTO,
+  HostFailureStageDTO,
+  HostStatusDTO,
 } from "@codexbar/contracts";
 
 import { createLocalization } from "./localization.ts";
@@ -1128,10 +1130,92 @@ function App() {
   );
 }
 
+type StartupShellProps =
+  | { readonly status: "starting" }
+  | { readonly status: "failed"; readonly stage: HostFailureStageDTO };
+
+const startupStageLabels: Readonly<Record<HostFailureStageDTO, string>> = {
+  shell: "the desktop window",
+  storage: "local storage",
+  config: "your settings",
+  plugins: "plugins",
+  runtime: "providers",
+};
+
+function StartupShell(props: StartupShellProps) {
+  if (props.status === "starting") {
+    return (
+      <main className="startup-shell">
+        <header>
+          <div>
+            <small>CodexBar Multi</small>
+            <h1>Starting CodexBar Multi…</h1>
+          </div>
+        </header>
+        <p className="muted">Preparing your local data and providers. This can take a moment.</p>
+      </main>
+    );
+  }
+  return (
+    <main className="startup-shell">
+      <header>
+        <div>
+          <small>CodexBar Multi</small>
+          <h1>CodexBar Multi couldn&apos;t finish starting</h1>
+        </div>
+      </header>
+      <p className="error" role="alert">
+        Startup stopped while preparing {startupStageLabels[props.stage]}. Close this window and
+        open the app again.
+      </p>
+    </main>
+  );
+}
+
+function HostGate() {
+  const [hostStatus, setHostStatus] = useState<HostStatusDTO | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async (): Promise<void> => {
+      try {
+        const next = await window.codexbar.getHostStatus();
+        if (cancelled) return;
+        setHostStatus(next);
+        if (next.status === "starting") {
+          timer = window.setTimeout(() => {
+            void poll();
+          }, 250);
+        }
+      } catch {
+        if (cancelled) return;
+        timer = window.setTimeout(() => {
+          void poll();
+        }, 250);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+  if (hostStatus === undefined || hostStatus.status === "starting") {
+    return <StartupShell status="starting" />;
+  }
+  if (hostStatus.status === "failed") {
+    return <StartupShell status="failed" stage={hostStatus.failure.stage} />;
+  }
+  if (hostStatus.status === "ready") {
+    return <App />;
+  }
+  return <StartupShell status="starting" />;
+}
+
 const root = document.getElementById("root");
 if (root === null) throw new Error("Renderer root is missing");
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <HostGate />
   </StrictMode>,
 );

@@ -423,6 +423,33 @@ export type LegacyImportRollbackResultDTO = Schema.Schema.Type<
   typeof LegacyImportRollbackResultDTO
 >;
 
+export const HostFailureStageDTO = Schema.Literals([
+  "shell",
+  "storage",
+  "config",
+  "plugins",
+  "runtime",
+]);
+export type HostFailureStageDTO = Schema.Schema.Type<typeof HostFailureStageDTO>;
+
+export const HostStatusDTO = Schema.Union([
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    status: Schema.Literal("starting"),
+  }),
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    status: Schema.Literal("ready"),
+  }),
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    status: Schema.Literal("failed"),
+    failure: Schema.Struct({ stage: HostFailureStageDTO }),
+  }),
+]);
+
+export type HostStatusDTO = Schema.Schema.Type<typeof HostStatusDTO>;
+
 export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("get-usage"), provider: Schema.optional(ProviderId) }),
   Schema.Struct({ type: Schema.Literal("refresh-provider"), request: RefreshProviderRequestDTO }),

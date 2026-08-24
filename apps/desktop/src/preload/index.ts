@@ -42,6 +42,7 @@ import { makeProviderSettingsApi } from "./provider-settings-api.js";
 import { makeClaudeSwapApi } from "./claude-swap-api.js";
 import { makeSessionQuotaNotificationSettingsApi } from "./session-quota-notification-settings-api.js";
 import { makeLegacyImportApi } from "./legacy-import-api.js";
+import { makeHostStatusApi } from "./host-status-api.js";
 
 const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
 const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -70,6 +71,7 @@ const decodeTestPluginResult = Schema.decodeUnknownPromise(TestPluginResultDTO);
 const decodePluginSecretRequest = Schema.decodeUnknownPromise(PluginSecretRequestDTO);
 const decodePluginSecretResult = Schema.decodeUnknownPromise(PluginSecretResultDTO);
 const api: CodexBarDesktopApi = Object.freeze({
+  ...makeHostStatusApi((channel, input) => ipcRenderer.invoke(channel, input)),
   getOverview: async () => decodeOverview(await ipcRenderer.invoke(DesktopChannels.overview)),
   getHistory: async (query: HistoryQuery) =>
     decodeHistoryResult(

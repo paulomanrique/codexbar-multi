@@ -35,9 +35,11 @@ import type {
   LegacyImportInspectionResultDTO,
   LegacyImportRollbackResultDTO,
   RollbackLegacyImportRequestDTO,
+  HostStatusDTO,
 } from "@codexbar/contracts";
 
 export const DesktopChannels = Object.freeze({
+  hostStatus: "codexbar-multi:host-status",
   overview: "codexbar-multi:overview",
   history: "codexbar-multi:history",
   exportHistory: "codexbar-multi:export-history",
@@ -68,6 +70,7 @@ export const DesktopChannels = Object.freeze({
 });
 
 export interface CodexBarDesktopApi {
+  readonly getHostStatus: () => Promise<HostStatusDTO>;
   readonly getOverview: () => Promise<DashboardSnapshotDTO>;
   readonly getHistory: (query: HistoryQueryDTO) => Promise<HistoryQueryResultDTO>;
   readonly exportHistory: (query: HistoryQueryDTO) => Promise<HistoryExportDTO>;

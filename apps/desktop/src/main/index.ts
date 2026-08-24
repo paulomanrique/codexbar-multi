@@ -51,6 +51,7 @@ import {
   LegacyImportInspectionResultDTO,
   LegacyImportRollbackResultDTO,
   RollbackLegacyImportRequestDTO,
+  HostStatusDTO,
 } from "@codexbar/contracts";
 import {
   makeCredentialBrowserSessions,
@@ -132,6 +133,7 @@ import { DesktopLegacyImportController } from "./legacy-import.js";
 import { recordDesktopPlanUtilization } from "./plan-utilization-history.js";
 import { loadTrayIcon } from "./tray-icon.js";
 import { activateWindow } from "./single-instance.js";
+import { createHostLifecycle } from "./host-lifecycle.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -168,6 +170,12 @@ const providerSettingsCapabilitiesById = new Map(
 const pluginSnapshots = new Map<string, UsageSnapshot>();
 const providerClock = makeSystemClock();
 let storageClosing = false;
+
+const hostLifecycle = createHostLifecycle("shell");
+const decodeHostStatus = Schema.decodeUnknownPromise(HostStatusDTO);
+ipcMain.handle(DesktopChannels.hostStatus, async () =>
+  decodeHostStatus(hostLifecycle.toHostStatusDTO()),
+);
 
 const desktopRequestFailed = () => new Error("Could not complete the desktop request.");
 
@@ -374,7 +382,8 @@ function createWindow(): BrowserWindow {
     height: 640,
     minWidth: 360,
     minHeight: 420,
-    show: false,
+    show: true,
+    backgroundColor: "#090b10",
     title: "CodexBar Multi",
     webPreferences: {
       preload: join(currentDirectory, "../preload/index.cjs"),
@@ -389,9 +398,8 @@ function createWindow(): BrowserWindow {
     if (url !== created.webContents.getURL()) event.preventDefault();
   });
   void created.loadFile(join(currentDirectory, "../renderer/index.html"));
-  created.once("ready-to-show", () => created.show());
   created.on("closed", () => {
-    window = undefined;
+    if (window === created) window = undefined;
   });
   return created;
 }
@@ -416,10 +424,49 @@ if (!hasSingleInstanceLock) {
 }
 
 const desktopReady = hasSingleInstanceLock ? app.whenReady() : undefined;
-void desktopReady
-  ?.then(async () => {
-    const userDataPath = app.getPath("userData");
-    const databasePath = join(userDataPath, "usage.sqlite");
+void desktopReady?.then(async () => {
+  // Shell stage: create visible window before any backend bootstrap.
+  try {
+    window = activateWindow(window, createWindow);
+  } catch {
+    dialog.showErrorBox("CodexBar Multi could not start", "The window could not be created.");
+    app.quit();
+    return;
+  }
+  try {
+    tray = new Tray(trayImage());
+    tray.setToolTip("CodexBar Multi — Starting…");
+  } catch {
+    tray = undefined;
+  }
+  if (tray !== undefined) {
+    tray.on("click", () => {
+      if (hostLifecycle.getState().status === "starting") {
+        try {
+          window = activateWindow(window, createWindow);
+        } catch {
+          dialog.showErrorBox("CodexBar Multi could not start", "The window could not be created.");
+          app.quit();
+        }
+        return;
+      }
+      adaptiveRefresh?.noteMenuOpen();
+      if (window === undefined || window.isDestroyed()) {
+        window = createWindow();
+      } else if (window.isVisible()) {
+        window.hide();
+      } else {
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+      }
+    });
+  }
+
+  const userDataPath = app.getPath("userData");
+  const databasePath = join(userDataPath, "usage.sqlite");
+  try {
+    hostLifecycle.advanceBootstrapStage("storage");
     planUtilizationHistory = new PlanUtilizationHistoryCoordinator(
       makeNodePlanUtilizationHistoryStore({
         directoryPath: join(userDataPath, "history"),
@@ -434,6 +481,8 @@ void desktopReady
     );
     spendPublisher = new DesktopSpendPublisher(persistence);
     grokLocalTokenScanner = makeNodeGrokLocalTokenScanner({ costs: persistence.costs });
+
+    hostLifecycle.advanceBootstrapStage("config");
     // The config adapter retains only registered plugin IDs. Populate this
     // mutable set from the hardened discovery pass before decoding a config,
     // so deleting one plugin cannot discard a sibling plugin's config entry.
@@ -473,26 +522,8 @@ void desktopReady
     });
     const processRunner = makeNodeProcessRunner();
     const baseLocal = makeNodeFirstPartyLocalCapabilities({ processRunner });
-    providerRuntime = makeFirstPartyProviderRuntime({
-      providers: FIRST_PARTY_PROVIDERS,
-      settings: makeNodeDiscoveredProviderSettings(),
-      credentials,
-      browserSessions: makeCredentialBrowserSessions(credentials),
-      selectedAccounts: {
-        resolve: (providerId) =>
-          Effect.sync(() => selectedFirstPartyAccountFromConfig(desktopConfig, providerId)),
-      },
-      local: {
-        ...baseLocal,
-        fetchClaudeCliUsage: makeNodeClaudeCliLocalCapability({
-          processRunner,
-          ptyRunner: makeDesktopNodePtyRunner(),
-          userDataPath,
-        }),
-      },
-      http: makeFetchHttpTransport(),
-      clock: providerClock,
-    });
+
+    hostLifecycle.advanceBootstrapStage("plugins");
     pluginSandbox = makeElectronPluginSandbox();
     const pluginBrowserSessions = makePluginCredentialBrowserSessions({
       read: (key) => Effect.runPromise(credentials.read(key)),
@@ -547,6 +578,28 @@ void desktopReady
       desktopConfig = makeDefaultCodexBarConfig();
       await Effect.runPromise(configRepository.save(desktopConfig));
     }
+
+    hostLifecycle.advanceBootstrapStage("runtime");
+    providerRuntime = makeFirstPartyProviderRuntime({
+      providers: FIRST_PARTY_PROVIDERS,
+      settings: makeNodeDiscoveredProviderSettings(),
+      credentials,
+      browserSessions: makeCredentialBrowserSessions(credentials),
+      selectedAccounts: {
+        resolve: (providerId) =>
+          Effect.sync(() => selectedFirstPartyAccountFromConfig(desktopConfig, providerId)),
+      },
+      local: {
+        ...baseLocal,
+        fetchClaudeCliUsage: makeNodeClaudeCliLocalCapability({
+          processRunner,
+          ptyRunner: makeDesktopNodePtyRunner(),
+          userDataPath,
+        }),
+      },
+      http: makeFetchHttpTransport(),
+      clock: providerClock,
+    });
     adaptiveRefresh = new DesktopAdaptiveRefreshController(
       {
         now: () => new Date(),
@@ -943,22 +996,72 @@ void desktopReady
         ),
       ),
     );
-    window = createWindow();
-    tray = new Tray(trayImage());
-    tray.setToolTip("CodexBar Multi");
-    tray.on("click", () => {
-      adaptiveRefresh?.noteMenuOpen();
-      if (window === undefined) window = createWindow();
-      else if (window.isVisible()) window.hide();
-      else window.show();
-    });
-  })
-  .catch((cause: unknown) => {
-    console.error("Could not start CodexBar Multi", cause);
-    app.exit(1);
-  });
+    tray?.setToolTip("CodexBar Multi");
+    // Ensure window is visible after successful bootstrap.
+    if (window !== undefined && !window.isDestroyed()) {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    }
+    hostLifecycle.markReady();
+  } catch {
+    const stage = (() => {
+      const state = hostLifecycle.getState();
+      if (state.status === "starting") return state.bootstrapStage;
+      if (state.status === "failed") return state.failure.stage;
+      return "runtime" as const;
+    })();
+    console.error(`CodexBar Multi bootstrap failed at stage: ${stage}`);
+    try {
+      hostLifecycle.markFailed(stage);
+    } catch {
+      // Already in terminal state; keep existing failure.
+    }
+    try {
+      tray?.destroy();
+    } catch {
+      // Tray destroy is best effort.
+    }
+    tray = undefined;
+    if (window === undefined || window.isDestroyed()) {
+      try {
+        window = activateWindow(window, createWindow);
+      } catch {
+        dialog.showErrorBox("CodexBar Multi could not start", "The window could not be created.");
+        app.quit();
+        return;
+      }
+    } else {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    }
+    adaptiveRefresh?.stop();
+    adaptiveRefresh = undefined;
+    legacyImport?.cancel();
+    legacyImport = undefined;
+    spendPublisher?.cancel();
+    spendPublisher = undefined;
+    pluginSandbox?.terminate();
+    pluginSandbox = undefined;
+    if (persistence !== undefined) {
+      try {
+        await Effect.runPromise(persistence.close).catch(() => undefined);
+      } catch {
+        // Ignore close errors during failure handling.
+      }
+      persistence = undefined;
+    }
+  }
+});
 
 app.on("before-quit", (event) => {
+  try {
+    tray?.destroy();
+  } catch {
+    // Best effort.
+  }
+  tray = undefined;
   adaptiveRefresh?.stop();
   adaptiveRefresh = undefined;
   legacyImport?.cancel();
@@ -976,5 +1079,7 @@ app.on("before-quit", (event) => {
 });
 
 app.on("window-all-closed", () => {
-  // Tray applications stay alive until the user explicitly quits.
+  if (hostLifecycle.getState().status === "failed") {
+    app.quit();
+  }
 });
