@@ -1221,14 +1221,20 @@ providers:
         - TestsLinux/*Groq*Tests.swift
       tsGlobs:
         - packages/providers/test/http-parity-wave-two.test.ts
+        - packages/platform/test/first-party-runtime-groq-account.test.ts
     fixtures:
       - packages/providers/test/http-parity-wave-two.test.ts
+      - packages/platform/test/first-party-runtime-groq-account.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/groq.ts]
+      expected:
+        - packages/providers/src/providers/groq.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/groq.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/http-parity-wave-two.test.ts
+      - packages/platform/test/first-party-runtime-groq-account.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

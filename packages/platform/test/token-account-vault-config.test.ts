@@ -776,4 +776,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { DEEPINFRA_API_KEY: "selected-key", DEEPINFRA_TOKEN: null },
     });
   });
+
+  it("maps a selected Groq account without copying global endpoint settings", async () => {
+    const account = { id: "groq-selected", label: "Enterprise", addedAt: 0 };
+    const key = tokenAccountVaultKey("groq", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "groq",
+          extensions: { GROQ_API_URL: "https://groq.example.test/v1" },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: ' "selected-key" ' }),
+        "groq",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { GROQ_API_KEY: "selected-key" },
+    });
+  });
 });

@@ -275,6 +275,75 @@ describe("Swift-derived HTTP provider parity wave two", () => {
     });
   });
 
+  it("matches Groq API key cleanup and canonical endpoint override", async () => {
+    const requests: Request[] = [];
+    await groq.fetchUsage(
+      context(() => json({ data: { result: [] } }), {
+        settings: {
+          GROQ_API_KEY: "  'fixture-key'  ",
+          GROQ_API_URL: "groq.example.test/v1/",
+        },
+        requests,
+      }),
+    );
+
+    expect(requests).toHaveLength(4);
+    expect(requests.every(({ url }) => url.origin === "https://groq.example.test")).toBe(true);
+    expect(
+      requests.every(({ url }) => url.pathname === "/v1/metrics/prometheus/api/v1/query"),
+    ).toBe(true);
+    expect(
+      requests.every(
+        ({ options }) =>
+          options &&
+          (options.headers as Record<string, unknown>).Authorization === "Bearer fixture-key",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches Swift decimal precision for fractional Groq rates", async () => {
+    const snapshot = await groq.fetchUsage(
+      context(
+        (request) => {
+          const query = request.url.searchParams.get("query");
+          const value = query?.includes("requests")
+            ? 2.5 / 60
+            : query?.includes("tokens_in")
+              ? 10 / 60
+              : query?.includes("tokens_out")
+                ? 0
+                : 0.5 / 60;
+          return json({ data: { result: [{ value: [now.getTime() / 1_000, value] }] } });
+        },
+        { settings: { GROQ_API_KEY: "fixture-key" } },
+      ),
+    );
+
+    expect(snapshot).toMatchObject({
+      primary: { resetDescription: "2.50 req/min" },
+      secondary: { resetDescription: "10.0 tok/min" },
+      tertiary: { resetDescription: "0.50 cache/min" },
+    });
+  });
+
+  it.each([
+    "http://attacker.test/v1",
+    "https://user:pass@proxy.test/v1",
+    "https://proxy.test%2f.attacker.test/v1",
+    "https://bad host/v1",
+  ])("rejects an unsafe Groq endpoint before transport: %s", async (endpoint) => {
+    const requests: Request[] = [];
+    await expect(
+      groq.fetchUsage(
+        context(() => json({ data: { result: [] } }), {
+          settings: { GROQ_API_KEY: "fixture-key", GROQ_API_URL: endpoint },
+          requests,
+        }),
+      ),
+    ).rejects.toThrow("api-failure: Groq endpoint override GROQ_API_URL");
+    expect(requests).toHaveLength(0);
+  });
+
   it("matches Moonshot region routing, balance formatting and required response fields", async () => {
     const requests: Request[] = [];
     const snapshot = await moonshot.fetchUsage(

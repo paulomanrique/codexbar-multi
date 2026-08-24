@@ -282,6 +282,18 @@ type EndpointRule =
   | { readonly kind: "origin"; readonly origin: string }
   | { readonly kind: "domain-suffix"; readonly suffix: string };
 
+const cleanConfiguredEndpoint = (raw: string): string => {
+  let value = raw.trim();
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value;
+};
+
 const endpointOrigins = (
   descriptor: ProviderDescriptor,
   setting: (key: string) => string | undefined,
@@ -307,7 +319,9 @@ const endpointOrigins = (
       }
       continue;
     }
-    const configured = setting(endpoint.setting) ?? endpoint.default;
+    const configuredRaw = setting(endpoint.setting) ?? endpoint.default;
+    const configured =
+      configuredRaw === undefined ? undefined : cleanConfiguredEndpoint(configuredRaw);
     if (configured === undefined) continue;
     const transport =
       endpoint.policy === "https"
@@ -806,6 +820,10 @@ const selectedStrategyAllowed = (
   if (providerId === "deepinfra") {
     const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPINFRA_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "deepinfra.api";
+  }
+  if (providerId === "groq") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "GROQ_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "groq.api";
   }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");

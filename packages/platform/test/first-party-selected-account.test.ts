@@ -178,6 +178,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a cleaned Groq API key without adding account metadata", async () => {
+    const key = tokenAccountVaultKey("groq", "account-0");
+    await expect(
+      resolve(config("groq"), "groq", { [key]: "  'groq-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { GROQ_API_KEY: "groq-selected" },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(resolve(config("groq"), "groq", { [key]: material })).rejects.toMatchObject({
+        kind: "missing-credential",
+      });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

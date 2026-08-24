@@ -498,6 +498,20 @@ const selectedDeepInfraAccount = (
   });
 };
 
+const selectedGroqAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected Groq account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: { GROQ_API_KEY: apiKey },
+  });
+};
+
 const selectedGrokAccount = (
   accountId: string,
   raw: string,
@@ -577,7 +591,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "antigravity" &&
     providerId !== "zai" &&
     providerId !== "copilot" &&
-    providerId !== "deepinfra"
+    providerId !== "deepinfra" &&
+    providerId !== "groq"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -590,6 +605,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "zai") return selectedZaiAccount(account.id, material, account);
       if (providerId === "copilot") return selectedCopilotAccount(account.id, material, account);
       if (providerId === "deepinfra") return selectedDeepInfraAccount(account.id, material);
+      if (providerId === "groq") return selectedGroqAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );
