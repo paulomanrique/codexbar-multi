@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import {
   claudeOAuthPlanUtilizationAccountKey,
+  claudeSelectedTokenAccountPlanUtilizationAccountKey,
   PlanUtilizationHistoryBuckets,
   PlanUtilizationHistoryCoordinator,
   PlanUtilizationHistoryEntry,
@@ -815,6 +816,71 @@ describe("plan-utilization history coordinator", () => {
     expect(saved?.claude?.unscoped).toEqual([unscoped]);
     expect(saved?.claude?.accounts["identity-owner"]).toEqual([sticky]);
     expect(saved?.claude?.accounts[accountKey]?.[0]?.entries[0]?.usedPercent).toBe(35);
+  });
+
+  it("isolates selected Claude token-account history from identity sticky and unscoped buckets", async () => {
+    const firstKey = claudeSelectedTokenAccountPlanUtilizationAccountKey("claude", "account-a");
+    const secondKey = claudeSelectedTokenAccountPlanUtilizationAccountKey("claude", "account-b");
+    if (firstKey === undefined || secondKey === undefined) throw new Error("fixture keys");
+    const unscoped = new PlanUtilizationSeriesHistory({
+      name: "session",
+      windowMinutes: 300,
+      entries: [sample(5).entry],
+    });
+    const sticky = new PlanUtilizationSeriesHistory({
+      name: "session",
+      windowMinutes: 300,
+      entries: [sample(15).entry],
+    });
+    let saved: PlanUtilizationHistoryProviders | undefined;
+    const coordinator = new PlanUtilizationHistoryCoordinator({
+      load: Effect.succeed({
+        claude: new PlanUtilizationHistoryBuckets({
+          preferredAccountKey: "identity-owner",
+          unscoped: [unscoped],
+          accounts: { "identity-owner": [sticky] },
+        }),
+      }),
+      save: (providers) =>
+        Effect.sync(() => {
+          saved = providers;
+        }),
+    });
+
+    await expect(
+      Effect.runPromise(
+        coordinator.recordClaudeSelectedTokenAccount({
+          accountKey: firstKey,
+          capturedAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 35, windowMinutes: 300 },
+            identity: { providerId: "claude", accountEmail: "same@example.com" },
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      Effect.runPromise(
+        coordinator.recordClaudeSelectedTokenAccount({
+          accountKey: secondKey,
+          capturedAt: new Date(capturedAt.getTime() + 2 * 60 * 60 * 1_000),
+          snapshot: usageSnapshot({
+            primary: { usedPercent: 55, windowMinutes: 300 },
+            identity: { providerId: "claude", accountEmail: "same@example.com" },
+          }),
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(saved?.claude?.preferredAccountKey).toBe(secondKey);
+    expect(saved?.claude?.unscoped).toEqual([unscoped]);
+    expect(saved?.claude?.accounts["identity-owner"]).toEqual([sticky]);
+    expect(
+      saved?.claude?.accounts[firstKey]?.[0]?.entries.map((entry) => entry.usedPercent),
+    ).toEqual([35]);
+    expect(
+      saved?.claude?.accounts[secondKey]?.[0]?.entries.map((entry) => entry.usedPercent),
+    ).toEqual([55]);
   });
 
   it("does not load or save Claude OAuth history without a valid owner", async () => {

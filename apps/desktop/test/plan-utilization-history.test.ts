@@ -142,12 +142,47 @@ describe("desktop plan-utilization history", () => {
     expect(saves).toBe(0);
   });
 
+  it("routes selected Claude web history through token-account ownership", async () => {
+    const selectedTokenAccountKey = "a".repeat(64);
+    const calls: unknown[] = [];
+    let identityCalls = 0;
+    await expect(
+      recordDesktopPlanUtilization({
+        coordinator: {
+          recordAntigravity: () => Effect.succeed(false),
+          recordClaudeIdentity: () =>
+            Effect.sync(() => {
+              identityCalls += 1;
+              return true;
+            }),
+          recordClaudeSelectedTokenAccount: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return true;
+            }),
+          recordCodex: () => Effect.succeed(false),
+          recordGenericSessionEquivalent: () => Effect.succeed(false),
+        },
+        providerId: "claude",
+        strategyId: "claude.web",
+        claudeSelectedTokenAccountKey: selectedTokenAccountKey,
+        snapshot,
+        capturedAt,
+      }),
+    ).resolves.toBe(true);
+    expect(calls).toEqual([{ snapshot, capturedAt, accountKey: selectedTokenAccountKey }]);
+    expect(identityCalls).toBe(0);
+  });
+
   it("captures Claude OAuth ownership around both desktop refresh paths", async () => {
     const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
     expect(source.match(/activeClaudeOAuthHistoryOwnerCapture\(\)\.captureFetch/g)).toHaveLength(2);
-    expect(source.match(/activeClaudeOAuthHistoryOwnerCapture\(\)\.consume/g)).toHaveLength(2);
+    expect(
+      source.match(/activeClaudeOAuthHistoryOwnerCapture\(\)\.consumeHistoryBinding/g),
+    ).toHaveLength(2);
     expect(source).toContain("strategyId: outcome.strategyId");
     expect(source).toContain("claudeOAuthHistoryOwnerIdentifier");
+    expect(source).toContain("claudeSelectedTokenAccountKey");
   });
 
   it("does not admit opt-in history providers", async () => {

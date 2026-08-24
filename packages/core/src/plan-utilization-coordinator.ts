@@ -24,6 +24,7 @@ import {
   claudeOAuthPlanUtilizationAccountKey,
   claudePlanUtilizationIdentityAccountKey,
   claudePlanUtilizationLegacyEmailAccountKey,
+  isClaudeSelectedTokenAccountPlanUtilizationAccountKey,
 } from "./claude-history-ownership.ts";
 import { antigravityPlanUtilizationIdentityAccountKey } from "./antigravity-history-ownership.ts";
 import type { InfrastructureError } from "./services.ts";
@@ -234,6 +235,32 @@ export class PlanUtilizationHistoryCoordinator {
   }): Effect.Effect<boolean, InfrastructureError> {
     const accountKey = claudeOAuthPlanUtilizationAccountKey(input.historyOwnerIdentifier);
     if (accountKey === undefined) return Effect.succeed(false);
+    const samples = extractPlanUtilizationSeriesSamples({
+      providerId: "claude",
+      snapshot: input.snapshot,
+      capturedAt: input.capturedAt,
+    });
+    return this.record({
+      providerId: "claude",
+      accountKey,
+      samples,
+      updatePreferredAccountKey: true,
+    });
+  }
+
+  /**
+   * Selected non-OAuth Claude token accounts are owned by the persisted token
+   * account, not by web identity, sticky history, or legacy unscoped rows.
+   */
+  recordClaudeSelectedTokenAccount(input: {
+    readonly snapshot: UsageSnapshot;
+    readonly capturedAt: Date;
+    readonly accountKey?: string | null;
+  }): Effect.Effect<boolean, InfrastructureError> {
+    const accountKey = input.accountKey?.trim();
+    if (!isClaudeSelectedTokenAccountPlanUtilizationAccountKey(accountKey)) {
+      return Effect.succeed(false);
+    }
     const samples = extractPlanUtilizationSeriesSamples({
       providerId: "claude",
       snapshot: input.snapshot,

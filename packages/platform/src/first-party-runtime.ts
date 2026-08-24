@@ -70,6 +70,11 @@ export interface FirstPartyBrowserSessions {
 export interface FirstPartySelectedAccount extends ProviderSelectedAccount {
   readonly plainSettings?: Readonly<Record<string, string | null>>;
   readonly secureSettings?: Readonly<Record<string, string | null>>;
+  readonly claudeHistoryBinding?: {
+    readonly selectionKey: string;
+    readonly oauthHistoryOwnerIdentifier?: string;
+    readonly tokenAccountKey?: string;
+  };
 }
 
 export interface FirstPartySelectedAccounts {
@@ -727,7 +732,12 @@ export const makeFirstPartyProviderRuntime = (
     if (provider === undefined) return Effect.succeed([]);
     return Effect.succeed(
       declaredStrategies(provider)
-        .filter((strategy) => acceptsSource(strategy, context.sourceMode))
+        .filter((strategy) => selectedStrategyAllowed(providerId, selectedAccount, strategy))
+        .filter(
+          (strategy) =>
+            selectedClaudeStrategyMode(selectedAccount) !== undefined ||
+            acceptsSource(strategy, context.sourceMode),
+        )
         .map(
           (strategy): ProviderFetchStrategy => ({
             id: strategy.id,
@@ -755,6 +765,31 @@ export const makeFirstPartyProviderRuntime = (
         Effect.provideService(Clock, options.clock),
       ),
   };
+};
+
+const selectedStrategyAllowed = (
+  providerId: ProviderId,
+  selectedAccount: FirstPartySelectedAccount | undefined,
+  strategy: ProviderStrategy,
+): boolean => {
+  if (providerId !== "claude" || selectedAccount === undefined) return true;
+  const selected = selectedClaudeStrategyMode(selectedAccount);
+  if (selected !== undefined) return strategy.id === selected;
+  const oauth = ownSetting(selectedAccount.secureSettings, "CLAUDE_OAUTH_ACCESS_TOKEN");
+  const cookie = ownSetting(selectedAccount.secureSettings, "CLAUDE_COOKIE_HEADER");
+  if (oauth.present || cookie.present) return false;
+  return true;
+};
+
+const selectedClaudeStrategyMode = (
+  selectedAccount: FirstPartySelectedAccount | undefined,
+): string | undefined => {
+  if (selectedAccount === undefined) return undefined;
+  const oauth = ownSetting(selectedAccount.secureSettings, "CLAUDE_OAUTH_ACCESS_TOKEN");
+  const cookie = ownSetting(selectedAccount.secureSettings, "CLAUDE_COOKIE_HEADER");
+  if (oauth.present && oauth.value?.trim()) return "claude.oauth";
+  if (cookie.present && cookie.value?.trim()) return "claude.web";
+  return undefined;
 };
 
 const resolveSelectedAccount = (

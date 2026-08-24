@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { PersistedCodexBarConfig } from "@codexbar/core";
+import { sha256Hex, type PersistedCodexBarConfig } from "@codexbar/core";
 import { selectedFirstPartyAccountFromConfig } from "../src/first-party-selected-account.ts";
 
 const jwt = (payload: Record<string, unknown>): string => {
@@ -10,11 +10,15 @@ const jwt = (payload: Record<string, unknown>): string => {
   return `header.${encoded}.signature`;
 };
 
-const config = (tokens: readonly string[], activeIndex: number): PersistedCodexBarConfig => ({
+const config = (
+  tokens: readonly string[],
+  activeIndex: number,
+  providerId = "antigravity",
+): PersistedCodexBarConfig => ({
   version: 1,
   providers: [
     {
-      id: "antigravity",
+      id: providerId,
       extensions: {},
       tokenAccounts: {
         version: 1,
@@ -81,6 +85,58 @@ describe("first-party selected accounts", () => {
   });
 
   it("does not project token accounts into an unsupported provider", () => {
-    expect(selectedFirstPartyAccountFromConfig(config(["{}"], 0), "claude")).toBeUndefined();
+    expect(selectedFirstPartyAccountFromConfig(config(["{}"], 0), "codex")).toBeUndefined();
+  });
+
+  it("selects the active Claude OAuth account and strips the Bearer prefix", () => {
+    const selected = selectedFirstPartyAccountFromConfig(
+      config(["sk-ant-oat-first", "Bearer sk-ant-oat-second"], 1, "claude"),
+      "claude",
+    );
+    expect(selected).toMatchObject({
+      id: "account-1",
+      secureSettings: {
+        CLAUDE_OAUTH_ACCESS_TOKEN: "sk-ant-oat-second",
+        CLAUDE_COOKIE_HEADER: null,
+        CLAUDE_CLI_USAGE_JSON: null,
+      },
+      claudeHistoryBinding: {
+        selectionKey: sha256Hex("claude:token-account:account-1"),
+        oauthHistoryOwnerIdentifier: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        tokenAccountKey: sha256Hex("claude:token-account:account-1"),
+      },
+    });
+    expect(JSON.stringify(selected)).not.toContain("Bearer");
+  });
+
+  it("selects Claude cookie accounts and fails closed for malformed or admin credentials", () => {
+    expect(
+      selectedFirstPartyAccountFromConfig(
+        config(["Cookie: sessionKey=sk-ant-selected; foo=bar"], 0, "claude"),
+        "claude",
+      ),
+    ).toMatchObject({
+      id: "account-0",
+      secureSettings: {
+        CLAUDE_OAUTH_ACCESS_TOKEN: null,
+        CLAUDE_COOKIE_HEADER: "sessionKey=sk-ant-selected; foo=bar",
+        CLAUDE_CLI_USAGE_JSON: null,
+      },
+      claudeHistoryBinding: {
+        selectionKey: sha256Hex("claude:token-account:account-0"),
+        tokenAccountKey: sha256Hex("claude:token-account:account-0"),
+      },
+    });
+
+    for (const token of ["Cookie:", "Bearer sk-ant-admin-test"]) {
+      expect(selectedFirstPartyAccountFromConfig(config([token], 0, "claude"), "claude")).toEqual({
+        id: "account-0",
+        secureSettings: {
+          CLAUDE_OAUTH_ACCESS_TOKEN: null,
+          CLAUDE_COOKIE_HEADER: null,
+          CLAUDE_CLI_USAGE_JSON: null,
+        },
+      });
+    }
   });
 });

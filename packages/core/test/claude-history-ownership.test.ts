@@ -5,7 +5,9 @@ import {
   claudePlanFromCompatibilityLoginMethod,
   claudePlanUtilizationIdentityAccountKey,
   claudePlanUtilizationLegacyEmailAccountKey,
+  claudeSelectedTokenAccountPlanUtilizationAccountKey,
   isClaudeOAuthPlanUtilizationAccountKey,
+  isClaudeSelectedTokenAccountPlanUtilizationAccountKey,
   sha256Hex,
   stableClaudeOAuthHistoryOwner,
 } from "../src/index.ts";
@@ -38,6 +40,25 @@ describe("Claude history ownership", () => {
     expect(stableClaudeOAuthHistoryOwner("claude.oauth", owner, "b".repeat(64))).toBeUndefined();
     expect(stableClaudeOAuthHistoryOwner("claude.oauth", owner, undefined)).toBeUndefined();
     expect(stableClaudeOAuthHistoryOwner("claude.cli", owner, owner)).toBeUndefined();
+  });
+
+  it("builds an opaque selected token-account bucket key from provider and account id", () => {
+    const first = claudeSelectedTokenAccountPlanUtilizationAccountKey("claude", " Account-1 ");
+    const normalized = claudeSelectedTokenAccountPlanUtilizationAccountKey("claude", "account-1");
+    const second = claudeSelectedTokenAccountPlanUtilizationAccountKey("claude", "account-2");
+    expect(first).toBe(normalized);
+    expect(first).not.toBe(second);
+    expect(first).not.toContain("account-1");
+    expect(first).toBe(sha256Hex("claude:token-account:account-1"));
+    expect(first).toMatch(/^[0-9a-f]{64}$/u);
+    expect(isClaudeSelectedTokenAccountPlanUtilizationAccountKey(first)).toBe(true);
+    expect(isClaudeSelectedTokenAccountPlanUtilizationAccountKey("f".repeat(63))).toBe(false);
+    expect(isClaudeSelectedTokenAccountPlanUtilizationAccountKey(`token:${"f".repeat(64)}`)).toBe(
+      false,
+    );
+    expect(
+      claudeSelectedTokenAccountPlanUtilizationAccountKey("codex", "account-1"),
+    ).toBeUndefined();
   });
 
   it("parses current compatibility plan labels", () => {

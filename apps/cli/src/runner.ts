@@ -36,6 +36,7 @@ import {
 } from "@codexbar/platform/node";
 import {
   makeClaudeOAuthHistoryOwnerCapture,
+  selectedClaudeHistoryBindingFromConfig,
   selectedFirstPartyAccountFromConfig,
 } from "@codexbar/platform";
 import {
@@ -694,6 +695,13 @@ export const makeNodeCLIProviderRuntime = (
         resolveNodeClaudeOAuthHistoryOwner({ credentialStore: credentials, environment }),
         signal === undefined ? {} : { signal },
       ),
+    resolveSelectedAccount: (signal) =>
+      Effect.runPromise(
+        Effect.map(configRepository.load, (config) =>
+          selectedClaudeHistoryBindingFromConfig(config),
+        ),
+        signal === undefined ? {} : { signal },
+      ),
   });
   const hookEnvironment = Object.fromEntries(
     [
@@ -822,7 +830,7 @@ export const makeNodeCLIProviderRuntime = (
         signal,
       ),
     recordPlanUtilization: async (providerId, outcome, signal) => {
-      const claudeOAuthHistoryOwnerIdentifier = await claudeOAuthHistoryOwners.consume(
+      const claudeHistoryBinding = await claudeOAuthHistoryOwners.consumeHistoryBinding(
         providerId,
         outcome,
         signal,
@@ -834,9 +842,14 @@ export const makeNodeCLIProviderRuntime = (
           snapshot: outcome.snapshot,
           capturedAt: new Date(),
           strategyId: outcome.strategyId,
-          ...(claudeOAuthHistoryOwnerIdentifier === undefined
+          ...(claudeHistoryBinding.oauthHistoryOwnerIdentifier === undefined
             ? {}
-            : { claudeOAuthHistoryOwnerIdentifier }),
+            : {
+                claudeOAuthHistoryOwnerIdentifier: claudeHistoryBinding.oauthHistoryOwnerIdentifier,
+              }),
+          ...(claudeHistoryBinding.selectedTokenAccountKey === undefined
+            ? {}
+            : { claudeSelectedTokenAccountKey: claudeHistoryBinding.selectedTokenAccountKey }),
         }),
         signal === undefined ? {} : { signal },
       );

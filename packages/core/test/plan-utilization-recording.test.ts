@@ -137,6 +137,46 @@ describe("first-party plan-utilization recording policy", () => {
     expect(identityCalls).toBe(0);
   });
 
+  it("routes selected non-OAuth Claude to token-account recording before identity", async () => {
+    const selectedTokenAccountKey = "a".repeat(64);
+    const selectedCalls: unknown[] = [];
+    let identityCalls = 0;
+    await expect(
+      Effect.runPromise(
+        recordFirstPartyPlanUtilization({
+          coordinator: {
+            recordAntigravity: () => Effect.succeed(false),
+            recordClaudeIdentity: () =>
+              Effect.sync(() => {
+                identityCalls += 1;
+                return true;
+              }),
+            recordClaudeSelectedTokenAccount: (input: unknown) =>
+              Effect.sync(() => {
+                selectedCalls.push(input);
+                return true;
+              }),
+            recordCodex: () => Effect.succeed(false),
+            recordGenericSessionEquivalent: () => Effect.succeed(false),
+          },
+          providerId: "claude",
+          strategyId: "claude.web",
+          claudeSelectedTokenAccountKey: selectedTokenAccountKey,
+          snapshot,
+          capturedAt,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(selectedCalls).toEqual([
+      {
+        snapshot,
+        capturedAt,
+        accountKey: selectedTokenAccountKey,
+      },
+    ]);
+    expect(identityCalls).toBe(0);
+  });
+
   it("skips opt-in and still-unported dedicated history providers", async () => {
     let calls = 0;
     const coordinator = {

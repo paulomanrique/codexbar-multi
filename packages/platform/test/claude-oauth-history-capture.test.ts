@@ -19,6 +19,8 @@ const outcome = (strategyId = "claude.oauth"): ProviderFetchOutcome => ({
   ],
 });
 
+const tokenAccountKey = (value: string): string => value.repeat(64).slice(0, 64);
+
 describe("Claude OAuth history owner capture", () => {
   it("returns only an owner that stays stable around the winning OAuth fetch", async () => {
     const owner = "a".repeat(64);
@@ -73,5 +75,100 @@ describe("Claude OAuth history owner capture", () => {
     const cli = await capture.captureFetch("claude", async () => outcome("claude.cli"));
     expect(await capture.consume("claude", cli)).toBeUndefined();
     expect(resolves).toBe(2);
+  });
+
+  it("uses selected OAuth owner instead of the ambient owner", async () => {
+    const selectedOwner = "e".repeat(64);
+    let ambientResolves = 0;
+    const capture = makeClaudeOAuthHistoryOwnerCapture({
+      resolveOwner: async () => {
+        ambientResolves += 1;
+        return "f".repeat(64);
+      },
+      resolveSelectedAccount: async () => ({
+        selectionKey: "selected-oauth",
+        oauthHistoryOwnerIdentifier: selectedOwner,
+        tokenAccountKey: tokenAccountKey("a"),
+      }),
+    });
+    const fetched = await capture.captureFetch("claude", async () => outcome());
+    expect(await capture.consumeHistoryBinding("claude", fetched)).toEqual({
+      oauthHistoryOwnerIdentifier: selectedOwner,
+    });
+    expect(ambientResolves).toBe(0);
+  });
+
+  it("rejects history publication when the selected account changes during fetch", async () => {
+    const selected = [
+      {
+        selectionKey: "selected-before",
+        tokenAccountKey: tokenAccountKey("b"),
+      },
+      {
+        selectionKey: "selected-after",
+        tokenAccountKey: tokenAccountKey("c"),
+      },
+    ];
+    const capture = makeClaudeOAuthHistoryOwnerCapture({
+      resolveOwner: async () => "a".repeat(64),
+      resolveSelectedAccount: async () => selected.shift(),
+    });
+    const fetched = await capture.captureFetch("claude", async () => outcome("claude.web"));
+    expect(await capture.consumeHistoryBinding("claude", fetched)).toEqual({});
+  });
+
+  it("returns selected non-OAuth token bucket once and cleans up cancelled captures", async () => {
+    const controller = new AbortController();
+    const capture = makeClaudeOAuthHistoryOwnerCapture({
+      resolveOwner: async () => "a".repeat(64),
+      resolveSelectedAccount: async () => ({
+        selectionKey: "selected-web",
+        tokenAccountKey: tokenAccountKey("d"),
+      }),
+    });
+    const fetched = await capture.captureFetch("claude", async () => outcome("claude.web"));
+    expect(await capture.consumeHistoryBinding("claude", fetched)).toEqual({
+      selectedTokenAccountKey: tokenAccountKey("d"),
+    });
+    expect(await capture.consumeHistoryBinding("claude", fetched)).toEqual({});
+
+    const cancelled = await capture.captureFetch("claude", async () => outcome("claude.web"));
+    controller.abort();
+    expect(await capture.consumeHistoryBinding("claude", cancelled, controller.signal)).toEqual({});
+    expect(await capture.consumeHistoryBinding("claude", cancelled)).toEqual({});
+  });
+
+  it("fails closed instead of falling back to ambient ownership when selection resolution fails", async () => {
+    let selectedReads = 0;
+    let ambientReads = 0;
+    const beforeFailure = makeClaudeOAuthHistoryOwnerCapture({
+      resolveOwner: async () => {
+        ambientReads += 1;
+        return "e".repeat(64);
+      },
+      resolveSelectedAccount: async () => {
+        selectedReads += 1;
+        if (selectedReads === 1) throw new Error("config unavailable");
+        return undefined;
+      },
+    });
+    const beforeOutcome = await beforeFailure.captureFetch("claude", async () => outcome());
+    expect(await beforeFailure.consumeHistoryBinding("claude", beforeOutcome)).toEqual({});
+    expect(ambientReads).toBe(0);
+
+    selectedReads = 0;
+    const afterFailure = makeClaudeOAuthHistoryOwnerCapture({
+      resolveOwner: async () => {
+        ambientReads += 1;
+        return "f".repeat(64);
+      },
+      resolveSelectedAccount: async () => {
+        selectedReads += 1;
+        if (selectedReads === 2) throw new Error("config unavailable");
+        return undefined;
+      },
+    });
+    const afterOutcome = await afterFailure.captureFetch("claude", async () => outcome());
+    expect(await afterFailure.consumeHistoryBinding("claude", afterOutcome)).toEqual({});
   });
 });

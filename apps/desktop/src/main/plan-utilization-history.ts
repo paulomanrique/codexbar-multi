@@ -10,13 +10,19 @@ export interface RecordDesktopPlanUtilizationInput {
     PlanUtilizationHistoryCoordinator,
     "recordAntigravity" | "recordClaudeIdentity" | "recordCodex" | "recordGenericSessionEquivalent"
   > &
-    Partial<Pick<PlanUtilizationHistoryCoordinator, "recordClaudeOAuth">>;
+    Partial<
+      Pick<
+        PlanUtilizationHistoryCoordinator,
+        "recordClaudeOAuth" | "recordClaudeSelectedTokenAccount"
+      >
+    >;
   readonly providerId: ProviderId;
   readonly snapshot: UsageSnapshot;
   readonly capturedAt: Date;
   readonly signal?: AbortSignal;
   readonly strategyId?: string;
   readonly claudeOAuthHistoryOwnerIdentifier?: string | null;
+  readonly claudeSelectedTokenAccountKey?: string | null;
 }
 
 /**
@@ -38,6 +44,9 @@ export const recordDesktopPlanUtilization = async (
         ...(input.claudeOAuthHistoryOwnerIdentifier === undefined
           ? {}
           : { claudeOAuthHistoryOwnerIdentifier: input.claudeOAuthHistoryOwnerIdentifier }),
+        ...(input.claudeSelectedTokenAccountKey === undefined
+          ? {}
+          : { claudeSelectedTokenAccountKey: input.claudeSelectedTokenAccountKey }),
       }),
       input.signal === undefined ? undefined : { signal: input.signal },
     );

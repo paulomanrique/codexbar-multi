@@ -30,6 +30,20 @@ export const isClaudeOAuthPlanUtilizationAccountKey = (
   accountKey: string | null | undefined,
 ): boolean => accountKey?.startsWith(CLAUDE_OAUTH_PREFIX) === true;
 
+export const claudeSelectedTokenAccountPlanUtilizationAccountKey = (
+  providerId: string | null | undefined,
+  accountId: string | null | undefined,
+): string | undefined => {
+  const normalizedProviderId = normalizeLower(providerId);
+  const normalizedAccountId = normalizeLower(accountId);
+  if (normalizedProviderId !== "claude" || normalizedAccountId === undefined) return undefined;
+  return sha256Hex(`${normalizedProviderId}:token-account:${normalizedAccountId}`);
+};
+
+export const isClaudeSelectedTokenAccountPlanUtilizationAccountKey = (
+  accountKey: string | null | undefined,
+): accountKey is string => /^[0-9a-f]{64}$/u.test(accountKey ?? "");
+
 export const stableClaudeOAuthHistoryOwner = (
   strategyId: string | null | undefined,
   beforeOwner: string | null | undefined,

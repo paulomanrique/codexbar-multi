@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Effect } from "effect";
-import { ClassifiedFetchFailure } from "@codexbar/core";
+import { ClassifiedFetchFailure, type HttpRequest } from "@codexbar/core";
 import { amp, claude } from "@codexbar/providers";
 import type { FirstPartyProvider } from "@codexbar/providers";
 import { makeFirstPartyProviderRuntime } from "../src/first-party-runtime.ts";
@@ -12,6 +12,16 @@ const credentials = {
   write: () => Effect.void,
   remove: () => Effect.void,
 };
+const claudeUsage = {
+  five_hour: { utilization: 10, resets_at: "2026-08-24T17:00:00Z" },
+  seven_day: { utilization: 20 },
+};
+const response = (url: string, value: unknown, status = 200) => ({
+  status,
+  headers: {},
+  body: new TextEncoder().encode(JSON.stringify(value)),
+  url,
+});
 
 const unusedLocal = {
   run: () => Effect.succeed({ exitCode: 0, signal: undefined, stdout: "", stderr: "" }),
@@ -19,6 +29,188 @@ const unusedLocal = {
 };
 
 describe("first-party runtime Claude scoping and bounds", () => {
+  for (const sourceMode of ["auto", "api", "web", "cli", "oauth"] as const) {
+    it(`routes selected Claude OAuth only through OAuth under ${sourceMode}`, async () => {
+      const requests: HttpRequest[] = [];
+      let ambientReads = 0;
+      let cliCalls = 0;
+      let browserCalls = 0;
+      const runtime = makeFirstPartyProviderRuntime({
+        providers: [claude],
+        settings: {
+          read: (_provider, key) => {
+            if (key.startsWith("CLAUDE_")) ambientReads += 1;
+            return Effect.succeed(
+              key === "CLAUDE_COOKIE_HEADER" ? "sessionKey=ambient" : undefined,
+            );
+          },
+        },
+        selectedAccounts: {
+          resolve: () =>
+            Effect.succeed({
+              id: "account-oauth",
+              secureSettings: {
+                CLAUDE_OAUTH_ACCESS_TOKEN: "sk-ant-oat-selected-secret",
+                CLAUDE_COOKIE_HEADER: null,
+                CLAUDE_CLI_USAGE_JSON: null,
+              },
+            }),
+        },
+        credentials: {
+          read: () => Effect.succeed("ambient-secret"),
+          write: () => Effect.void,
+          remove: () => Effect.void,
+        },
+        browserSessions: {
+          cookieHeader: () => {
+            browserCalls += 1;
+            return Effect.succeed("sessionKey=browser");
+          },
+        },
+        local: {
+          ...unusedLocal,
+          fetchClaudeCliUsage: () => {
+            cliCalls += 1;
+            return Effect.succeed({ stdout: "", stderr: "", loggedIn: true });
+          },
+        },
+        http: {
+          execute: (request) => {
+            requests.push(request);
+            return Effect.succeed(response(request.url, claudeUsage));
+          },
+        },
+        clock,
+      });
+
+      const outcome = await Effect.runPromise(
+        runtime.fetch("claude", { sourceMode, includeCredits: false }),
+      );
+      expect(outcome.strategyId).toBe("claude.oauth");
+      expect(outcome.attempts.map((attempt) => attempt.strategyId)).toEqual(["claude.oauth"]);
+      expect(requests[0]?.headers?.Authorization).toBe("Bearer sk-ant-oat-selected-secret");
+      expect(ambientReads).toBe(0);
+      expect(cliCalls).toBe(0);
+      expect(browserCalls).toBe(0);
+      expect(JSON.stringify(outcome)).not.toContain("sk-ant-oat-selected-secret");
+      expect(JSON.stringify(outcome)).not.toContain("ambient-secret");
+    });
+
+    it(`routes selected Claude cookie only through web under ${sourceMode}`, async () => {
+      const requests: HttpRequest[] = [];
+      let cliCalls = 0;
+      let browserCalls = 0;
+      const runtime = makeFirstPartyProviderRuntime({
+        providers: [claude],
+        settings: {
+          read: (_provider, key) =>
+            Effect.succeed(key === "CLAUDE_OAUTH_ACCESS_TOKEN" ? "sk-ant-oat-ambient" : undefined),
+        },
+        selectedAccounts: {
+          resolve: () =>
+            Effect.succeed({
+              id: "account-web",
+              secureSettings: {
+                CLAUDE_OAUTH_ACCESS_TOKEN: null,
+                CLAUDE_COOKIE_HEADER: "sessionKey=selected-cookie-secret",
+                CLAUDE_CLI_USAGE_JSON: null,
+              },
+            }),
+        },
+        credentials,
+        browserSessions: {
+          cookieHeader: () => {
+            browserCalls += 1;
+            return Effect.succeed("sessionKey=browser");
+          },
+        },
+        local: {
+          ...unusedLocal,
+          fetchClaudeCliUsage: () => {
+            cliCalls += 1;
+            return Effect.succeed({ stdout: "", stderr: "", loggedIn: true });
+          },
+        },
+        http: {
+          execute: (request) => {
+            requests.push(request);
+            const body = request.url.includes("/organizations/")
+              ? claudeUsage
+              : [{ uuid: "org-1", name: "Selected Org" }];
+            return Effect.succeed(response(request.url, body));
+          },
+        },
+        clock,
+      });
+
+      const outcome = await Effect.runPromise(
+        runtime.fetch("claude", { sourceMode, includeCredits: false }),
+      );
+      expect(outcome.strategyId).toBe("claude.web");
+      expect(outcome.attempts.map((attempt) => attempt.strategyId)).toEqual(["claude.web"]);
+      expect(requests.map((request) => request.headers?.Cookie)).toEqual([
+        "sessionKey=selected-cookie-secret",
+        "sessionKey=selected-cookie-secret",
+      ]);
+      expect(cliCalls).toBe(0);
+      expect(browserCalls).toBe(0);
+      expect(JSON.stringify(outcome)).not.toContain("selected-cookie-secret");
+      expect(JSON.stringify(outcome)).not.toContain("sk-ant-oat-ambient");
+    });
+  }
+
+  it("fails closed for malformed selected Claude credentials instead of ambient fallback", async () => {
+    let httpCalls = 0;
+    let browserCalls = 0;
+    let cliCalls = 0;
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [claude],
+      settings: {
+        read: (_provider, key) =>
+          Effect.succeed(key === "CLAUDE_OAUTH_ACCESS_TOKEN" ? "sk-ant-oat-ambient" : undefined),
+      },
+      selectedAccounts: {
+        resolve: () =>
+          Effect.succeed({
+            id: "account-invalid",
+            secureSettings: {
+              CLAUDE_OAUTH_ACCESS_TOKEN: null,
+              CLAUDE_COOKIE_HEADER: null,
+              CLAUDE_CLI_USAGE_JSON: null,
+            },
+          }),
+      },
+      credentials,
+      browserSessions: {
+        cookieHeader: () => {
+          browserCalls += 1;
+          return Effect.succeed("sessionKey=browser");
+        },
+      },
+      local: {
+        ...unusedLocal,
+        fetchClaudeCliUsage: () => {
+          cliCalls += 1;
+          return Effect.succeed({ stdout: "", stderr: "", loggedIn: true });
+        },
+      },
+      http: {
+        execute: () => {
+          httpCalls += 1;
+          return Effect.succeed(response("https://api.anthropic.com/api/oauth/usage", claudeUsage));
+        },
+      },
+      clock,
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("claude", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "claude" });
+    expect(httpCalls).toBe(0);
+    expect(browserCalls).toBe(0);
+    expect(cliCalls).toBe(0);
+  });
+
   it("rejects fetchClaudeCliUsage for non-claude providers with permission-denied", async () => {
     let capabilityCalls = 0;
     const ampCallingClaude: FirstPartyProvider = {

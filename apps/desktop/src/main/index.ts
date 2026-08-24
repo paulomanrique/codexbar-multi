@@ -82,6 +82,7 @@ import { makeDesktopNodePtyRunner } from "./node-pty-adapter.ts";
 import {
   makeClaudeOAuthHistoryOwnerCapture,
   makeNodePlanUtilizationHistoryStore,
+  selectedClaudeHistoryBindingFromConfig,
   selectedFirstPartyAccountFromConfig,
   type ClaudeOAuthHistoryOwnerCapture,
 } from "@codexbar/platform";
@@ -303,8 +304,12 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
             signal,
           );
           if (!signal.aborted) {
-            const claudeOAuthHistoryOwnerIdentifier =
-              await activeClaudeOAuthHistoryOwnerCapture().consume(provider.id, outcome, signal);
+            const claudeHistoryBinding =
+              await activeClaudeOAuthHistoryOwnerCapture().consumeHistoryBinding(
+                provider.id,
+                outcome,
+                signal,
+              );
             if (signal.aborted) throw new Error("Adaptive refresh was cancelled.");
             publishSessionQuotaNotification(provider.id, outcome.snapshot);
             await recordDesktopPlanUtilization({
@@ -314,9 +319,15 @@ const refreshEnabledProvidersInBackground = async (signal: AbortSignal): Promise
               capturedAt: new Date(),
               signal,
               strategyId: outcome.strategyId,
-              ...(claudeOAuthHistoryOwnerIdentifier === undefined
+              ...(claudeHistoryBinding.oauthHistoryOwnerIdentifier === undefined
                 ? {}
-                : { claudeOAuthHistoryOwnerIdentifier }),
+                : {
+                    claudeOAuthHistoryOwnerIdentifier:
+                      claudeHistoryBinding.oauthHistoryOwnerIdentifier,
+                  }),
+              ...(claudeHistoryBinding.selectedTokenAccountKey === undefined
+                ? {}
+                : { claudeSelectedTokenAccountKey: claudeHistoryBinding.selectedTokenAccountKey }),
             });
           }
         } catch {
@@ -519,6 +530,8 @@ void desktopReady?.then(async () => {
           }),
           signal === undefined ? {} : { signal },
         ),
+      resolveSelectedAccount: () =>
+        Promise.resolve(selectedClaudeHistoryBindingFromConfig(desktopConfig)),
     });
     const processRunner = makeNodeProcessRunner();
     const baseLocal = makeNodeFirstPartyLocalCapabilities({ processRunner });
@@ -830,8 +843,11 @@ void desktopReady?.then(async () => {
         if (request.provider === "claude" && outcome.strategyId === "claude.cli") {
           recordClaudeCliUserInitiatedSuccess();
         }
-        const claudeOAuthHistoryOwnerIdentifier =
-          await activeClaudeOAuthHistoryOwnerCapture().consume(request.provider, outcome);
+        const claudeHistoryBinding =
+          await activeClaudeOAuthHistoryOwnerCapture().consumeHistoryBinding(
+            request.provider,
+            outcome,
+          );
         publishSessionQuotaNotification(request.provider, outcome.snapshot);
         await recordDesktopPlanUtilization({
           coordinator: activePlanUtilizationHistory(),
@@ -839,9 +855,14 @@ void desktopReady?.then(async () => {
           snapshot: outcome.snapshot,
           capturedAt: new Date(),
           strategyId: outcome.strategyId,
-          ...(claudeOAuthHistoryOwnerIdentifier === undefined
+          ...(claudeHistoryBinding.oauthHistoryOwnerIdentifier === undefined
             ? {}
-            : { claudeOAuthHistoryOwnerIdentifier }),
+            : {
+                claudeOAuthHistoryOwnerIdentifier: claudeHistoryBinding.oauthHistoryOwnerIdentifier,
+              }),
+          ...(claudeHistoryBinding.selectedTokenAccountKey === undefined
+            ? {}
+            : { claudeSelectedTokenAccountKey: claudeHistoryBinding.selectedTokenAccountKey }),
         });
         return decodeRefreshResult({
           provider: request.provider,

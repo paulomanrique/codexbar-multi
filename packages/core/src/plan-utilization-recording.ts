@@ -8,12 +8,18 @@ export interface RecordFirstPartyPlanUtilizationInput {
     PlanUtilizationHistoryCoordinator,
     "recordAntigravity" | "recordClaudeIdentity" | "recordCodex" | "recordGenericSessionEquivalent"
   > &
-    Partial<Pick<PlanUtilizationHistoryCoordinator, "recordClaudeOAuth">>;
+    Partial<
+      Pick<
+        PlanUtilizationHistoryCoordinator,
+        "recordClaudeOAuth" | "recordClaudeSelectedTokenAccount"
+      >
+    >;
   readonly providerId: ProviderId;
   readonly snapshot: UsageSnapshot;
   readonly capturedAt: Date;
   readonly strategyId?: string;
   readonly claudeOAuthHistoryOwnerIdentifier?: string | null;
+  readonly claudeSelectedTokenAccountKey?: string | null;
 }
 
 /**
@@ -37,6 +43,14 @@ export const recordFirstPartyPlanUtilization = (
         ...(input.claudeOAuthHistoryOwnerIdentifier === undefined
           ? {}
           : { historyOwnerIdentifier: input.claudeOAuthHistoryOwnerIdentifier }),
+      }) ?? Effect.succeed(false)
+    );
+  if (input.providerId === "claude" && input.claudeSelectedTokenAccountKey !== undefined)
+    return (
+      input.coordinator.recordClaudeSelectedTokenAccount?.({
+        snapshot: input.snapshot,
+        capturedAt: input.capturedAt,
+        accountKey: input.claudeSelectedTokenAccountKey,
       }) ?? Effect.succeed(false)
     );
   if (input.providerId === "claude")
