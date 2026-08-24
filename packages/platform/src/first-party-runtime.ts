@@ -732,7 +732,9 @@ export const makeFirstPartyProviderRuntime = (
     if (provider === undefined) return Effect.succeed([]);
     return Effect.succeed(
       declaredStrategies(provider)
-        .filter((strategy) => selectedStrategyAllowed(providerId, selectedAccount, strategy))
+        .filter((strategy) =>
+          selectedStrategyAllowed(providerId, context, selectedAccount, strategy),
+        )
         .filter(
           (strategy) =>
             selectedClaudeStrategyMode(selectedAccount) !== undefined ||
@@ -769,10 +771,19 @@ export const makeFirstPartyProviderRuntime = (
 
 const selectedStrategyAllowed = (
   providerId: ProviderId,
+  context: ProviderFetchContext,
   selectedAccount: FirstPartySelectedAccount | undefined,
   strategy: ProviderStrategy,
 ): boolean => {
-  if (providerId !== "claude" || selectedAccount === undefined) return true;
+  if (selectedAccount === undefined) return true;
+  if (providerId === "grok") {
+    if (context.sourceMode !== "auto") return true;
+    const selected = selectedGrokStrategyMode(selectedAccount);
+    if (selected === "oauth") return strategy.kind === "oauth";
+    if (selected === "web") return strategy.id === "grok.web";
+    return true;
+  }
+  if (providerId !== "claude") return true;
   const selected = selectedClaudeStrategyMode(selectedAccount);
   if (selected !== undefined) return strategy.id === selected;
   const oauth = ownSetting(selectedAccount.secureSettings, "CLAUDE_OAUTH_ACCESS_TOKEN");
@@ -789,6 +800,17 @@ const selectedClaudeStrategyMode = (
   const cookie = ownSetting(selectedAccount.secureSettings, "CLAUDE_COOKIE_HEADER");
   if (oauth.present && oauth.value?.trim()) return "claude.oauth";
   if (cookie.present && cookie.value?.trim()) return "claude.web";
+  return undefined;
+};
+
+const selectedGrokStrategyMode = (
+  selectedAccount: FirstPartySelectedAccount | undefined,
+): "oauth" | "web" | undefined => {
+  if (selectedAccount === undefined) return undefined;
+  const oauth = ownSetting(selectedAccount.secureSettings, "GROK_OAUTH_TOKEN");
+  const cookie = ownSetting(selectedAccount.secureSettings, "GROK_COOKIE_HEADER");
+  if (oauth.present && oauth.value?.trim()) return "oauth";
+  if (cookie.present && cookie.value?.trim()) return "web";
   return undefined;
 };
 

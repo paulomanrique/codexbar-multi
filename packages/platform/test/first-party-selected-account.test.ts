@@ -139,4 +139,48 @@ describe("first-party selected accounts", () => {
       });
     }
   });
+
+  it("selects Grok bearer and cookie credentials with Swift normalization", () => {
+    expect(
+      selectedFirstPartyAccountFromConfig(
+        config(["Bearer first-token", "  Bearer selected-token  "], 1, "grok"),
+        "grok",
+      ),
+    ).toEqual({
+      id: "account-1",
+      secureSettings: { GROK_OAUTH_TOKEN: "selected-token" },
+    });
+
+    expect(
+      selectedFirstPartyAccountFromConfig(
+        config(["curl -H 'Cookie: sso=abc; sso-rw=def' https://grok.com"], 0, "grok"),
+        "grok",
+      ),
+    ).toEqual({
+      id: "account-0",
+      secureSettings: {
+        GROK_OAUTH_TOKEN: null,
+        GROK_COOKIE_HEADER: "sso=abc; sso-rw=def",
+      },
+    });
+
+    expect(
+      selectedFirstPartyAccountFromConfig(
+        config(["first-token", "last-token"], Number.MAX_SAFE_INTEGER, "grok"),
+        "grok",
+      ),
+    ).toEqual({
+      id: "account-1",
+      secureSettings: { GROK_OAUTH_TOKEN: "last-token" },
+    });
+  });
+
+  it("keeps malformed Grok selected metadata without inventing credentials", () => {
+    for (const token of ["Cookie:", "xai-mgmt-key", "Bearer xai-mgmt-key", "   "]) {
+      expect(selectedFirstPartyAccountFromConfig(config([token], 0, "grok"), "grok")).toEqual({
+        id: "account-0",
+        secureSettings: { GROK_OAUTH_TOKEN: null },
+      });
+    }
+  });
 });

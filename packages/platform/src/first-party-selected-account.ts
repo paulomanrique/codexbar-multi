@@ -60,6 +60,10 @@ type ClaudeCredentialRoute =
   | { readonly kind: "web"; readonly cookieHeader: string }
   | { readonly kind: "admin" };
 
+type GrokCredentialRoute =
+  | { readonly kind: "oauth"; readonly accessToken: string }
+  | { readonly kind: "web"; readonly cookieHeader: string };
+
 const normalizeClaudeOAuthToken = (raw: string | undefined): string | undefined => {
   const trimmed = raw?.trim();
   if (trimmed === undefined || trimmed === "") return undefined;
@@ -90,11 +94,37 @@ const normalizeClaudeWebCookie = (raw: string | undefined): string | undefined =
   return normalized.includes("=") ? normalized : `sessionKey=${normalized}`;
 };
 
+const normalizeGrokOAuthToken = (raw: string | undefined): string | undefined => {
+  let token = raw?.trim() ?? "";
+  if (token.toLowerCase().startsWith("bearer ")) token = token.slice(7).trim();
+  if (
+    token === "" ||
+    token.toLowerCase().startsWith("cookie:") ||
+    token.toLowerCase().startsWith("xai-") ||
+    token.includes("=")
+  )
+    return undefined;
+  return token;
+};
+
+const normalizeGrokWebCookie = (raw: string | undefined): string | undefined => {
+  const normalized = normalizeCookieHeader(raw);
+  return normalized?.includes("=") === true ? normalized : undefined;
+};
+
 const resolveClaudeCredentialRoute = (raw: string): ClaudeCredentialRoute | undefined => {
   if (normalizeClaudeAdminAPIKey(raw) !== undefined) return { kind: "admin" };
   const accessToken = normalizeClaudeOAuthToken(raw);
   if (accessToken !== undefined) return { kind: "oauth", accessToken };
   const cookieHeader = normalizeClaudeWebCookie(raw);
+  if (cookieHeader !== undefined) return { kind: "web", cookieHeader };
+  return undefined;
+};
+
+const resolveGrokCredentialRoute = (raw: string): GrokCredentialRoute | undefined => {
+  const accessToken = normalizeGrokOAuthToken(raw);
+  if (accessToken !== undefined) return { kind: "oauth", accessToken };
+  const cookieHeader = normalizeGrokWebCookie(raw);
   if (cookieHeader !== undefined) return { kind: "web", cookieHeader };
   return undefined;
 };
@@ -168,6 +198,28 @@ export const selectedFirstPartyAccountFromConfig = (
               tokenAccountKey,
             },
           }),
+    };
+  }
+  if (providerId === "grok") {
+    const route = resolveGrokCredentialRoute(account.token);
+    if (route === undefined) {
+      return {
+        id: account.id,
+        secureSettings: { GROK_OAUTH_TOKEN: null },
+      };
+    }
+    if (route.kind === "oauth") {
+      return {
+        id: account.id,
+        secureSettings: { GROK_OAUTH_TOKEN: route.accessToken },
+      };
+    }
+    return {
+      id: account.id,
+      secureSettings: {
+        GROK_OAUTH_TOKEN: null,
+        GROK_COOKIE_HEADER: route.cookieHeader,
+      },
     };
   }
   if (providerId !== "antigravity") return undefined;

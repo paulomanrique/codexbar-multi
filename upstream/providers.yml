@@ -1143,6 +1143,8 @@ providers:
         - packages/platform/test/node-grok-local-session.test.ts
         - packages/platform/test/node-grok-local-token-scan.test.ts
         - packages/platform/test/first-party-runtime.test.ts
+        - packages/platform/test/first-party-runtime-grok.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
         - packages/platform/test/node-local-capabilities.test.ts
         - packages/platform/test/node-grok-rpc.test.ts
         - packages/core/test/daily-spend-ingestion.test.ts
@@ -1156,6 +1158,7 @@ providers:
         - packages/platform/src/node-grok-local-session.ts
         - packages/platform/src/node-grok-local-token-scan.ts
         - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/first-party-selected-account.ts
         - packages/platform/src/node.ts
         - packages/platform/src/node-grok-rpc.ts
         - packages/core/src/daily-spend-ingestion.ts
@@ -1166,6 +1169,7 @@ providers:
         - packages/platform/src/node-grok-local-session.ts
         - packages/platform/src/node-grok-local-token-scan.ts
         - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/first-party-selected-account.ts
         - packages/platform/src/node.ts
         - packages/platform/src/node-grok-rpc.ts
         - packages/core/src/daily-spend-ingestion.ts
@@ -1177,6 +1181,8 @@ providers:
       - packages/platform/test/node-grok-local-session.test.ts
       - packages/platform/test/node-grok-local-token-scan.test.ts
       - packages/platform/test/first-party-runtime.test.ts
+      - packages/platform/test/first-party-runtime-grok.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
       - packages/platform/test/node-local-capabilities.test.ts
       - packages/platform/test/node-grok-rpc.test.ts
       - packages/core/test/daily-spend-ingestion.test.ts

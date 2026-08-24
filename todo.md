@@ -69,9 +69,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [ ] Connect dedicated Codex, Claude, and Antigravity account-ownership history flows.
     - [x] Connect Codex canonical account-owned plan history to desktop and CLI.
     - [x] Port Claude snapshot-identity plan history ownership and legacy email migration.
-    - [ ] Port Claude OAuth/token-account plan history ownership.
+    - [x] Port Claude OAuth/token-account plan history ownership.
       - [x] Bind OAuth history to a stable opaque credential owner in desktop and CLI without crossing DTO/IPC boundaries.
-      - [ ] Bind selected Claude token accounts to their dedicated history buckets.
+      - [x] Bind selected Claude token accounts to their dedicated history buckets.
     - [x] Port Antigravity pinned Gemini family history, snapshot email/organization ownership, and legacy unscoped adoption.
     - [x] Bind Antigravity remote OAuth history to ID-token/email claims and Swift-compatible plan tiers.
     - [ ] Connect Antigravity local GetUserStatus/token-account owner observation to the shared history policy.
@@ -122,6 +122,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Port Grok's bounded local `signals.json` scanner and compose its aggregate only as non-quota diagnostics after successful billing.
   - [x] Port Grok auth.json ownership, OAuth proxy/gRPC, identity, and a bounded one-shot CLI billing probe.
   - [x] Replace the one-shot Grok CLI billing probe with a bounded streaming ACP session and deterministic teardown.
+  - [x] Route selected Grok bearer/cookie accounts through the Swift-compatible Auto source override.
   - [ ] Complete Grok browser-session parity.
 - [x] Require descriptor, strategy, config, resolving fixtures/goldens, tests, and parity state for every provider.
 
