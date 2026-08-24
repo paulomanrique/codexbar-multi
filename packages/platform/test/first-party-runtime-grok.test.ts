@@ -120,12 +120,16 @@ describe("first-party runtime Grok selected-account routing", () => {
     const seen: SeenGrokStrategy[] = [];
     let ambientOAuthReads = 0;
     const provider = grokFixture(seen);
-    const runtime = runtimeFor(provider, { GROK_OAUTH_TOKEN: "selected-oauth-secret" }, (key) => {
-      if (key === "GROK_OAUTH_TOKEN") ambientOAuthReads += 1;
-      if (key === "GROK_OAUTH_TOKEN") return "ambient-oauth-secret";
-      if (key === "GROK_COOKIE_HEADER") return "ambient-cookie=secret";
-      return undefined;
-    });
+    const runtime = runtimeFor(
+      provider,
+      { GROK_OAUTH_TOKEN: "selected-oauth-secret", GROK_COOKIE_HEADER: null },
+      (key) => {
+        if (key === "GROK_OAUTH_TOKEN") ambientOAuthReads += 1;
+        if (key === "GROK_OAUTH_TOKEN") return "ambient-oauth-secret";
+        if (key === "GROK_COOKIE_HEADER") return "ambient-cookie=secret";
+        return undefined;
+      },
+    );
 
     const outcome = await Effect.runPromise(
       runtime.fetch("grok", { sourceMode: "auto", includeCredits: false }),
@@ -138,7 +142,7 @@ describe("first-party runtime Grok selected-account routing", () => {
         id: "grok.oauth",
         sourceMode: "auto",
         oauth: "selected-oauth-secret",
-        cookie: "ambient-cookie=secret",
+        cookie: undefined,
         selectedAccount: { id: "account-selected" },
       },
     ]);
@@ -154,7 +158,10 @@ describe("first-party runtime Grok selected-account routing", () => {
         ? ctx.fail.missingCredential("proxy rejected selected-oauth-secret")
         : undefined,
     );
-    const runtime = runtimeFor(provider, { GROK_OAUTH_TOKEN: "selected-oauth-secret" });
+    const runtime = runtimeFor(provider, {
+      GROK_OAUTH_TOKEN: "selected-oauth-secret",
+      GROK_COOKIE_HEADER: null,
+    });
 
     const outcome = await Effect.runPromise(
       runtime.fetch("grok", { sourceMode: "auto", includeCredits: false }),
@@ -201,11 +208,13 @@ describe("first-party runtime Grok selected-account routing", () => {
     expect(JSON.stringify(outcome)).not.toContain("selected-cookie");
   });
 
-  it("keeps explicit Grok source modes explicit and does not suppress opposite ambient credentials", async () => {
+  it("keeps explicit Grok source modes explicit while suppressing opposite ambient credentials", async () => {
     const seen: SeenGrokStrategy[] = [];
     const provider = grokFixture(seen);
-    const runtime = runtimeFor(provider, { GROK_OAUTH_TOKEN: "selected-oauth-secret" }, (key) =>
-      key === "GROK_COOKIE_HEADER" ? "ambient-cookie=secret" : undefined,
+    const runtime = runtimeFor(
+      provider,
+      { GROK_OAUTH_TOKEN: "selected-oauth-secret", GROK_COOKIE_HEADER: null },
+      (key) => (key === "GROK_COOKIE_HEADER" ? "ambient-cookie=secret" : undefined),
     );
 
     await expect(
@@ -217,10 +226,28 @@ describe("first-party runtime Grok selected-account routing", () => {
         id: "grok.web",
         sourceMode: "web",
         oauth: "selected-oauth-secret",
-        cookie: "ambient-cookie=secret",
+        cookie: undefined,
         selectedAccount: { id: "account-selected" },
       },
     ]);
+  });
+
+  it("does not enable any Grok strategy for controlled but invalid selected credentials", async () => {
+    const seen: SeenGrokStrategy[] = [];
+    const provider = grokFixture(seen);
+    const runtime = runtimeFor(
+      provider,
+      { GROK_OAUTH_TOKEN: null, GROK_COOKIE_HEADER: null },
+      () => "ambient-secret",
+    );
+
+    await expect(
+      Effect.runPromise(runtime.fetch("grok", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "grok" });
+    await expect(
+      Effect.runPromise(runtime.fetch("grok", { sourceMode: "oauth", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "grok" });
+    expect(seen).toEqual([]);
   });
 
   it("keeps explicit Grok OAuth selected while scrubbing another account's pasted token", async () => {

@@ -93,14 +93,6 @@ export const makeClaudeOAuthHistoryOwnerCapture = (input: {
     const afterSelected = afterResolution.selectedAccount;
     if (record.selectedAccount !== undefined) {
       if (afterSelected?.selectionKey !== record.selectedAccount.selectionKey) return {};
-      if (outcome.strategyId === "claude.oauth") {
-        const owner = stableClaudeOAuthHistoryOwner(
-          outcome.strategyId,
-          record.selectedAccount.oauthHistoryOwnerIdentifier,
-          afterSelected.oauthHistoryOwnerIdentifier,
-        );
-        return owner === undefined ? {} : { oauthHistoryOwnerIdentifier: owner };
-      }
       const selectedTokenAccountKey = record.selectedAccount.tokenAccountKey;
       return selectedTokenAccountKey === undefined ? {} : { selectedTokenAccountKey };
     }

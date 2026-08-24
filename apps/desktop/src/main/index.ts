@@ -63,6 +63,7 @@ import {
   makeNodeGrokLocalTokenScanner,
   makeNodeDiscoveredProviderSettings,
   makeNodeConfigRepository,
+  makeTokenAccountVaultConfigRepository,
   makeSystemClock,
   makeNodeSqliteWorkerPersistence,
   claudeSwapProcessEnvironment,
@@ -84,8 +85,7 @@ import { makeDesktopNodePtyRunner } from "./node-pty-adapter.ts";
 import {
   makeClaudeOAuthHistoryOwnerCapture,
   makeNodePlanUtilizationHistoryStore,
-  selectedClaudeHistoryBindingFromConfig,
-  selectedFirstPartyAccountFromConfig,
+  resolveSelectedFirstPartyAccountFromVault,
   type ClaudeOAuthHistoryOwnerCapture,
 } from "@codexbar/platform";
 import {
@@ -507,11 +507,16 @@ void desktopReady?.then(async () => {
     // mutable set from the hardened discovery pass before decoding a config,
     // so deleting one plugin cannot discard a sibling plugin's config entry.
     const pluginProviderIds = new Set<string>();
-    const configRepository = makeNodeConfigRepository(
+    const credentials = makeNativeCredentialStore();
+    const rawConfigRepository = makeNodeConfigRepository(
       join(app.getPath("userData"), "config.json"),
       {
         pluginProviderIds,
       },
+    );
+    const configRepository = makeTokenAccountVaultConfigRepository(
+      rawConfigRepository,
+      credentials,
     );
     const mutateDesktopConfig = <Value>(
       mutation: (current: PersistedCodexBarConfig) => Promise<{
@@ -529,7 +534,6 @@ void desktopReady?.then(async () => {
         desktopConfig = result.next;
         return result.value;
       });
-    const credentials = makeNativeCredentialStore();
     claudeOAuthHistoryOwnerCapture = makeClaudeOAuthHistoryOwnerCapture({
       resolveOwner: (signal) =>
         Effect.runPromise(
@@ -539,8 +543,14 @@ void desktopReady?.then(async () => {
           }),
           signal === undefined ? {} : { signal },
         ),
-      resolveSelectedAccount: () =>
-        Promise.resolve(selectedClaudeHistoryBindingFromConfig(desktopConfig)),
+      resolveSelectedAccount: (signal) =>
+        Effect.runPromise(
+          Effect.map(
+            resolveSelectedFirstPartyAccountFromVault(desktopConfig, credentials, "claude"),
+            (account) => account?.claudeHistoryBinding,
+          ),
+          signal === undefined ? {} : { signal },
+        ),
     });
     const processRunner = makeNodeProcessRunner();
     const baseLocal = makeNodeFirstPartyLocalCapabilities({ processRunner });
@@ -609,7 +619,7 @@ void desktopReady?.then(async () => {
       browserSessions: makeCredentialBrowserSessions(credentials),
       selectedAccounts: {
         resolve: (providerId) =>
-          Effect.sync(() => selectedFirstPartyAccountFromConfig(desktopConfig, providerId)),
+          resolveSelectedFirstPartyAccountFromVault(desktopConfig, credentials, providerId),
       },
       local: {
         ...baseLocal,

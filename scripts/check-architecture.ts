@@ -75,6 +75,24 @@ for (const relativePath of [
   }
 }
 
+const productionCompositionRoots = [
+  "apps/desktop/src/main/index.ts",
+  "apps/cli/src/runner.ts",
+] as const;
+for (const relativePath of productionCompositionRoots) {
+  const source = await readFile(join(repositoryRoot, relativePath), "utf8");
+  if (!/\bmakeTokenAccountVaultConfigRepository\b/.test(source)) {
+    failures.push(`${relativePath}: production config repository is not vault-wrapped`);
+  }
+  if (
+    /\bselectedFirstPartyAccountFromConfig\b|\bselectedClaudeHistoryBindingFromConfig\b/.test(
+      source,
+    )
+  ) {
+    failures.push(`${relativePath}: production root calls raw selected token-account resolver`);
+  }
+}
+
 if (failures.length > 0) {
   console.error(
     ["Architecture boundary violations:", ...failures.map((failure) => `- ${failure}`)].join("\n"),

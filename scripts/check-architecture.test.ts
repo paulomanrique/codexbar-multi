@@ -19,3 +19,13 @@ test("keeps the architecture gate on canonical URL conversion", async () => {
   assert.match(source, /const repositoryRoot\s*=\s*fileURLToPath\s*\(\s*new URL\(/);
   assert.doesNotMatch(source, /const repositoryRoot\s*=.*\.pathname/);
 });
+
+test("keeps production composition roots on the token account vault wrapper", async () => {
+  const source = await readFile(new URL("./check-architecture.ts", import.meta.url), "utf8");
+
+  assert.match(source, /apps\/desktop\/src\/main\/index\.ts/);
+  assert.match(source, /apps\/cli\/src\/runner\.ts/);
+  assert.match(source, /makeTokenAccountVaultConfigRepository/);
+  assert.match(source, /selectedFirstPartyAccountFromConfig/);
+  assert.match(source, /selectedClaudeHistoryBindingFromConfig/);
+});

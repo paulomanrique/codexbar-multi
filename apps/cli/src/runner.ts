@@ -23,6 +23,7 @@ import {
   makeNodeLocalCostUsageScanner,
   makeNodeProcessRunner,
   makeNodePrivateFileStore,
+  makeTokenAccountVaultConfigRepository,
   resolveNodeClaudeOAuthHistoryOwner,
   resolveNodeClaudeSwapExecutablePath,
   makeNodeConfigRepository,
@@ -36,8 +37,7 @@ import {
 } from "@codexbar/platform/node";
 import {
   makeClaudeOAuthHistoryOwnerCapture,
-  selectedClaudeHistoryBindingFromConfig,
-  selectedFirstPartyAccountFromConfig,
+  resolveSelectedFirstPartyAccountFromVault,
 } from "@codexbar/platform";
 import {
   CLAUDE_SWAP_MAX_OUTPUT_BYTES,
@@ -680,7 +680,9 @@ export const makeNodeCLIProviderRuntime = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): CLIProviderRuntime => {
   const configPath = resolveCLIConfigPath(environment);
-  const configRepository = makeNodeConfigRepository(configPath);
+  const credentials = makeNativeCredentialStore();
+  const rawConfigRepository = makeNodeConfigRepository(configPath);
+  const configRepository = makeTokenAccountVaultConfigRepository(rawConfigRepository, credentials);
   const databasePath = join(dirname(configPath), "usage.sqlite");
   const planUtilizationHistory = new PlanUtilizationHistoryCoordinator(
     makeNodePlanUtilizationHistoryStore({
@@ -688,7 +690,6 @@ export const makeNodeCLIProviderRuntime = (
     }),
   );
   let costPersistencePromise: Promise<NodeSqlitePersistence> | undefined;
-  const credentials = makeNativeCredentialStore();
   const claudeOAuthHistoryOwners = makeClaudeOAuthHistoryOwnerCapture({
     resolveOwner: (signal) =>
       Effect.runPromise(
@@ -697,8 +698,11 @@ export const makeNodeCLIProviderRuntime = (
       ),
     resolveSelectedAccount: (signal) =>
       Effect.runPromise(
-        Effect.map(configRepository.load, (config) =>
-          selectedClaudeHistoryBindingFromConfig(config),
+        Effect.flatMap(configRepository.load, (config) =>
+          Effect.map(
+            resolveSelectedFirstPartyAccountFromVault(config, credentials, "claude"),
+            (account) => account?.claudeHistoryBinding,
+          ),
         ),
         signal === undefined ? {} : { signal },
       ),
@@ -735,8 +739,8 @@ export const makeNodeCLIProviderRuntime = (
     browserSessions: makeCredentialBrowserSessions(credentials),
     selectedAccounts: {
       resolve: (providerId) =>
-        Effect.map(configRepository.load, (config) =>
-          selectedFirstPartyAccountFromConfig(config, providerId),
+        Effect.flatMap(configRepository.load, (config) =>
+          resolveSelectedFirstPartyAccountFromVault(config, credentials, providerId),
         ),
     },
     local: makeNodeFirstPartyLocalCapabilities({

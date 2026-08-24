@@ -77,7 +77,7 @@ describe("Claude OAuth history owner capture", () => {
     expect(resolves).toBe(2);
   });
 
-  it("uses selected OAuth owner instead of the ambient owner", async () => {
+  it("uses the selected account key instead of a secret-derived OAuth owner", async () => {
     const selectedOwner = "e".repeat(64);
     let ambientResolves = 0;
     const capture = makeClaudeOAuthHistoryOwnerCapture({
@@ -93,7 +93,7 @@ describe("Claude OAuth history owner capture", () => {
     });
     const fetched = await capture.captureFetch("claude", async () => outcome());
     expect(await capture.consumeHistoryBinding("claude", fetched)).toEqual({
-      oauthHistoryOwnerIdentifier: selectedOwner,
+      selectedTokenAccountKey: tokenAccountKey("a"),
     });
     expect(ambientResolves).toBe(0);
   });

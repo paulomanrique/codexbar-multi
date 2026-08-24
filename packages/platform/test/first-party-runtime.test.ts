@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Effect, Fiber } from "effect";
 import {
+  ClassifiedFetchFailure,
   Clock,
   CostUsageRepository,
   HistoryRepository,
@@ -22,6 +23,113 @@ const response = (value: unknown) => ({
 });
 
 describe("first-party refresh runtime", () => {
+  it("passes selected-account ClassifiedFetchFailure through without ambient fallback", async () => {
+    let settingsReads = 0;
+    let credentialReads = 0;
+    let browserCalls = 0;
+    let localCalls = 0;
+    let httpCalls = 0;
+    const probe: FirstPartyProvider = {
+      id: "codex.probe",
+      kind: "api",
+      descriptor: {
+        id: "codex",
+        name: "Codex",
+        status: "partial",
+        endpoints: ["https://api.example.test"],
+        settings: [{ key: "CODEX_ACCESS_TOKEN", title: "Codex token", type: "secure" }],
+      },
+      fetchUsage: async () => ({ primary: { usedPercent: 1 } }),
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      selectedAccounts: {
+        resolve: () =>
+          Effect.fail(
+            new ClassifiedFetchFailure("missing-credential", "Selected Codex account unsupported"),
+          ),
+      },
+      settings: {
+        read: () => {
+          settingsReads += 1;
+          return Effect.succeed("ambient");
+        },
+      },
+      credentials: {
+        read: () => {
+          credentialReads += 1;
+          return Effect.succeed("keyring");
+        },
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: {
+        cookieHeader: () => {
+          browserCalls += 1;
+          return Effect.succeed("cookie=ambient");
+        },
+      },
+      local: {
+        run: () => {
+          localCalls += 1;
+          return Effect.succeed({ exitCode: 0, signal: undefined, stdout: "", stderr: "" });
+        },
+        readData: () => Effect.succeed(undefined),
+      },
+      http: {
+        execute: () => {
+          httpCalls += 1;
+          return Effect.succeed(response({}));
+        },
+      },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("codex", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+    expect(settingsReads).toBe(0);
+    expect(credentialReads).toBe(0);
+    expect(browserCalls).toBe(0);
+    expect(localCalls).toBe(0);
+    expect(httpCalls).toBe(0);
+  });
+
+  it("redacts unknown selected-account resolver failures as api-failure", async () => {
+    const probe: FirstPartyProvider = {
+      id: "codex.probe",
+      kind: "api",
+      descriptor: {
+        id: "codex",
+        name: "Codex",
+        status: "partial",
+        endpoints: [],
+        settings: [],
+      },
+      fetchUsage: async () => ({ primary: { usedPercent: 1 } }),
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      selectedAccounts: { resolve: () => Effect.fail(new Error("secret resolver detail")) },
+      settings: { read: () => Effect.succeed(undefined) },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("codex", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({
+      kind: "api-failure",
+      message: "Unable to resolve the selected account.",
+    });
+  });
+
   it("prefers the Antigravity local broker in auto mode and keeps host credentials out of the snapshot", async () => {
     const runtime = makeFirstPartyProviderRuntime({
       providers: [antigravity],

@@ -16,7 +16,8 @@ export type ProviderCookieSource = Schema.Schema.Type<typeof ProviderCookieSourc
 export const ProviderTokenAccount = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
-  token: Schema.String,
+  /** Legacy v1 input only. Version-2 account metadata omits the secret. */
+  token: Schema.optional(Schema.String),
   addedAt: Schema.Number,
   lastUsed: Schema.optional(Schema.Number),
   externalIdentifier: Schema.optional(Schema.String),

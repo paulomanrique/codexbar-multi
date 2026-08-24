@@ -781,8 +781,12 @@ const selectedStrategyAllowed = (
 ): boolean => {
   if (selectedAccount === undefined) return true;
   if (providerId === "grok") {
-    if (context.sourceMode !== "auto") return true;
+    const oauth = ownSetting(selectedAccount.secureSettings, "GROK_OAUTH_TOKEN");
+    const cookie = ownSetting(selectedAccount.secureSettings, "GROK_COOKIE_HEADER");
+    const controlsGrok = oauth.present || cookie.present;
     const selected = selectedGrokStrategyMode(selectedAccount);
+    if (controlsGrok && selected === undefined) return false;
+    if (context.sourceMode !== "auto") return true;
     if (selected === "oauth") return strategy.kind === "oauth";
     if (selected === "web") return strategy.id === "grok.web";
     return true;
@@ -827,7 +831,11 @@ const resolveSelectedAccount = (
   if (options.selectedAccounts === undefined || descriptor === undefined)
     return Effect.succeed(undefined);
   return options.selectedAccounts.resolve(providerId, context).pipe(
-    Effect.mapError(() => failure("api-failure", "Unable to resolve the selected account.")),
+    Effect.mapError((error) =>
+      error instanceof ClassifiedFetchFailure
+        ? error
+        : failure("api-failure", "Unable to resolve the selected account."),
+    ),
     Effect.flatMap((selected) =>
       Effect.try({
         try: () => validateSelectedAccount(descriptor, selected),

@@ -41,6 +41,10 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Add the first `codexbar-multi usage` CLI path.
 - [x] Add native keyring-backed credentials with explicit failure and no plaintext fallback.
 - [ ] Migrate legacy inline token-account payloads to the native credential store, retaining only account IDs and metadata in config.
+  - [x] Add v1/v2 config compatibility, v1 plaintext-to-vault migration, v2 save enforcement, and selected-account vault resolution for Claude, Grok, and Antigravity.
+  - [ ] Serialize automatic migration across concurrent desktop/CLI processes before calling the migration fully complete.
+  - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
+  - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
 - [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.
 - [x] Wire provider refresh results into persisted overview/history records.

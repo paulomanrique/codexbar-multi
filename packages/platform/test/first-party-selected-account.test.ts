@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import { sha256Hex, type PersistedCodexBarConfig } from "@codexbar/core";
-import { selectedFirstPartyAccountFromConfig } from "../src/first-party-selected-account.ts";
+import { Effect } from "effect";
+import {
+  sha256Hex,
+  type CredentialStoreService,
+  type PersistedCodexBarConfig,
+} from "@codexbar/core";
+import {
+  resolveSelectedFirstPartyAccountFromVault,
+  tokenAccountVaultKey,
+} from "../src/token-account-vault-config.ts";
 
 const jwt = (payload: Record<string, unknown>): string => {
   const encoded = btoa(JSON.stringify(payload))
@@ -11,9 +19,9 @@ const jwt = (payload: Record<string, unknown>): string => {
 };
 
 const config = (
-  tokens: readonly string[],
-  activeIndex: number,
   providerId = "antigravity",
+  activeIndex = 0,
+  ids: readonly string[] = ["account-0"],
 ): PersistedCodexBarConfig => ({
   version: 1,
   providers: [
@@ -21,12 +29,11 @@ const config = (
       id: providerId,
       extensions: {},
       tokenAccounts: {
-        version: 1,
+        version: 2,
         activeIndex,
-        accounts: tokens.map((token, index) => ({
-          id: `account-${index}`,
+        accounts: ids.map((id, index) => ({
+          id,
           label: `Account ${index}`,
-          token,
           addedAt: index,
         })),
       },
@@ -34,28 +41,43 @@ const config = (
   ],
 });
 
-describe("first-party selected accounts", () => {
-  it("clamps activeIndex and exposes only the Antigravity refresh fields", () => {
-    const selected = selectedFirstPartyAccountFromConfig(
-      config(
-        [
-          "{}",
-          JSON.stringify({
-            access_token: "access",
-            refresh_token: "refresh",
-            id_token: jwt({ email: "jwt@example.com" }),
-            email: "stored@example.com",
-            project_id: "project",
-            client_id: "client",
-            client_secret: "secret",
-          }),
-        ],
-        99,
-      ),
+const store = (values: Readonly<Record<string, string>>): CredentialStoreService => ({
+  read: (key) => Effect.succeed(values[key]),
+  write: () => Effect.void,
+  remove: () => Effect.void,
+});
+
+const resolve = (
+  input: PersistedCodexBarConfig,
+  providerId: Parameters<typeof resolveSelectedFirstPartyAccountFromVault>[2],
+  values: Readonly<Record<string, string>>,
+) => Effect.runPromise(resolveSelectedFirstPartyAccountFromVault(input, store(values), providerId));
+
+describe("first-party selected accounts from the token-account vault", () => {
+  it("uses the stable provider/account credential key", () => {
+    expect(tokenAccountVaultKey("claude", "account-1")).toBe(
+      `token-account/v1/${sha256Hex("claude:account-1")}`,
+    );
+  });
+
+  it("clamps activeIndex and exposes only the Antigravity refresh fields", async () => {
+    const selected = await resolve(
+      config("antigravity", 99, ["first", "selected"]),
       "antigravity",
+      {
+        [tokenAccountVaultKey("antigravity", "selected")]: JSON.stringify({
+          access_token: "access",
+          refresh_token: "refresh",
+          id_token: jwt({ email: "jwt@example.com" }),
+          email: "stored@example.com",
+          project_id: "project",
+          client_id: "client",
+          client_secret: "secret",
+        }),
+      },
     );
     expect(selected).toEqual({
-      id: "account-1",
+      id: "selected",
       accountEmail: "jwt@example.com",
       secureSettings: {
         ANTIGRAVITY_OAUTH_ACCESS_TOKEN: "access",
@@ -70,117 +92,111 @@ describe("first-party selected accounts", () => {
     expect(JSON.stringify(selected)).not.toContain("client");
   });
 
-  it("explicitly clears ambient credentials for a malformed selected account", () => {
-    expect(selectedFirstPartyAccountFromConfig(config(["not-json"], 0), "antigravity")).toEqual({
-      id: "account-0",
-      secureSettings: {
-        ANTIGRAVITY_OAUTH_ACCESS_TOKEN: null,
-        ANTIGRAVITY_ID_TOKEN: null,
-      },
-      plainSettings: {
-        ANTIGRAVITY_ACCOUNT_EMAIL: null,
-        ANTIGRAVITY_PROJECT_ID: null,
-      },
+  it("fails closed for missing or malformed selected vault material", async () => {
+    await expect(resolve(config("antigravity"), "antigravity", {})).rejects.toMatchObject({
+      name: "ClassifiedFetchFailure",
+      kind: "missing-credential",
     });
+    await expect(
+      resolve(config("antigravity"), "antigravity", {
+        [tokenAccountVaultKey("antigravity", "account-0")]: "not-json",
+      }),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
-  it("does not project token accounts into an unsupported provider", () => {
-    expect(selectedFirstPartyAccountFromConfig(config(["{}"], 0), "codex")).toBeUndefined();
+  it("fails closed for selected Codex accounts without reinterpreting legacy tokens", async () => {
+    await expect(
+      resolve(config("codex"), "codex", {
+        [tokenAccountVaultKey("codex", "account-0")]: "could-be-any-legacy-format",
+      }),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
-  it("selects the active Claude OAuth account and strips the Bearer prefix", () => {
-    const selected = selectedFirstPartyAccountFromConfig(
-      config(["sk-ant-oat-first", "Bearer sk-ant-oat-second"], 1, "claude"),
-      "claude",
-    );
-    expect(selected).toMatchObject({
-      id: "account-1",
+  it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
+    for (const providerId of ["zai", "cursor"] as const) {
+      await expect(
+        resolve(config(providerId), providerId, {
+          [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
+        }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
+  it("selects Claude OAuth and cookie accounts with Swift-compatible normalization", async () => {
+    await expect(
+      resolve(config("claude", 1, ["first", "selected"]), "claude", {
+        [tokenAccountVaultKey("claude", "selected")]: "Bearer sk-ant-oat-second",
+      }),
+    ).resolves.toMatchObject({
+      id: "selected",
       secureSettings: {
         CLAUDE_OAUTH_ACCESS_TOKEN: "sk-ant-oat-second",
         CLAUDE_COOKIE_HEADER: null,
         CLAUDE_CLI_USAGE_JSON: null,
       },
       claudeHistoryBinding: {
-        selectionKey: sha256Hex("claude:token-account:account-1"),
-        oauthHistoryOwnerIdentifier: expect.stringMatching(/^[0-9a-f]{64}$/u),
-        tokenAccountKey: sha256Hex("claude:token-account:account-1"),
+        selectionKey: sha256Hex("claude:token-account:selected"),
+        tokenAccountKey: sha256Hex("claude:token-account:selected"),
       },
     });
-    expect(JSON.stringify(selected)).not.toContain("Bearer");
-  });
 
-  it("selects Claude cookie accounts and fails closed for malformed or admin credentials", () => {
-    expect(
-      selectedFirstPartyAccountFromConfig(
-        config(["Cookie: sessionKey=sk-ant-selected; foo=bar"], 0, "claude"),
-        "claude",
-      ),
-    ).toMatchObject({
+    await expect(
+      resolve(config("claude"), "claude", {
+        [tokenAccountVaultKey("claude", "account-0")]:
+          "Cookie: sessionKey=sk-ant-selected; foo=bar",
+      }),
+    ).resolves.toMatchObject({
       id: "account-0",
       secureSettings: {
         CLAUDE_OAUTH_ACCESS_TOKEN: null,
         CLAUDE_COOKIE_HEADER: "sessionKey=sk-ant-selected; foo=bar",
         CLAUDE_CLI_USAGE_JSON: null,
       },
-      claudeHistoryBinding: {
-        selectionKey: sha256Hex("claude:token-account:account-0"),
-        tokenAccountKey: sha256Hex("claude:token-account:account-0"),
-      },
     });
 
-    for (const token of ["Cookie:", "Bearer sk-ant-admin-test"]) {
-      expect(selectedFirstPartyAccountFromConfig(config([token], 0, "claude"), "claude")).toEqual({
-        id: "account-0",
-        secureSettings: {
-          CLAUDE_OAUTH_ACCESS_TOKEN: null,
-          CLAUDE_COOKIE_HEADER: null,
-          CLAUDE_CLI_USAGE_JSON: null,
-        },
-      });
+    for (const material of ["Cookie:", "Bearer sk-ant-admin-test"]) {
+      await expect(
+        resolve(config("claude"), "claude", {
+          [tokenAccountVaultKey("claude", "account-0")]: material,
+        }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
     }
   });
 
-  it("selects Grok bearer and cookie credentials with Swift normalization", () => {
-    expect(
-      selectedFirstPartyAccountFromConfig(
-        config(["Bearer first-token", "  Bearer selected-token  "], 1, "grok"),
-        "grok",
-      ),
-    ).toEqual({
-      id: "account-1",
-      secureSettings: { GROK_OAUTH_TOKEN: "selected-token" },
+  it("selects Grok bearer and cookie credentials while controlling both routes", async () => {
+    await expect(
+      resolve(config("grok", 1, ["first", "selected"]), "grok", {
+        [tokenAccountVaultKey("grok", "selected")]: "  Bearer selected-token  ",
+      }),
+    ).resolves.toEqual({
+      id: "selected",
+      secureSettings: {
+        GROK_OAUTH_TOKEN: "selected-token",
+        GROK_COOKIE_HEADER: null,
+      },
     });
 
-    expect(
-      selectedFirstPartyAccountFromConfig(
-        config(["curl -H 'Cookie: sso=abc; sso-rw=def' https://grok.com"], 0, "grok"),
-        "grok",
-      ),
-    ).toEqual({
+    await expect(
+      resolve(config("grok"), "grok", {
+        [tokenAccountVaultKey("grok", "account-0")]:
+          "curl -H 'Cookie: sso=abc; sso-rw=def' https://grok.com",
+      }),
+    ).resolves.toEqual({
       id: "account-0",
       secureSettings: {
         GROK_OAUTH_TOKEN: null,
         GROK_COOKIE_HEADER: "sso=abc; sso-rw=def",
       },
     });
-
-    expect(
-      selectedFirstPartyAccountFromConfig(
-        config(["first-token", "last-token"], Number.MAX_SAFE_INTEGER, "grok"),
-        "grok",
-      ),
-    ).toEqual({
-      id: "account-1",
-      secureSettings: { GROK_OAUTH_TOKEN: "last-token" },
-    });
   });
 
-  it("keeps malformed Grok selected metadata without inventing credentials", () => {
-    for (const token of ["Cookie:", "xai-mgmt-key", "Bearer xai-mgmt-key", "   "]) {
-      expect(selectedFirstPartyAccountFromConfig(config([token], 0, "grok"), "grok")).toEqual({
-        id: "account-0",
-        secureSettings: { GROK_OAUTH_TOKEN: null },
-      });
+  it("fails closed for malformed Grok selected material", async () => {
+    for (const material of ["Cookie:", "xai-mgmt-key", "Bearer xai-mgmt-key", "   "]) {
+      await expect(
+        resolve(config("grok"), "grok", {
+          [tokenAccountVaultKey("grok", "account-0")]: material,
+        }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
     }
   });
 });

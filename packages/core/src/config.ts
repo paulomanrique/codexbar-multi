@@ -205,14 +205,29 @@ const optionalTokenAccounts = (
   }
   if (!Array.isArray(accountsValue))
     throw new ConfigDecodeError(`${path}.accounts must be an array.`);
+  if (version !== 1 && version !== 2) {
+    throw new ConfigDecodeError(`${path}.version is unsupported.`);
+  }
   const accounts: ProviderTokenAccount[] = accountsValue.map((account, index) => {
     const itemPath = `${path}.accounts[${index}]`;
     if (!isRecord(account)) throw new ConfigDecodeError(`${itemPath} must be an object.`);
+    const containsToken = Object.prototype.hasOwnProperty.call(account, "token");
+    if (version === 1 && !containsToken) {
+      throw new ConfigDecodeError(`${itemPath}.token is required for tokenAccounts v1.`);
+    }
+    if (version === 2 && containsToken) {
+      throw new ConfigDecodeError(`${itemPath}.token is not permitted for tokenAccounts v2.`);
+    }
     const id = optionalString(own(account, "id"), `${itemPath}.id`);
     const label = optionalString(own(account, "label"), `${itemPath}.label`);
     const token = optionalString(own(account, "token"), `${itemPath}.token`);
     const addedAt = optionalNumber(own(account, "addedAt"), `${itemPath}.addedAt`);
-    if (id === undefined || label === undefined || token === undefined || addedAt === undefined) {
+    if (
+      id === undefined ||
+      label === undefined ||
+      (version === 1 && token === undefined) ||
+      addedAt === undefined
+    ) {
       throw new ConfigDecodeError(`${itemPath} is missing a required field.`);
     }
     const lastUsed = optionalNumber(own(account, "lastUsed"), `${itemPath}.lastUsed`);
@@ -229,7 +244,7 @@ const optionalTokenAccounts = (
     return {
       id,
       label,
-      token,
+      ...(token === undefined ? {} : { token }),
       addedAt,
       ...(lastUsed === undefined ? {} : { lastUsed }),
       ...(externalIdentifier === undefined ? {} : { externalIdentifier }),
@@ -597,7 +612,7 @@ export const sanitizedProviderConfigForDump = (
           ...config.tokenAccounts,
           accounts: config.tokenAccounts.accounts.map((account) => ({
             ...account,
-            token: "[REDACTED]",
+            ...(account.token === undefined ? {} : { token: "[REDACTED]" }),
           })),
         };
   return {
@@ -703,6 +718,7 @@ const formatProviderList = (ids: readonly ProviderId[]): string => {
 
 const configuredApiCredential = (entry: PersistedProviderConfig): boolean =>
   cleanConfigString(entry.apiKey) !== undefined ||
+  (entry.tokenAccounts?.version === 2 && entry.tokenAccounts.accounts.length > 0) ||
   (entry.tokenAccounts?.accounts.some(
     (account) => cleanConfigString(account.token) !== undefined,
   ) ??

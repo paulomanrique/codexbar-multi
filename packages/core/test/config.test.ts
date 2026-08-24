@@ -200,6 +200,90 @@ describe("CodexBarConfig coding (Swift parity)", () => {
       tokenAccounts: { accounts: [{ token: "[REDACTED]" }] },
     });
   });
+
+  it("decodes and encodes tokenAccounts v1 without changing the legacy plaintext model", () => {
+    const input = {
+      version: 1,
+      providers: [
+        {
+          id: "claude",
+          tokenAccounts: {
+            version: 1,
+            activeIndex: 0,
+            accounts: [
+              {
+                id: "account-1",
+                label: "Main",
+                token: "legacy-token",
+                addedAt: 1,
+                lastUsed: 2,
+                externalIdentifier: "external",
+                usageScope: "scope",
+                organizationId: "organization",
+                workspaceID: "workspace",
+              },
+            ],
+          },
+        },
+      ],
+    };
+    expect(encodeCodexBarConfig(decodeCodexBarConfig(input))).toEqual(input);
+  });
+
+  it("decodes and encodes tokenAccounts v2 metadata without synthesizing a token", () => {
+    const input = {
+      version: 1,
+      providers: [
+        {
+          id: "claude",
+          tokenAccounts: {
+            version: 2,
+            activeIndex: 0,
+            accounts: [{ id: "account-1", label: "Main", addedAt: 1, lastUsed: 2 }],
+          },
+        },
+      ],
+    };
+    const decoded = decodeCodexBarConfig(input);
+    expect(decoded.providers[0]?.tokenAccounts?.accounts[0]).not.toHaveProperty("token");
+    expect(encodeCodexBarConfig(decoded)).toEqual(input);
+    expect(
+      sanitizedCodexBarConfigForDump(decoded).providers[0]?.tokenAccounts?.accounts[0],
+    ).toEqual({
+      id: "account-1",
+      label: "Main",
+      addedAt: 1,
+      lastUsed: 2,
+    });
+  });
+
+  it("fails closed for unknown or mixed tokenAccounts versions", () => {
+    const provider = (tokenAccounts: unknown) => ({
+      version: 1,
+      providers: [{ id: "claude", tokenAccounts }],
+    });
+    expect(() =>
+      decodeCodexBarConfig(provider({ version: 99, activeIndex: 0, accounts: [] })),
+    ).toThrow(ConfigDecodeError);
+    expect(() =>
+      decodeCodexBarConfig(
+        provider({
+          version: 1,
+          activeIndex: 0,
+          accounts: [{ id: "id", label: "Main", addedAt: 0 }],
+        }),
+      ),
+    ).toThrow(ConfigDecodeError);
+    expect(() =>
+      decodeCodexBarConfig(
+        provider({
+          version: 2,
+          activeIndex: 0,
+          accounts: [{ id: "id", label: "Main", token: "secret", addedAt: 0 }],
+        }),
+      ),
+    ).toThrow(ConfigDecodeError);
+  });
 });
 
 describe("CodexBarConfig validation (Swift parity)", () => {
@@ -351,6 +435,28 @@ describe("CodexBarConfig validation (Swift parity)", () => {
         (entry) => entry.provider === "azureopenai" && entry.code === "workspace_unused",
       ),
     ).toEqual([]);
+  });
+
+  it("treats non-empty v2 token account metadata as configured API credential intent", () => {
+    const issues = validateCodexBarConfig(
+      {
+        version: 1,
+        providers: [
+          {
+            id: "zai",
+            source: "api" as const,
+            tokenAccounts: {
+              version: 2,
+              activeIndex: 0,
+              accounts: [{ id: "account-1", label: "Main", addedAt: 0 }],
+            },
+            extensions: {},
+          },
+        ],
+      },
+      { providers: capabilities },
+    );
+    expect(issues.map((entry) => entry.code)).not.toContain("api_key_missing");
   });
 });
 

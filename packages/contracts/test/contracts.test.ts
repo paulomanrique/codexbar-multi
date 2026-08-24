@@ -19,9 +19,9 @@ describe("schema contracts", () => {
           workspaceID: "project-123",
           cookieSource: "manual",
           tokenAccounts: {
-            version: 1,
+            version: 2,
             activeIndex: 0,
-            accounts: [{ id: "account", label: "Main", token: "secret", addedAt: 0 }],
+            accounts: [{ id: "account", label: "Main", addedAt: 0 }],
           },
         },
       ],

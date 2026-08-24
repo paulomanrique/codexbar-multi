@@ -341,11 +341,11 @@ providers:
       expected:
         - packages/providers/src/providers/antigravity.ts
         - packages/platform/src/node-antigravity-local.ts
-        - packages/platform/src/first-party-selected-account.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/antigravity.ts
         - packages/platform/src/node-antigravity-local.ts
-        - packages/platform/src/first-party-selected-account.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/claude-antigravity-parity.test.ts
       - packages/platform/test/node-antigravity-local.test.ts
@@ -1158,7 +1158,7 @@ providers:
         - packages/platform/src/node-grok-local-session.ts
         - packages/platform/src/node-grok-local-token-scan.ts
         - packages/platform/src/first-party-runtime.ts
-        - packages/platform/src/first-party-selected-account.ts
+        - packages/platform/src/token-account-vault-config.ts
         - packages/platform/src/node.ts
         - packages/platform/src/node-grok-rpc.ts
         - packages/core/src/daily-spend-ingestion.ts
@@ -1169,7 +1169,7 @@ providers:
         - packages/platform/src/node-grok-local-session.ts
         - packages/platform/src/node-grok-local-token-scan.ts
         - packages/platform/src/first-party-runtime.ts
-        - packages/platform/src/first-party-selected-account.ts
+        - packages/platform/src/token-account-vault-config.ts
         - packages/platform/src/node.ts
         - packages/platform/src/node-grok-rpc.ts
         - packages/core/src/daily-spend-ingestion.ts
