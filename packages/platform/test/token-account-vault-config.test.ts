@@ -749,4 +749,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { COPILOT_API_TOKEN: "selected-token" },
     });
   });
+
+  it("maps a selected DeepInfra account to only its canonical API key", async () => {
+    const account = { id: "deepinfra-selected", label: "Work", addedAt: 0 };
+    const key = tokenAccountVaultKey("deepinfra", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "deepinfra",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: ' "selected-key" ' }),
+        "deepinfra",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { DEEPINFRA_API_KEY: "selected-key", DEEPINFRA_TOKEN: null },
+    });
+  });
 });

@@ -48,7 +48,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add Claude Admin API and organization-aware selected-account routing; keep remaining Claude parity scoped as partial.
     - [x] Add z.ai personal/team selected-account mapping with explicit ambient team-context scrub.
     - [x] Add Copilot selected-account mapping and keep managed OAuth auth off cookie budget pages.
-    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 26 providers.
+    - [x] Add DeepInfra selected API-key mapping with terminal source routing and ambient-alias isolation.
+    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 23 providers.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.

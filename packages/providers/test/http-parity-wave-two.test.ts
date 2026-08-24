@@ -359,6 +359,32 @@ describe("Swift-derived HTTP provider parity wave two", () => {
     ).rejects.toThrow("parse-failure:");
   });
 
+  it("matches DeepInfra canonical-key precedence and legacy alias cleanup", async () => {
+    for (const settings of [
+      { DEEPINFRA_TOKEN: "  'alias-key'  " },
+      { DEEPINFRA_API_KEY: '  "canonical-key"  ', DEEPINFRA_TOKEN: "alias-key" },
+    ]) {
+      const requests: Request[] = [];
+      await deepinfra.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname === "/payment/checklist"
+              ? json({ stripe_balance: -1, recent: 0 })
+              : json({ months: [] }),
+          { settings, requests },
+        ),
+      );
+      const expected = "DEEPINFRA_API_KEY" in settings ? "canonical-key" : "alias-key";
+      expect(
+        requests.every(
+          ({ options }) =>
+            options &&
+            (options.headers as Record<string, unknown>).Authorization === `Bearer ${expected}`,
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("matches DeepSeek currency preference and empty-balance semantics", async () => {
     const usd = await deepseek.fetchUsage(
       context(

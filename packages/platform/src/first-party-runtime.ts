@@ -803,6 +803,10 @@ const selectedStrategyAllowed = (
   strategy: ProviderStrategy,
 ): boolean => {
   if (selectedAccount === undefined) return true;
+  if (providerId === "deepinfra") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPINFRA_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "deepinfra.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

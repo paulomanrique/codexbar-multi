@@ -6,18 +6,33 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { get, json, number, object, status, string } from "./_http.ts";
+
+const cleanAPIKey = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
 const definition: ProviderDefinition = {
   id: "deepinfra",
   name: "DeepInfra",
   endpoints: ["https://api.deepinfra.com"],
-  auth: { type: "bearer", secret: "DEEPINFRA_API_KEY" },
-  settings: [{ key: "DEEPINFRA_API_KEY", title: "API key", type: "secure" }],
+  settings: [
+    { key: "DEEPINFRA_API_KEY", title: "API key", type: "secure" },
+    { key: "DEEPINFRA_TOKEN", title: "Legacy API token", type: "secure" },
+  ],
   fetchUsage: async (ctx: ProviderContext) => {
-    const key = (
-      ctx.settings.getSecret("DEEPINFRA_API_KEY") ||
-      ctx.settings.get("DEEPINFRA_API_KEY") ||
-      ""
-    ).trim();
+    const key =
+      cleanAPIKey(ctx.settings.getSecret("DEEPINFRA_API_KEY")) ??
+      cleanAPIKey(ctx.settings.get("DEEPINFRA_API_KEY")) ??
+      cleanAPIKey(ctx.settings.getSecret("DEEPINFRA_TOKEN")) ??
+      cleanAPIKey(ctx.settings.get("DEEPINFRA_TOKEN"));
     if (!key) throw ctx.fail.missingCredential("Missing DeepInfra API key.");
     const headers = { Authorization: `Bearer ${key}`, Accept: "application/json" };
     const check = await get(ctx, "https://api.deepinfra.com/payment/checklist?compute_owed=true", {
