@@ -70,6 +70,7 @@ import { discoverNodeCodexCredential } from "./node-codex-credential.ts";
 import { terminateProcessTree } from "./node-process-terminator.ts";
 
 export * from "./node-persistence.ts";
+export * from "./node-token-account-migration-lock.ts";
 export * from "./token-account-vault-config.ts";
 export * from "./node-antigravity-local.ts";
 export * from "./node-persistence-worker-client.ts";

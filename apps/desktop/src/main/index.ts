@@ -63,6 +63,7 @@ import {
   makeNodeGrokLocalTokenScanner,
   makeNodeDiscoveredProviderSettings,
   makeNodeConfigRepository,
+  makeNodeTokenAccountMigrationLock,
   makeTokenAccountVaultConfigRepository,
   makeSystemClock,
   makeNodeSqliteWorkerPersistence,
@@ -508,15 +509,15 @@ void desktopReady?.then(async () => {
     // so deleting one plugin cannot discard a sibling plugin's config entry.
     const pluginProviderIds = new Set<string>();
     const credentials = makeNativeCredentialStore();
-    const rawConfigRepository = makeNodeConfigRepository(
-      join(app.getPath("userData"), "config.json"),
-      {
-        pluginProviderIds,
-      },
-    );
+    const configPath = join(app.getPath("userData"), "config.json");
+    const rawConfigRepository = makeNodeConfigRepository(configPath, {
+      pluginProviderIds,
+    });
+    const tokenAccountMigrationLock = makeNodeTokenAccountMigrationLock({});
     const configRepository = makeTokenAccountVaultConfigRepository(
       rawConfigRepository,
       credentials,
+      tokenAccountMigrationLock,
     );
     const mutateDesktopConfig = <Value>(
       mutation: (current: PersistedCodexBarConfig) => Promise<{

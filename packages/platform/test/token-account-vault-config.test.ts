@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import {
   InfrastructureError,
   type ConfigRepositoryService,
@@ -9,6 +9,7 @@ import {
 import {
   makeTokenAccountVaultConfigRepository,
   tokenAccountVaultKey,
+  type TokenAccountMigrationLock,
 } from "../src/token-account-vault-config.ts";
 
 const v1Config = (
@@ -106,6 +107,48 @@ const memoryCredentials = (
   };
 };
 
+const memoryLock = (
+  onAcquire: (() => void) | undefined = undefined,
+): TokenAccountMigrationLock & {
+  readonly events: string[];
+  readonly acquisitions: () => number;
+  readonly releases: () => number;
+  readonly isHeld: () => boolean;
+} => {
+  const events: string[] = [];
+  let acquisitions = 0;
+  let releases = 0;
+  let held = false;
+  return {
+    events,
+    acquisitions: () => acquisitions,
+    releases: () => releases,
+    isHeld: () => held,
+    runExclusive: (operation) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          events.push("acquire");
+          acquisitions += 1;
+          held = true;
+          onAcquire?.();
+        }),
+        () => operation,
+        () =>
+          Effect.sync(() => {
+            events.push("release");
+            releases += 1;
+            held = false;
+          }),
+      ),
+  };
+};
+
+const vaultRepository = (
+  repository: ConfigRepositoryService,
+  credentials: CredentialStoreService,
+  lock = memoryLock(),
+): ConfigRepositoryService => makeTokenAccountVaultConfigRepository(repository, credentials, lock);
+
 describe("token-account vault config repository", () => {
   it("migrates v1 token accounts into the vault and preserves v2 metadata", async () => {
     const input = v1Config(
@@ -128,9 +171,7 @@ describe("token-account vault config repository", () => {
     const repository = memoryRepository(input);
     const credentials = memoryCredentials();
 
-    const loaded = await Effect.runPromise(
-      makeTokenAccountVaultConfigRepository(repository, credentials).load,
-    );
+    const loaded = await Effect.runPromise(vaultRepository(repository, credentials).load);
 
     expect(credentials.values.get(tokenAccountVaultKey("claude", "account-1"))).toBe("secret-1");
     expect(credentials.values.get(tokenAccountVaultKey("claude", "account-2"))).toBe("secret-2");
@@ -162,9 +203,7 @@ describe("token-account vault config repository", () => {
   it("migrates an empty v1 roster to v2", async () => {
     const repository = memoryRepository(v1Config([], 3));
     const credentials = memoryCredentials();
-    const loaded = await Effect.runPromise(
-      makeTokenAccountVaultConfigRepository(repository, credentials).load,
-    );
+    const loaded = await Effect.runPromise(vaultRepository(repository, credentials).load);
     expect(loaded?.providers[0]?.tokenAccounts).toEqual({
       version: 2,
       activeIndex: 3,
@@ -179,7 +218,7 @@ describe("token-account vault config repository", () => {
       v1Config([{ id: "account-1", label: "Main", token: "same", addedAt: 0 }]),
     );
     const credentials = memoryCredentials({ [key]: "same" });
-    await Effect.runPromise(makeTokenAccountVaultConfigRepository(repository, credentials).load);
+    await Effect.runPromise(vaultRepository(repository, credentials).load);
     expect(credentials.writes).toEqual([]);
     expect(repository.saves[0]?.providers[0]?.tokenAccounts?.version).toBe(2);
   });
@@ -193,7 +232,7 @@ describe("token-account vault config repository", () => {
     );
     const credentials = memoryCredentials();
     await expect(
-      Effect.runPromise(makeTokenAccountVaultConfigRepository(repository, credentials).load),
+      Effect.runPromise(vaultRepository(repository, credentials).load),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(credentials.reads).toEqual([]);
     expect(credentials.writes).toEqual([]);
@@ -207,7 +246,7 @@ describe("token-account vault config repository", () => {
     );
     const credentials = memoryCredentials({ [key]: "different" });
     await expect(
-      Effect.runPromise(makeTokenAccountVaultConfigRepository(repository, credentials).load),
+      Effect.runPromise(vaultRepository(repository, credentials).load),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(credentials.values.get(key)).toBe("different");
     expect(credentials.writes).toEqual([]);
@@ -225,7 +264,7 @@ describe("token-account vault config repository", () => {
     const credentials = memoryCredentials({ [conflictingKey]: "different" });
 
     await expect(
-      Effect.runPromise(makeTokenAccountVaultConfigRepository(repository, credentials).load),
+      Effect.runPromise(vaultRepository(repository, credentials).load),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(credentials.writes).toEqual([]);
     expect(repository.saves).toEqual([]);
@@ -241,7 +280,7 @@ describe("token-account vault config repository", () => {
     const credentials = memoryCredentials();
 
     await expect(
-      Effect.runPromise(makeTokenAccountVaultConfigRepository(repository, credentials).load),
+      Effect.runPromise(vaultRepository(repository, credentials).load),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(credentials.reads).toEqual([]);
     expect(credentials.writes).toEqual([]);
@@ -257,7 +296,7 @@ describe("token-account vault config repository", () => {
         v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]),
       );
       await expect(
-        Effect.runPromise(makeTokenAccountVaultConfigRepository(repository, credentials).load),
+        Effect.runPromise(vaultRepository(repository, credentials).load),
       ).rejects.toBeInstanceOf(InfrastructureError);
       expect(repository.saves).toEqual([]);
     }
@@ -267,9 +306,7 @@ describe("token-account vault config repository", () => {
       true,
     );
     await expect(
-      Effect.runPromise(
-        makeTokenAccountVaultConfigRepository(repository, memoryCredentials()).load,
-      ),
+      Effect.runPromise(vaultRepository(repository, memoryCredentials()).load),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(repository.current?.providers[0]?.tokenAccounts?.version).toBe(1);
   });
@@ -280,24 +317,110 @@ describe("token-account vault config repository", () => {
     const crashingRepository = memoryRepository(input, true);
     const credentials = memoryCredentials();
     await expect(
-      Effect.runPromise(
-        makeTokenAccountVaultConfigRepository(crashingRepository, credentials).load,
-      ),
+      Effect.runPromise(vaultRepository(crashingRepository, credentials).load),
     ).rejects.toBeInstanceOf(InfrastructureError);
     expect(credentials.values.get(key)).toBe("legacy");
     expect(crashingRepository.current?.providers[0]?.tokenAccounts?.version).toBe(1);
 
     const retryRepository = memoryRepository(input);
-    const loaded = await Effect.runPromise(
-      makeTokenAccountVaultConfigRepository(retryRepository, credentials).load,
-    );
+    const loaded = await Effect.runPromise(vaultRepository(retryRepository, credentials).load);
     expect(loaded?.providers[0]?.tokenAccounts?.version).toBe(2);
     expect(credentials.writes).toHaveLength(1);
   });
 
+  it("reloads after acquiring the migration lock and skips vault writes when a follower sees v2", async () => {
+    const legacy = v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]);
+    const migrated: PersistedCodexBarConfig = {
+      ...legacy,
+      providers: legacy.providers.map((provider) =>
+        provider.tokenAccounts?.version !== 1
+          ? provider
+          : {
+              ...provider,
+              tokenAccounts: {
+                version: 2,
+                activeIndex: provider.tokenAccounts.activeIndex,
+                accounts: provider.tokenAccounts.accounts.map(
+                  ({ token: _token, ...account }) => account,
+                ),
+              },
+            },
+      ),
+    };
+    const events: string[] = [];
+    let loads = 0;
+    const repository: ConfigRepositoryService & {
+      readonly saves: PersistedCodexBarConfig[];
+    } = {
+      saves: [],
+      load: Effect.sync(() => {
+        loads += 1;
+        events.push(`load:${loads}`);
+        return loads === 1 ? legacy : migrated;
+      }),
+      save: (config) =>
+        Effect.sync(() => {
+          repository.saves.push(config);
+          events.push("save");
+        }),
+    };
+    const credentials = memoryCredentials();
+    const lock = memoryLock(() => events.push("lock"));
+
+    const loaded = await Effect.runPromise(vaultRepository(repository, credentials, lock).load);
+
+    expect(loaded?.providers[0]?.tokenAccounts?.version).toBe(2);
+    expect(events).toEqual(["load:1", "lock", "load:2"]);
+    expect(lock.events).toEqual(["acquire", "release"]);
+    expect(credentials.reads).toEqual([]);
+    expect(credentials.writes).toEqual([]);
+    expect(repository.saves).toEqual([]);
+  });
+
+  it("releases the migration lock after typed migration failure", async () => {
+    const repository = memoryRepository(
+      v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]),
+    );
+    const lock = memoryLock();
+
+    await expect(
+      Effect.runPromise(
+        vaultRepository(repository, memoryCredentials({}, { failRead: true }), lock).load,
+      ),
+    ).rejects.toBeInstanceOf(InfrastructureError);
+
+    expect(lock.acquisitions()).toBe(1);
+    expect(lock.releases()).toBe(1);
+    expect(lock.isHeld()).toBe(false);
+  });
+
+  it("releases the migration lock after interruption", async () => {
+    const repository = memoryRepository(
+      v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]),
+    );
+    let enteredRead: (() => void) | undefined;
+    const readEntered = new Promise<void>((resolve) => {
+      enteredRead = resolve;
+    });
+    const credentials: CredentialStoreService = {
+      read: () => Effect.sync(() => enteredRead?.()).pipe(Effect.andThen(Effect.never)),
+      write: () => Effect.void,
+      remove: () => Effect.void,
+    };
+    const lock = memoryLock();
+
+    const fiber = Effect.runFork(vaultRepository(repository, credentials, lock).load);
+    await readEntered;
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(lock.acquisitions()).toBe(1);
+    expect(lock.releases()).toBe(1);
+    expect(lock.isHeld()).toBe(false);
+  });
+
   it("rejects wrapper saves that contain v1 or token-bearing account input", async () => {
     const repository = memoryRepository(undefined);
-    const wrapper = makeTokenAccountVaultConfigRepository(repository, memoryCredentials());
+    const wrapper = vaultRepository(repository, memoryCredentials());
     await expect(
       Effect.runPromise(
         wrapper.save(v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }])),

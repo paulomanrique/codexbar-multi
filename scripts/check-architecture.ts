@@ -84,6 +84,12 @@ for (const relativePath of productionCompositionRoots) {
   if (!/\bmakeTokenAccountVaultConfigRepository\b/.test(source)) {
     failures.push(`${relativePath}: production config repository is not vault-wrapped`);
   }
+  if (!/\bmakeNodeTokenAccountMigrationLock\b/.test(source)) {
+    failures.push(`${relativePath}: production config repository has no Node migration lock`);
+  }
+  if (/makeNodeTokenAccountMigrationLock\s*\(\s*\{\s*configPath\b/.test(source)) {
+    failures.push(`${relativePath}: migration lock is scoped to a config instead of the vault`);
+  }
   if (
     /\bselectedFirstPartyAccountFromConfig\b|\bselectedClaudeHistoryBindingFromConfig\b/.test(
       source,

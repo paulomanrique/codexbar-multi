@@ -26,6 +26,8 @@ test("keeps production composition roots on the token account vault wrapper", as
   assert.match(source, /apps\/desktop\/src\/main\/index\.ts/);
   assert.match(source, /apps\/cli\/src\/runner\.ts/);
   assert.match(source, /makeTokenAccountVaultConfigRepository/);
+  assert.match(source, /makeNodeTokenAccountMigrationLock/);
+  assert.match(source, /migration lock is scoped to a config instead of the vault/);
   assert.match(source, /selectedFirstPartyAccountFromConfig/);
   assert.match(source, /selectedClaudeHistoryBindingFromConfig/);
 });

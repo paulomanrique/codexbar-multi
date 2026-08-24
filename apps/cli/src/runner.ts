@@ -24,6 +24,7 @@ import {
   makeNodeProcessRunner,
   makeNodePrivateFileStore,
   makeTokenAccountVaultConfigRepository,
+  makeNodeTokenAccountMigrationLock,
   resolveNodeClaudeOAuthHistoryOwner,
   resolveNodeClaudeSwapExecutablePath,
   makeNodeConfigRepository,
@@ -682,7 +683,12 @@ export const makeNodeCLIProviderRuntime = (
   const configPath = resolveCLIConfigPath(environment);
   const credentials = makeNativeCredentialStore();
   const rawConfigRepository = makeNodeConfigRepository(configPath);
-  const configRepository = makeTokenAccountVaultConfigRepository(rawConfigRepository, credentials);
+  const tokenAccountMigrationLock = makeNodeTokenAccountMigrationLock({});
+  const configRepository = makeTokenAccountVaultConfigRepository(
+    rawConfigRepository,
+    credentials,
+    tokenAccountMigrationLock,
+  );
   const databasePath = join(dirname(configPath), "usage.sqlite");
   const planUtilizationHistory = new PlanUtilizationHistoryCoordinator(
     makeNodePlanUtilizationHistoryStore({

@@ -16,6 +16,12 @@ import {
 } from "@codexbar/providers/providers/antigravity";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
 
+export interface TokenAccountMigrationLock {
+  runExclusive<A, E, R>(
+    operation: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | InfrastructureError, R>;
+}
+
 export const tokenAccountVaultKey = (providerId: string, accountId: string): string =>
   `token-account/v1/${sha256Hex(`${providerId}:${accountId}`)}`;
 
@@ -144,6 +150,7 @@ const migrateTokenAccountsToVault = (
 export const makeTokenAccountVaultConfigRepository = (
   repository: ConfigRepositoryService,
   credentials: CredentialStoreService,
+  lock: TokenAccountMigrationLock,
 ): ConfigRepositoryService => ({
   load: repository.load.pipe(
     Effect.mapError((error) => vaultError("load config", error)),
@@ -151,7 +158,17 @@ export const makeTokenAccountVaultConfigRepository = (
       if (config === undefined || !containsLegacyTokenAccountData(config)) {
         return Effect.succeed(config);
       }
-      return migrateTokenAccountsToVault(config, repository, credentials);
+      return lock.runExclusive(
+        repository.load.pipe(
+          Effect.mapError((error) => vaultError("load config", error)),
+          Effect.flatMap((freshConfig) => {
+            if (freshConfig === undefined || !containsLegacyTokenAccountData(freshConfig)) {
+              return Effect.succeed(freshConfig);
+            }
+            return migrateTokenAccountsToVault(freshConfig, repository, credentials);
+          }),
+        ),
+      );
     }),
   ),
   save: (config) => {
