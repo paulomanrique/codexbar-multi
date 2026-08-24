@@ -74,7 +74,9 @@ const ipcBoundaryRoots = [
 const persistedSecretSchemaPattern =
   /\b(?:ProviderTokenAccount|ProviderTokenAccountData|ProviderConfig|CodexBarConfig)\b/;
 for (const root of ipcBoundaryRoots) {
-  const paths = root.endsWith(".ts") ? [join(repositoryRoot, root)] : await walk(join(repositoryRoot, root));
+  const paths = root.endsWith(".ts")
+    ? [join(repositoryRoot, root)]
+    : await walk(join(repositoryRoot, root));
   for (const path of paths) {
     if (persistedSecretSchemaPattern.test(await readFile(path, "utf8"))) {
       failures.push(

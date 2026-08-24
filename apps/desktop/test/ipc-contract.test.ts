@@ -179,12 +179,14 @@ describe("desktop IPC boundary", () => {
         provider: "claude",
         accounts: [{ id: "account-1", label: "Main", addedAt: 1, vaultKey: "private" }],
         activeIndex: 0,
+        selectionAvailable: true,
         revision: "b".repeat(64),
       }),
     ).toEqual({
       provider: "claude",
       accounts: [{ id: "account-1", label: "Main", addedAt: 1 }],
       activeIndex: 0,
+      selectionAvailable: true,
       revision: "b".repeat(64),
     });
     expect(() =>
@@ -192,6 +194,7 @@ describe("desktop IPC boundary", () => {
         provider: "claude",
         accounts: [{ id: "account-1", label: "Main", addedAt: 1, token: "redacted" }],
         activeIndex: 0,
+        selectionAvailable: true,
         revision: "b".repeat(64),
       }),
     ).toThrow();

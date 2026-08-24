@@ -942,8 +942,14 @@ void desktopReady?.then(async () => {
     ipcMain.handle(DesktopChannels.selectTokenAccount, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         const request = await decodeSelectTokenAccount(input);
-        const roster = await Effect.runPromise(tokenAccounts.select(request));
-        desktopConfig = await Effect.runPromise(configRepository.load);
+        const roster = await desktopConfigMutations.run(async () => {
+          const selected = await Effect.runPromise(tokenAccounts.select(request));
+          // Keep the process-local projection ordered with every other desktop
+          // writer. The vault lock protects disk state across processes; this
+          // queue prevents an older local read from replacing a newer result.
+          desktopConfig = await Effect.runPromise(configRepository.load);
+          return selected;
+        });
         await Effect.runPromise(
           refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
             sourceMode: "auto",

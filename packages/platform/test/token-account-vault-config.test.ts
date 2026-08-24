@@ -467,6 +467,38 @@ describe("token-account vault config repository", () => {
     expect(repository.saves).toEqual([]);
   });
 
+  it("rejects duplicate v2 account IDs on load before any credential read", async () => {
+    const legacy = v1Config([
+      { id: "duplicate", label: "First", token: "one", addedAt: 0 },
+      { id: "duplicate", label: "Second", token: "two", addedAt: 1 },
+    ]);
+    const duplicateV2: PersistedCodexBarConfig = {
+      ...legacy,
+      providers: legacy.providers.map((provider) =>
+        provider.tokenAccounts === undefined
+          ? provider
+          : {
+              ...provider,
+              tokenAccounts: {
+                version: 2,
+                activeIndex: 0,
+                accounts: provider.tokenAccounts.accounts.map(
+                  ({ token: _token, ...account }) => account,
+                ),
+              },
+            },
+      ),
+    };
+    const repository = memoryRepository(duplicateV2);
+    const credentials = memoryCredentials();
+
+    await expect(
+      Effect.runPromise(vaultRepository(repository, credentials).load),
+    ).rejects.toMatchObject({ operation: "validate token accounts" });
+    expect(credentials.reads).toEqual([]);
+    expect(repository.saves).toEqual([]);
+  });
+
   it("modifies a v1 config under the held lock without reacquiring it", async () => {
     const input = v1Config([{ id: "account-1", label: "Main", token: "legacy", addedAt: 0 }]);
     const repository = memoryRepository(input);

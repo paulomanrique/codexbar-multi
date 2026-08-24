@@ -43,6 +43,10 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Migrate legacy inline token-account payloads to the native credential store, retaining only account IDs and metadata in config.
   - [x] Add v1/v2 config compatibility, v1 plaintext-to-vault migration, v2 save enforcement, and selected-account vault resolution for Claude, Grok, and Antigravity.
   - [x] Serialize automatic migration across concurrent desktop/CLI processes with a Node SQLite mutex, lock-scoped reload, follower no-write path, and synthetic adapter/wrapper tests.
+  - [x] Add metadata-only account listing plus revision-checked selection IPC, and route every desktop/CLI config writer through the shared cross-process modify primitive.
+  - [ ] Complete selected-account runtime mapping before enabling selection beyond Grok and Antigravity.
+    - [ ] Add Claude Admin API and organization-aware selected-account routing; keep Claude switching fail-closed until both paths have parity.
+    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 26 providers.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.

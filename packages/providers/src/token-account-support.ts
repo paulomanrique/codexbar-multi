@@ -3,9 +3,11 @@ import type { ProviderId } from "@codexbar/contracts";
 export interface ProviderTokenAccountSupport {
   readonly provider: ProviderId;
   readonly requiresManualCookieSource: boolean;
+  /** True only after the selected credential has a complete, fail-closed runtime mapper. */
+  readonly runtimeSelectionAvailable: boolean;
 }
 
-export const PROVIDER_TOKEN_ACCOUNT_SUPPORT = [
+const providerTokenAccountSupportBase = [
   { provider: "abacus", requiresManualCookieSource: true },
   { provider: "antigravity", requiresManualCookieSource: false },
   { provider: "augment", requiresManualCookieSource: true },
@@ -35,7 +37,15 @@ export const PROVIDER_TOKEN_ACCOUNT_SUPPORT = [
   { provider: "sub2api", requiresManualCookieSource: false },
   { provider: "venice", requiresManualCookieSource: false },
   { provider: "zai", requiresManualCookieSource: false },
-] as const satisfies readonly ProviderTokenAccountSupport[];
+] as const satisfies readonly Omit<ProviderTokenAccountSupport, "runtimeSelectionAvailable">[];
+
+const runtimeSelectableProviders = new Set<ProviderId>(["antigravity", "grok"]);
+
+export const PROVIDER_TOKEN_ACCOUNT_SUPPORT: readonly ProviderTokenAccountSupport[] =
+  providerTokenAccountSupportBase.map((support) => ({
+    ...support,
+    runtimeSelectionAvailable: runtimeSelectableProviders.has(support.provider),
+  }));
 
 export const PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID: ReadonlyMap<
   ProviderId,

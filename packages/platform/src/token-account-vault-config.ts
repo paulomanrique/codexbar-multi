@@ -28,6 +28,15 @@ export const tokenAccountVaultKey = (providerId: string, accountId: string): str
 const hasOwnToken = (account: object): boolean =>
   Object.prototype.hasOwnProperty.call(account, "token");
 
+const hasDuplicateAccountIds = (accounts: readonly { readonly id: string }[]): boolean => {
+  const ids = new Set<string>();
+  for (const account of accounts) {
+    if (ids.has(account.id)) return true;
+    ids.add(account.id);
+  }
+  return false;
+};
+
 const firstPartyProviderIds = new Set<string>(PROVIDER_IDS);
 
 const vaultError = (operation: string, cause: unknown): InfrastructureError =>
@@ -39,6 +48,9 @@ const vaultError = (operation: string, cause: unknown): InfrastructureError =>
 
 const saveError = (cause: unknown): InfrastructureError =>
   new InfrastructureError("save config", "Config contains legacy token account secrets.", cause);
+
+const invalidMetadataError = (cause: unknown): InfrastructureError =>
+  new InfrastructureError("validate token accounts", "Token account metadata is invalid.", cause);
 
 const selectedAccountFailure = (message: string): ClassifiedFetchFailure =>
   new ClassifiedFetchFailure("missing-credential", message);
@@ -68,6 +80,9 @@ const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureEr
     }
     if (tokenAccounts.accounts.some((account) => hasOwnToken(account))) {
       return saveError(new Error("Token account metadata cannot contain secrets."));
+    }
+    if (hasDuplicateAccountIds(tokenAccounts.accounts)) {
+      return invalidMetadataError(new Error("Token account IDs must be unique per provider."));
     }
   }
   return undefined;
@@ -154,8 +169,10 @@ const loadFreshAndMigrateUnderHeldLock = (
   repository.load.pipe(
     Effect.mapError((error) => vaultError("load config", error)),
     Effect.flatMap((freshConfig) => {
-      if (freshConfig === undefined || !containsLegacyTokenAccountData(freshConfig)) {
-        return Effect.succeed(freshConfig);
+      if (freshConfig === undefined) return Effect.succeed(undefined);
+      if (!containsLegacyTokenAccountData(freshConfig)) {
+        const invalid = assertMetadataOnlyV2(freshConfig);
+        return invalid === undefined ? Effect.succeed(freshConfig) : Effect.fail(invalid);
       }
       return migrateTokenAccountsToVault(freshConfig, repository, credentials);
     }),
@@ -169,8 +186,10 @@ export const makeTokenAccountVaultConfigRepository = (
   load: repository.load.pipe(
     Effect.mapError((error) => vaultError("load config", error)),
     Effect.flatMap((config) => {
-      if (config === undefined || !containsLegacyTokenAccountData(config)) {
-        return Effect.succeed(config);
+      if (config === undefined) return Effect.succeed(undefined);
+      if (!containsLegacyTokenAccountData(config)) {
+        const invalid = assertMetadataOnlyV2(config);
+        return invalid === undefined ? Effect.succeed(config) : Effect.fail(invalid);
       }
       return lock.runExclusive(loadFreshAndMigrateUnderHeldLock(repository, credentials));
     }),
@@ -429,7 +448,11 @@ export const resolveSelectedFirstPartyAccountFromVault = (
 ): Effect.Effect<FirstPartySelectedAccount | undefined, ClassifiedFetchFailure> => {
   const data = config?.providers.find((provider) => provider.id === providerId)?.tokenAccounts;
   if (data === undefined || data.accounts.length === 0) return Effect.succeed(undefined);
-  if (data.version !== 2 || data.accounts.some((account) => hasOwnToken(account))) {
+  if (
+    data.version !== 2 ||
+    data.accounts.some((account) => hasOwnToken(account)) ||
+    hasDuplicateAccountIds(data.accounts)
+  ) {
     return Effect.fail(selectedAccountFailure("Selected account metadata is not vault-backed."));
   }
   const index = Math.min(Math.max(data.activeIndex, 0), data.accounts.length - 1);

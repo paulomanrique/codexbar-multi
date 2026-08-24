@@ -104,6 +104,30 @@ describe("first-party selected accounts from the token-account vault", () => {
     ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
+  it("rejects duplicate account IDs before reading credential material", async () => {
+    let reads = 0;
+    const credentials: CredentialStoreService = {
+      read: () =>
+        Effect.sync(() => {
+          reads += 1;
+          return "must-not-be-read";
+        }),
+      write: () => Effect.void,
+      remove: () => Effect.void,
+    };
+
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config("grok", 0, ["duplicate", "duplicate"]),
+          credentials,
+          "grok",
+        ),
+      ),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+    expect(reads).toBe(0);
+  });
+
   it("fails closed for selected Codex accounts without reinterpreting legacy tokens", async () => {
     await expect(
       resolve(config("codex"), "codex", {

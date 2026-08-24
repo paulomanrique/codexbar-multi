@@ -82,9 +82,7 @@ const TokenAccountId = Schema.String.pipe(
 );
 const TokenAccountMetadataString = Schema.String.pipe(Schema.check(Schema.isMaxLength(256)));
 const TokenAccountSeconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)));
-const TokenAccountRevision = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
-);
+const TokenAccountRevision = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/)));
 
 /** A bounded, provider-scoped history query. Export stays renderer-local; it never writes a file. */
 export const HistoryQueryDTO = Schema.Struct({
@@ -283,6 +281,7 @@ export const TokenAccountRosterDTO = Schema.Struct({
   activeIndex: Schema.Natural.pipe(
     Schema.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(63)),
   ),
+  selectionAvailable: Schema.Boolean,
   revision: TokenAccountRevision,
 });
 export type TokenAccountRosterDTO = Schema.Schema.Type<typeof TokenAccountRosterDTO>;

@@ -62,4 +62,12 @@ describe("provider token account support inventory", () => {
       "stepfun",
     ]);
   });
+
+  it("exposes selection only after a complete runtime mapper exists", () => {
+    expect(
+      PROVIDER_TOKEN_ACCOUNT_SUPPORT.filter((support) => support.runtimeSelectionAvailable).map(
+        (support) => support.provider,
+      ),
+    ).toEqual(["antigravity", "grok"]);
+  });
 });

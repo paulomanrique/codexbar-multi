@@ -12,6 +12,7 @@ describe("token account preload bridge", () => {
         provider: "claude",
         accounts: [{ id: "account-1", label: "Main", addedAt: 1 }],
         activeIndex: 0,
+        selectionAvailable: true,
         revision: "a".repeat(64),
       };
     });
@@ -26,6 +27,7 @@ describe("token account preload bridge", () => {
       provider: "claude",
       accounts: [{ id: "account-1", label: "Main", addedAt: 1 }],
       activeIndex: 0,
+      selectionAvailable: true,
       revision: "a".repeat(64),
     });
     expect(calls).toEqual([
@@ -39,9 +41,7 @@ describe("token account preload bridge", () => {
       },
     ]);
 
-    await expect(
-      api.listTokenAccounts({ provider: "fixture-plugin" as never }),
-    ).rejects.toThrow();
+    await expect(api.listTokenAccounts({ provider: "fixture-plugin" as never })).rejects.toThrow();
     expect(calls).toHaveLength(1);
   });
 
@@ -50,6 +50,7 @@ describe("token account preload bridge", () => {
       provider: "claude",
       accounts: [{ id: "account-1", label: "Main", addedAt: 1, token: "redacted" }],
       activeIndex: 0,
+      selectionAvailable: true,
       revision: "a".repeat(64),
     }));
 

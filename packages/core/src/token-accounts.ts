@@ -7,15 +7,17 @@ import type {
 } from "@codexbar/contracts";
 import type { PersistedCodexBarConfig, PersistedProviderConfig } from "./config.ts";
 import { sha256Hex } from "./sha256.ts";
-import type { ConfigRepositoryService } from "./services.ts";
+import type { ConfigRepositoryService, InfrastructureError } from "./services.ts";
 
 export interface TokenAccountSupport {
   readonly provider: ProviderId;
   readonly requiresManualCookieSource: boolean;
+  readonly runtimeSelectionAvailable: boolean;
 }
 
 export type TokenAccountErrorCode =
   | "unsupported-provider"
+  | "selection-unavailable"
   | "invalid-roster"
   | "missing-roster"
   | "missing-account"
@@ -36,6 +38,8 @@ const tokenAccountErrorMessage = (code: TokenAccountErrorCode): string => {
   switch (code) {
     case "unsupported-provider":
       return "Token accounts are not supported for this provider.";
+    case "selection-unavailable":
+      return "Token account selection is not available for this provider yet.";
     case "invalid-roster":
       return "Token account metadata is not vault-backed.";
     case "missing-roster":
@@ -50,9 +54,16 @@ const tokenAccountErrorMessage = (code: TokenAccountErrorCode): string => {
 const hasOwnToken = (account: object): boolean =>
   Object.prototype.hasOwnProperty.call(account, "token");
 
-const metadataAccount = (
-  account: ProviderTokenAccount,
-): TokenAccountMetadataDTO => ({
+const hasDuplicateAccountIds = (accounts: readonly ProviderTokenAccount[]): boolean => {
+  const ids = new Set<string>();
+  for (const account of accounts) {
+    if (ids.has(account.id)) return true;
+    ids.add(account.id);
+  }
+  return false;
+};
+
+const metadataAccount = (account: ProviderTokenAccount): TokenAccountMetadataDTO => ({
   id: account.id,
   label: account.label,
   addedAt: account.addedAt,
@@ -79,6 +90,7 @@ const rosterRevision = (
 const projectRoster = (
   provider: ProviderId,
   config: PersistedCodexBarConfig | undefined,
+  selectionAvailable: boolean,
 ): TokenAccountRosterDTO => {
   const data = config?.providers.find((entry) => entry.id === provider)?.tokenAccounts;
   if (data === undefined) {
@@ -86,10 +98,15 @@ const projectRoster = (
       provider,
       accounts: [],
       activeIndex: 0,
+      selectionAvailable,
       revision: rosterRevision(provider, [], 0),
     };
   }
-  if (data.version !== 2 || data.accounts.some((account) => hasOwnToken(account))) {
+  if (
+    data.version !== 2 ||
+    data.accounts.some((account) => hasOwnToken(account)) ||
+    hasDuplicateAccountIds(data.accounts)
+  ) {
     throw new TokenAccountRosterError("invalid-roster");
   }
   const accounts = data.accounts.map(metadataAccount);
@@ -98,6 +115,7 @@ const projectRoster = (
     provider,
     accounts,
     activeIndex,
+    selectionAvailable,
     revision: rosterRevision(provider, accounts, activeIndex),
   };
 };
@@ -115,12 +133,12 @@ export interface TokenAccountRosterServiceOptions {
 export interface TokenAccountRosterService {
   readonly list: (
     provider: ProviderId,
-  ) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | Error>;
+  ) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | InfrastructureError>;
   readonly select: (request: {
     readonly provider: ProviderId;
     readonly accountId: string;
     readonly expectedRevision: string;
-  }) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | Error>;
+  }) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | InfrastructureError>;
 }
 
 export const makeTokenAccountRosterService = (
@@ -138,9 +156,10 @@ export const makeTokenAccountRosterService = (
   const rosterFor = (
     provider: ProviderId,
     config: PersistedCodexBarConfig | undefined,
+    support: TokenAccountSupport,
   ): Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError> =>
     Effect.try({
-      try: () => projectRoster(provider, config),
+      try: () => projectRoster(provider, config, support.runtimeSelectionAvailable),
       catch: (error) =>
         error instanceof TokenAccountRosterError
           ? error
@@ -150,58 +169,66 @@ export const makeTokenAccountRosterService = (
   return {
     list: (provider) =>
       requireSupport(provider).pipe(
-        Effect.flatMap(() =>
+        Effect.flatMap((support) =>
           options.config.load.pipe(
-            Effect.flatMap((config) => rosterFor(provider, config)),
+            Effect.flatMap((config) => rosterFor(provider, config, support)),
           ),
         ),
       ),
     select: (request) =>
       requireSupport(request.provider).pipe(
         Effect.flatMap((support) =>
-          options.config.modify((config) =>
-            Effect.gen(function* () {
-              if (config === undefined)
-                return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
-              const provider = providerConfig(config, request.provider);
-              const data = provider?.tokenAccounts;
-              if (provider === undefined || data === undefined || data.accounts.length === 0) {
-                return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
-              }
-              if (data.version !== 2 || data.accounts.some((account) => hasOwnToken(account))) {
-                return yield* Effect.fail(new TokenAccountRosterError("invalid-roster"));
-              }
-              const currentRoster = yield* rosterFor(request.provider, config);
-              if (currentRoster.revision !== request.expectedRevision) {
-                return yield* Effect.fail(new TokenAccountRosterError("stale-revision"));
-              }
-              const selectedIndex = data.accounts.findIndex(
-                (account) => account.id === request.accountId,
-              );
-              if (selectedIndex < 0)
-                return yield* Effect.fail(new TokenAccountRosterError("missing-account"));
-              const nextProvider: PersistedProviderConfig = {
-                ...provider,
-                ...(support.requiresManualCookieSource ? { cookieSource: "manual" as const } : {}),
-                tokenAccounts: {
-                  version: 2,
-                  accounts: data.accounts,
-                  activeIndex: selectedIndex,
-                },
-              };
-              const nextConfig: PersistedCodexBarConfig = {
-                ...config,
-                providers: config.providers.map((entry) =>
-                  entry.id === request.provider ? nextProvider : entry,
-                ),
-              };
-              const roster = yield* rosterFor(request.provider, nextConfig);
-              return {
-                config: nextConfig,
-                value: roster,
-              };
-            }),
-          ),
+          support.runtimeSelectionAvailable
+            ? options.config.modify((config) =>
+                Effect.gen(function* () {
+                  if (config === undefined)
+                    return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
+                  const provider = providerConfig(config, request.provider);
+                  const data = provider?.tokenAccounts;
+                  if (provider === undefined || data === undefined || data.accounts.length === 0) {
+                    return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
+                  }
+                  if (
+                    data.version !== 2 ||
+                    data.accounts.some((account) => hasOwnToken(account)) ||
+                    hasDuplicateAccountIds(data.accounts)
+                  ) {
+                    return yield* Effect.fail(new TokenAccountRosterError("invalid-roster"));
+                  }
+                  const currentRoster = yield* rosterFor(request.provider, config, support);
+                  if (currentRoster.revision !== request.expectedRevision) {
+                    return yield* Effect.fail(new TokenAccountRosterError("stale-revision"));
+                  }
+                  const selectedIndex = data.accounts.findIndex(
+                    (account) => account.id === request.accountId,
+                  );
+                  if (selectedIndex < 0)
+                    return yield* Effect.fail(new TokenAccountRosterError("missing-account"));
+                  const nextProvider: PersistedProviderConfig = {
+                    ...provider,
+                    ...(support.requiresManualCookieSource
+                      ? { cookieSource: "manual" as const }
+                      : {}),
+                    tokenAccounts: {
+                      version: 2,
+                      accounts: data.accounts,
+                      activeIndex: selectedIndex,
+                    },
+                  };
+                  const nextConfig: PersistedCodexBarConfig = {
+                    ...config,
+                    providers: config.providers.map((entry) =>
+                      entry.id === request.provider ? nextProvider : entry,
+                    ),
+                  };
+                  const roster = yield* rosterFor(request.provider, nextConfig, support);
+                  return {
+                    config: nextConfig,
+                    value: roster,
+                  };
+                }),
+              )
+            : Effect.fail(new TokenAccountRosterError("selection-unavailable")),
         ),
         Effect.map((result) => result.value),
       ),

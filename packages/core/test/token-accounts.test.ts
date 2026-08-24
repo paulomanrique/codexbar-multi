@@ -68,8 +68,22 @@ const service = (config: PersistedCodexBarConfig | undefined) => {
     tokenAccounts: makeTokenAccountRosterService({
       config: store,
       support: new Map<ProviderId, TokenAccountSupport>([
-        ["claude", { provider: "claude", requiresManualCookieSource: true }],
-        ["openai", { provider: "openai", requiresManualCookieSource: false }],
+        [
+          "claude",
+          {
+            provider: "claude",
+            requiresManualCookieSource: true,
+            runtimeSelectionAvailable: true,
+          },
+        ],
+        [
+          "openai",
+          {
+            provider: "openai",
+            requiresManualCookieSource: false,
+            runtimeSelectionAvailable: false,
+          },
+        ],
       ]),
     }),
   };
@@ -136,6 +150,31 @@ describe("token account roster service", () => {
     ).rejects.toMatchObject({ code: "missing-account" });
   });
 
+  it("fails closed for duplicate account IDs instead of selecting ambiguously", async () => {
+    const base = accountConfig(0);
+    const duplicate: PersistedCodexBarConfig = {
+      ...base,
+      providers: base.providers.map((provider) => {
+        if (provider.id !== "claude" || provider.tokenAccounts === undefined) return provider;
+        const [first, second] = provider.tokenAccounts.accounts;
+        if (first === undefined || second === undefined)
+          throw new Error("missing fixture accounts");
+        return {
+          ...provider,
+          tokenAccounts: {
+            ...provider.tokenAccounts,
+            accounts: [first, { ...second, id: first.id }],
+          },
+        };
+      }),
+    };
+    const { tokenAccounts } = service(duplicate);
+
+    await expect(Effect.runPromise(tokenAccounts.list("claude"))).rejects.toMatchObject({
+      code: "invalid-roster",
+    });
+  });
+
   it("rejects unsupported providers before credential access", async () => {
     const store = repository(accountConfig(0));
     const tokenAccounts = makeTokenAccountRosterService({
@@ -150,5 +189,22 @@ describe("token account roster service", () => {
       TokenAccountRosterError,
     );
     expect(store.credentialReads).toEqual([]);
+  });
+
+  it("rejects selection before mutation when the runtime mapper is incomplete", async () => {
+    const { store, tokenAccounts } = service(accountConfig(0));
+    const original = store.current;
+    const roster = await Effect.runPromise(tokenAccounts.list("openai"));
+
+    await expect(
+      Effect.runPromise(
+        tokenAccounts.select({
+          provider: "openai",
+          accountId: "missing",
+          expectedRevision: roster.revision,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "selection-unavailable" });
+    expect(store.current).toBe(original);
   });
 });
