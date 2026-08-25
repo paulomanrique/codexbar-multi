@@ -1360,20 +1360,30 @@ providers:
   - id: neuralwatt
     swiftGlobs:
       - Sources/CodexBar/Providers/NeuralWatt/**/*.swift
+      - Sources/CodexBarCore/Providers/NeuralWatt/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*NeuralWatt*Tests.swift
         - TestsLinux/*NeuralWatt*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/http-parity-wave-three.test.ts
+        - packages/platform/test/first-party-runtime-neuralwatt-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/token-account-vault-config.test.ts
     fixtures:
       - packages/providers/test/http-parity-wave-three.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/neuralwatt.ts]
+      expected:
+        - packages/providers/src/providers/neuralwatt.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/neuralwatt.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/http-parity-wave-three.test.ts
+      - packages/platform/test/first-party-runtime-neuralwatt-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/token-account-vault-config.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

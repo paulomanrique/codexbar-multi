@@ -242,6 +242,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical Neuralwatt key without copying its global endpoint", async () => {
+    const key = tokenAccountVaultKey("neuralwatt", "account-0");
+    await expect(
+      resolve(config("neuralwatt"), "neuralwatt", { [key]: "  'neural-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { NEURALWATT_API_KEY: "neural-selected" },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("neuralwatt"), "neuralwatt", { [key]: material }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

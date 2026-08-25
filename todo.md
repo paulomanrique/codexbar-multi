@@ -53,7 +53,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add Venice selected API-key mapping with canonical/legacy alias parity and classified provider errors.
     - [x] Add ElevenLabs selected API-key mapping with XI alias isolation and secure endpoint overrides.
     - [x] Add IBM Bob selected token mapping while preserving JWT/API-key authorization and regional host boundaries.
-    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 19 providers.
+    - [x] Add Neuralwatt selected API-key mapping, secure endpoint overrides, and exact quota/error parsing.
+    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 18 providers.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.

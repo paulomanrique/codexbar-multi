@@ -4,29 +4,53 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { date, get, json, number, object, status, string } from "./_http.ts";
+import { normalizeEndpoint } from "@codexbar/core";
+import { date, get, json, number, object, string } from "./_http.ts";
+
+const clean = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
 const definition: ProviderDefinition = {
   id: "neuralwatt",
   name: "Neuralwatt",
-  endpoints: ["https://api.neuralwatt.com"],
-  auth: { type: "bearer", secret: "NEURALWATT_API_KEY" },
+  endpoints: ["https://api.neuralwatt.com", { setting: "NEURALWATT_API_URL", policy: "https" }],
   settings: [
     { key: "NEURALWATT_API_KEY", title: "API key", type: "secure" },
     { key: "NEURALWATT_API_URL", title: "API URL", type: "plain" },
   ],
   fetchUsage: async (ctx) => {
     const key =
-      ctx.settings.getSecret("NEURALWATT_API_KEY") || ctx.settings.get("NEURALWATT_API_KEY");
+      clean(ctx.settings.getSecret("NEURALWATT_API_KEY")) ??
+      clean(ctx.settings.get("NEURALWATT_API_KEY"));
     if (!key) throw ctx.fail.missingCredential("Missing Neuralwatt API key.");
-    const rootURL = (
-      ctx.settings.get("NEURALWATT_API_URL") || "https://api.neuralwatt.com"
-    ).replace(/\/+$/, "");
-    const response = await get(
-      ctx,
-      `${rootURL.endsWith("/v1") ? rootURL : `${rootURL}/v1`}/quota`,
-      { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } },
-    );
-    status(ctx, "Neuralwatt", response);
+    const configured = clean(ctx.settings.get("NEURALWATT_API_URL"));
+    const endpoint = normalizeEndpoint(configured ?? "https://api.neuralwatt.com");
+    if (endpoint === undefined) {
+      throw ctx.fail.apiFailure(
+        "Neuralwatt endpoint override NEURALWATT_API_URL must use HTTPS or a bare host.",
+      );
+    }
+    const quotaURL = new URL(endpoint.href);
+    const rootPath = quotaURL.pathname.replace(/\/+$/u, "");
+    quotaURL.pathname = rootPath.endsWith("/v1") ? `${rootPath}/quota` : `${rootPath}/v1/quota`;
+    const response = await get(ctx, quotaURL.href, {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw ctx.fail.missingCredential("Neuralwatt rejected the API key.");
+    }
+    if (response.status !== 200) {
+      throw ctx.fail.apiFailure(`Neuralwatt API returned HTTP ${response.status}.`);
+    }
     const parsed = object(json(ctx, "Neuralwatt", response));
     if (!parsed) throw ctx.fail.parseFailure("Neuralwatt response must be an object.");
     const root = parsed;
@@ -108,19 +132,20 @@ const definition: ProviderDefinition = {
       };
     const allowance = object(object(root.key)?.allowance);
     const al = number(allowance?.limit_usd);
+    const spent = nonNegative(allowance?.spent_usd);
     const blocked = allowance?.blocked === true;
-    if (allowance && (blocked || (al !== undefined && al > 0)))
+    const allowancePercent = blocked
+      ? 100
+      : al !== undefined && al > 0 && spent !== undefined
+        ? Math.max(0, Math.min(100, (spent / al) * 100))
+        : undefined;
+    if (allowance && allowancePercent !== undefined)
       result.extraRateWindows = [
         {
           id: "key-allowance",
           title: `Key ${string(allowance.period)?.replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Allowance"}`,
           window: {
-            usedPercent: blocked
-              ? 100
-              : Math.max(
-                  0,
-                  Math.min(100, ((nonNegative(allowance.spent_usd) ?? 0) / (al as number)) * 100),
-                ),
+            usedPercent: allowancePercent,
           },
         },
       ];

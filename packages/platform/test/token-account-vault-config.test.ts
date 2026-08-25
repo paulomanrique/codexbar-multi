@@ -884,4 +884,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { BOBSHELL_API_KEY: "selected-key" },
     });
   });
+
+  it("maps a selected Neuralwatt account without copying its global endpoint", async () => {
+    const account = { id: "neuralwatt-selected", label: "Prepaid", addedAt: 0 };
+    const key = tokenAccountVaultKey("neuralwatt", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "neuralwatt",
+          extensions: { NEURALWATT_API_URL: "https://neural.example.test/v1" },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: ' "selected-key" ' }),
+        "neuralwatt",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { NEURALWATT_API_KEY: "selected-key" },
+    });
+  });
 });

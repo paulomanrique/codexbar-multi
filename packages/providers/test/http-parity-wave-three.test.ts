@@ -434,4 +434,93 @@ describe("Swift-derived HTTP provider parity wave three", () => {
       { id: "key-allowance", title: "Key Monthly", window: { usedPercent: 100 } },
     ]);
   });
+
+  it("normalizes Neuralwatt credentials and endpoint composition like Swift", async () => {
+    const requests: Request[] = [];
+    await neuralwatt.fetchUsage(
+      context(
+        () => json({ balance: { credits_remaining_usd: 3 } }),
+        {
+          NEURALWATT_API_KEY: "  'fixture-key'  ",
+          NEURALWATT_API_URL: '  "neural.example.test/custom/v1/"  ',
+        },
+        requests,
+      ),
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.href).toBe("https://neural.example.test/custom/v1/quota");
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer fixture-key", Accept: "application/json" },
+    });
+
+    const defaultRequests: Request[] = [];
+    await neuralwatt.fetchUsage(
+      context(
+        () => json({ balance: { credits_remaining_usd: 1 } }),
+        { NEURALWATT_API_KEY: "fixture-key" },
+        defaultRequests,
+      ),
+    );
+    expect(defaultRequests[0]?.url.href).toBe("https://api.neuralwatt.com/v1/quota");
+  });
+
+  it.each([
+    "http://neural.example.test",
+    "https://user:pass@neural.example.test",
+    "https://neural.example.test%2f.attacker.test",
+  ])("rejects unsafe Neuralwatt endpoint %s before transport", async (endpoint) => {
+    const requests: Request[] = [];
+    await expect(
+      neuralwatt.fetchUsage(
+        context(
+          () => json({ balance: { credits_remaining_usd: 1 } }),
+          { NEURALWATT_API_KEY: "fixture-key", NEURALWATT_API_URL: endpoint },
+          requests,
+        ),
+      ),
+    ).rejects.toThrow("api-failure:");
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each([
+    [401, "missing-credential"],
+    [403, "missing-credential"],
+    [429, "api-failure"],
+    [500, "api-failure"],
+    [201, "api-failure"],
+  ] as const)("classifies Neuralwatt HTTP %s like the Swift oracle", async (statusCode, kind) => {
+    await expect(
+      neuralwatt.fetchUsage(
+        context(() => json({}, statusCode), { NEURALWATT_API_KEY: "fixture-key" }),
+      ),
+    ).rejects.toThrow(`${kind}:`);
+  });
+
+  it("classifies Neuralwatt transport failures and omits incomplete key allowances", async () => {
+    await expect(
+      neuralwatt.fetchUsage(
+        context(
+          () => {
+            throw new Error("offline");
+          },
+          { NEURALWATT_API_KEY: "fixture-key" },
+        ),
+      ),
+    ).rejects.toThrow("network-failure:");
+
+    const snapshot = await neuralwatt.fetchUsage(
+      context(
+        () =>
+          json({
+            balance: { credits_remaining_usd: 3, accounting_method: "energy" },
+            key: { allowance: { limit_usd: 50, period: "monthly", blocked: false } },
+            subscription: { auto_renew: false, current_period_end: "2026-05-11T05:05:25Z" },
+          }),
+        { NEURALWATT_API_KEY: "fixture-key" },
+      ),
+    );
+    expect(snapshot.extraRateWindows).toBeUndefined();
+    expect(snapshot.subscriptionRenewsAt).toBeUndefined();
+    expect(snapshot.identity).toEqual({ loginMethod: "Energy" });
+  });
 });
