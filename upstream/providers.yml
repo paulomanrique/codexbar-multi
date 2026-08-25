@@ -1432,6 +1432,7 @@ providers:
   - id: sub2api
     swiftGlobs:
       - Sources/CodexBar/Providers/Sub2API/**/*.swift
+      - Sources/CodexBarCore/Providers/Sub2API/**/*.swift
       - Sources/CodexBarCore/Resources/Plugins/sub2api.js
     tests:
       swiftGlobs:
@@ -1439,14 +1440,25 @@ providers:
         - TestsLinux/*Sub2API*Tests.swift
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
+        - packages/providers/test/sub2api-parity.test.ts
+        - packages/platform/test/first-party-runtime-sub2api-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/token-account-vault-config.test.ts
     fixtures:
-      - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/sub2api-parity.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/sub2api.ts]
+      expected:
+        - packages/providers/src/providers/sub2api.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/sub2api.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/sub2api-parity.test.ts
+      - packages/platform/test/first-party-runtime-sub2api-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/token-account-vault-config.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

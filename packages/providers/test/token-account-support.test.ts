@@ -78,6 +78,7 @@ describe("provider token account support inventory", () => {
       "groq",
       "ibmbob",
       "neuralwatt",
+      "sub2api",
       "venice",
       "zai",
     ]);

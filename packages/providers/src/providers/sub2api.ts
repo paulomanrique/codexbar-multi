@@ -5,6 +5,21 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
+import { normalizeEndpoint } from "@codexbar/core";
+import { get } from "./_http.ts";
+
+const clean = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
 const definition: ProviderDefinition = {
   id: "sub2api",
   name: "sub2api",
@@ -15,19 +30,38 @@ const definition: ProviderDefinition = {
     { key: "SUB2API_BASE_URL", title: "Base URL", type: "plain" },
   ],
   fetchUsage: async (ctx: ProviderContext) => {
-    let base: any = ctx.settings.get("SUB2API_BASE_URL")!.replace(/\/+$/, "");
-    if (!/\/v1(?:\/usage)?$/.test(base)) base += "/v1";
-    if (!base.endsWith("/usage")) base += "/usage";
-    const timezone: any = ctx.env.timeZone || "UTC";
-    let response;
-    try {
-      response = await ctx.http.get(`${base}?days=30&timezone=${encodeURIComponent(timezone)}`, {
-        timeoutSeconds: 15,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw ctx.fail.networkFailure(`sub2api network error: ${message}`);
+    const key =
+      clean(ctx.settings.getSecret("SUB2API_API_KEY")) ??
+      clean(ctx.settings.get("SUB2API_API_KEY"));
+    if (key === undefined) {
+      throw ctx.fail.missingCredential(
+        "Missing sub2api API key. Add a group API key in Settings or set SUB2API_API_KEY.",
+      );
     }
+    const configuredBase = clean(ctx.settings.get("SUB2API_BASE_URL"));
+    const endpoint =
+      configuredBase === undefined
+        ? undefined
+        : normalizeEndpoint(configuredBase, { transport: "loopback-http" });
+    if (endpoint === undefined || endpoint.search !== "" || endpoint.hash !== "") {
+      throw ctx.fail.missingCredential(
+        "Missing or invalid sub2api base URL. Add one in Settings or set SUB2API_BASE_URL.",
+      );
+    }
+    const usageURL = new URL(endpoint.href);
+    const rootPath = usageURL.pathname.replace(/\/+$/u, "");
+    usageURL.pathname = rootPath.endsWith("/v1/usage")
+      ? rootPath
+      : rootPath.endsWith("/v1")
+        ? `${rootPath}/usage`
+        : `${rootPath}/v1/usage`;
+    const timezone: any = ctx.env.timeZone || "UTC";
+    usageURL.searchParams.set("days", "30");
+    usageURL.searchParams.set("timezone", timezone);
+    const response = await get(ctx, usageURL.href, {
+      headers: { Authorization: `Bearer ${key}` },
+      timeoutSeconds: 15,
+    });
     if (response.status === 401 || response.status === 403) {
       throw ctx.fail.authenticationExpired(
         "sub2api rejected the API key. Check that the key is active and assigned to a group.",

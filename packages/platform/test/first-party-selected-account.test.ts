@@ -258,6 +258,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical sub2api key without copying its global base URL", async () => {
+    const key = tokenAccountVaultKey("sub2api", "account-0");
+    await expect(
+      resolve(config("sub2api"), "sub2api", { [key]: '  "sub2api-selected"  ' }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { SUB2API_API_KEY: "sub2api-selected" },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("sub2api"), "sub2api", { [key]: material }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

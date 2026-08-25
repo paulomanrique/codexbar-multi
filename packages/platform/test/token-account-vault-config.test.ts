@@ -911,4 +911,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { NEURALWATT_API_KEY: "selected-key" },
     });
   });
+
+  it("maps a selected sub2api key while preserving its global base URL outside the vault", async () => {
+    const account = { id: "sub2api-selected", label: "Group", addedAt: 0 };
+    const key = tokenAccountVaultKey("sub2api", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "sub2api",
+          extensions: { SUB2API_BASE_URL: "https://sub2api.example.test" },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: " 'selected-key' " }),
+        "sub2api",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { SUB2API_API_KEY: "selected-key" },
+    });
+  });
 });
