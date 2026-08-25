@@ -252,6 +252,36 @@ describe("first-party selected accounts from the token-account vault", () => {
     ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
+  it.each([
+    [
+      "provider=google; auth=go-session; theme=dark; __Host-auth=go-host",
+      "auth=go-session; __Host-auth=go-host",
+    ],
+    ["curl https://opencode.ai -H 'Cookie: auth=first; auth=second'", "auth=first; auth=second"],
+  ] as const)("selects only exact OpenCode Go auth cookies from %s", async (material, expected) => {
+    const key = tokenAccountVaultKey("opencodego", "account-0");
+    await expect(resolve(config("opencodego"), "opencodego", { [key]: material })).resolves.toEqual(
+      {
+        id: "account-0",
+        secureSettings: { OPENCODEGO_COOKIE: expected, OPENCODE_API_KEY: null },
+      },
+    );
+  });
+
+  it.each([
+    "",
+    "account-token",
+    "provider=google; theme=dark",
+    "Auth=wrong-case; __host-auth=wrong-case",
+    "auth=value\u0000suffix",
+    `auth=value; ignored=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected OpenCode Go cookie material", async (material) => {
+    const key = tokenAccountVaultKey("opencodego", "account-0");
+    await expect(
+      resolve(config("opencodego"), "opencodego", { [key]: material }),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+  });
+
   it("selects an opaque Copilot token without inheriting the ambient API key", async () => {
     const key = tokenAccountVaultKey("copilot", "account-0");
     await expect(

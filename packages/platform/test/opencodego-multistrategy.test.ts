@@ -33,7 +33,7 @@ const runtimeFor = (
       write: () => Effect.void,
       remove: () => Effect.void,
     },
-    browserSessions: { cookieHeader: () => Effect.succeed("session=fixture") },
+    browserSessions: { cookieHeader: () => Effect.succeed("auth=fixture") },
     http: {
       execute: (request) => {
         const url = new URL(request.url);

@@ -942,6 +942,17 @@ const selectedStrategyAllowed = (
     const cookie = ownSetting(selectedAccount.secureSettings, "OPENCODE_COOKIE");
     return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "opencode.web";
   }
+  if (providerId === "opencodego") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "OPENCODEGO_COOKIE");
+    const apiKey = ownSetting(selectedAccount.secureSettings, "OPENCODE_API_KEY");
+    return (
+      cookie.present &&
+      Boolean(cookie.value?.trim()) &&
+      apiKey.present &&
+      apiKey.value === undefined &&
+      strategy.id === "opencodego.web"
+    );
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

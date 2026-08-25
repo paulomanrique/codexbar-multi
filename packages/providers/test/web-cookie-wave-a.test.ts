@@ -395,6 +395,59 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
     });
   });
 
+  it("filters the manual OpenCode Go cookie at every request boundary", async () => {
+    const cookies: string[] = [];
+    await opencodego.fetchUsage(
+      context(
+        (request) => {
+          cookies.push(
+            ((request.options?.headers ?? {}) as Record<string, string>).Cookie ?? "missing",
+          );
+          if (request.url.pathname.endsWith("/go")) {
+            return json({ rollingUsage: { usagePercent: 10, resetInSec: 300 } });
+          }
+          return json({ zenBalanceUSD: 8 });
+        },
+        {
+          OPENCODEGO_COOKIE:
+            "provider=google; auth=go-selected; theme=dark; __Host-auth=go-selected-host",
+          OPENCODEGO_WORKSPACE_ID: "wrk_fixture",
+        },
+      ),
+    );
+    expect(cookies).toEqual([
+      "auth=go-selected; __Host-auth=go-selected-host",
+      "auth=go-selected; __Host-auth=go-selected-host",
+    ]);
+  });
+
+  it("rejects an invalid manual OpenCode Go cookie without browser or API fallback", async () => {
+    const ctx = context(
+      () => {
+        throw new Error("unexpected request");
+      },
+      {
+        OPENCODE_API_KEY: "ambient-api-key",
+        OPENCODEGO_COOKIE: "provider=google; theme=dark",
+        OPENCODEGO_WORKSPACE_ID: "wrk_fixture",
+      },
+    );
+    let browserCalls = 0;
+    await expect(
+      opencodego.fetchUsage({
+        ...ctx,
+        sourceMode: "web",
+        browser: {
+          cookieHeader: async () => {
+            browserCalls += 1;
+            return "auth=ambient";
+          },
+        },
+      }),
+    ).rejects.toThrow("missing-credential");
+    expect(browserCalls).toBe(0);
+  });
+
   it("prefers the quoted secure API key over web cookies and maps API windows", async () => {
     const calls: Request[] = [];
     const snapshot = await opencodego.fetchUsage(

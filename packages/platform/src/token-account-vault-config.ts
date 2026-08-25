@@ -470,6 +470,28 @@ const selectedOpenCodeAccount = (
   return Effect.succeed({ id: accountId, secureSettings: { OPENCODE_COOKIE: cookieHeader } });
 };
 
+const selectedOpenCodeGoAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const byteLength = new TextEncoder().encode(raw).byteLength;
+  const cookieHeader = openCodeRequestCookieHeader(raw);
+  if (
+    raw.includes("\u0000") ||
+    byteLength > 1024 * 1024 ||
+    cookieHeader === undefined ||
+    cookieHeader.includes("\u0000")
+  ) {
+    return Effect.fail(
+      selectedAccountFailure("Selected OpenCode Go account credential is invalid."),
+    );
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: { OPENCODEGO_COOKIE: cookieHeader, OPENCODE_API_KEY: null },
+  });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -798,7 +820,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "augment" &&
     providerId !== "cursor" &&
     providerId !== "mistral" &&
-    providerId !== "opencode"
+    providerId !== "opencode" &&
+    providerId !== "opencodego"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -831,6 +854,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "mistral")
         return selectedCookieAccount(account.id, material, "MISTRAL_COOKIE_HEADER", "Mistral");
       if (providerId === "opencode") return selectedOpenCodeAccount(account.id, material);
+      if (providerId === "opencodego") return selectedOpenCodeGoAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

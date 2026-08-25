@@ -7,6 +7,7 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { number, object, status } from "./_http.ts";
+import { openCodeRequestCookieHeader } from "./open-code-cookie.ts";
 
 const BASE = "https://opencode.ai";
 const USAGE_API = `${BASE}/zen/go/v1/usage`;
@@ -195,7 +196,12 @@ const fetchAPI = async (ctx: ProviderContext, token: string) => {
 const cookie = async (ctx: ProviderContext) => {
   const manual =
     ctx.settings.getSecret("OPENCODEGO_COOKIE") ?? ctx.settings.get("OPENCODEGO_COOKIE");
-  const result = manual?.trim() || (await ctx.browser.cookieHeader("opencode.ai")).trim();
+  if (manual?.trim()) {
+    const result = openCodeRequestCookieHeader(manual);
+    if (!result) throw ctx.fail.missingCredential("OpenCode Go cookie header is invalid.");
+    return result;
+  }
+  const result = openCodeRequestCookieHeader(await ctx.browser.cookieHeader("opencode.ai"));
   if (!result) throw ctx.fail.missingCredential("No OpenCode Go session cookie is available.");
   return result;
 };
@@ -239,6 +245,7 @@ const fetchWebUsage = async (ctx: ProviderContext) => {
       "balance",
     ]);
   } catch (error) {
+    if (cancelled(error)) throw error;
     if (error instanceof Error && error.message.startsWith("authentication-expired")) throw error;
     // The upstream balance request is optional and must not hide valid quota data.
   }
