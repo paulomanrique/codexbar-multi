@@ -965,4 +965,44 @@ describe("token-account vault config repository", () => {
       secureSettings: { LLM_PROXY_API_KEY: "selected-key" },
     });
   });
+
+  it("maps a selected DeepSeek key without inheriting ambient platform context", async () => {
+    const account = { id: "deepseek-selected", label: "DeepSeek", addedAt: 0 };
+    const key = tokenAccountVaultKey("deepseek", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "deepseek",
+          extensions: {
+            DEEPSEEK_PLATFORM_TOKEN: "ambient-platform-token",
+            CODEXBAR_DEEPSEEK_PROFILE_ID: "ambient-profile",
+            CODEXBAR_DEEPSEEK_PROFILE_SCOPE: "ambient-scope",
+          },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: ' "selected-key" ' }),
+          "deepseek",
+        ),
+      ),
+    ).resolves.toEqual({
+      id: account.id,
+      secureSettings: {
+        DEEPSEEK_API_KEY: "selected-key",
+        DEEPSEEK_KEY: null,
+        DEEPSEEK_PLATFORM_TOKEN: null,
+        DEEPSEEK_USER_TOKEN: null,
+      },
+      plainSettings: {
+        CODEXBAR_DEEPSEEK_PROFILE_ID: null,
+        CODEXBAR_DEEPSEEK_PROFILE_SCOPE: null,
+      },
+    });
+  });
 });

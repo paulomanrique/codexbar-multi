@@ -556,4 +556,88 @@ describe("Swift-derived HTTP provider parity wave two", () => {
       ),
     ).rejects.toThrow("parse-failure:");
   });
+
+  it("matches DeepSeek canonical-key precedence and legacy alias cleanup", async () => {
+    for (const settings of [
+      { DEEPSEEK_KEY: "  'alias-key'  " },
+      { DEEPSEEK_API_KEY: '  "canonical-key"  ', DEEPSEEK_KEY: "alias-key" },
+    ]) {
+      const requests: Request[] = [];
+      await deepseek.fetchUsage(
+        context(
+          () =>
+            json({
+              is_available: true,
+              balance_infos: [
+                {
+                  currency: "USD",
+                  total_balance: "1.00",
+                  granted_balance: "0.00",
+                  topped_up_balance: "1.00",
+                },
+              ],
+            }),
+          { settings, requests },
+        ),
+      );
+      const expected = "DEEPSEEK_API_KEY" in settings ? "canonical-key" : "alias-key";
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url.toString()).toBe("https://api.deepseek.com/user/balance");
+      expect(requests[0]?.options).toMatchObject({
+        headers: { Authorization: `Bearer ${expected}`, Accept: "application/json" },
+      });
+    }
+  });
+
+  it.each([401, 403, 429, 500, 201])(
+    "classifies DeepSeek HTTP %s as an API failure",
+    async (status) => {
+      await expect(
+        deepseek.fetchUsage(
+          context(() => json({ error: "provider failure" }, status), {
+            settings: { DEEPSEEK_API_KEY: "fixture-key" },
+          }),
+        ),
+      ).rejects.toThrow("api-failure:");
+    },
+  );
+
+  it.each([
+    { total_balance: 1, granted_balance: "0", topped_up_balance: "1" },
+    { total_balance: "1", granted_balance: 0, topped_up_balance: "1" },
+    { total_balance: "1", granted_balance: "0", topped_up_balance: 1 },
+    { total_balance: "", granted_balance: "0", topped_up_balance: "1" },
+    { total_balance: " ", granted_balance: "0", topped_up_balance: "1" },
+    { total_balance: "0x10", granted_balance: "0", topped_up_balance: "1" },
+    { total_balance: "Infinity", granted_balance: "0", topped_up_balance: "1" },
+    { granted_balance: "0", topped_up_balance: "1" },
+  ])("rejects DeepSeek non-string or invalid balance fields: %o", async (fields) => {
+    await expect(
+      deepseek.fetchUsage(
+        context(
+          () =>
+            json({
+              is_available: true,
+              balance_infos: [{ currency: "USD", ...fields }],
+            }),
+          { settings: { DEEPSEEK_API_KEY: "fixture-key" } },
+        ),
+      ),
+    ).rejects.toThrow("parse-failure:");
+  });
+
+  it("preserves DeepSeek transport cancellation", async () => {
+    const aborted = new Error("cancelled");
+    aborted.name = "AbortError";
+    await expect(
+      deepseek.fetchUsage(
+        context(
+          () => {
+            throw aborted;
+          },
+          { settings: { DEEPSEEK_API_KEY: "fixture-key" } },
+        ),
+      ),
+    ).rejects.toBe(aborted);
+  });
 });

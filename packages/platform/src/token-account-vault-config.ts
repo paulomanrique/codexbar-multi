@@ -597,6 +597,29 @@ const selectedLLMProxyAccount = (
   return Effect.succeed({ id: accountId, secureSettings: { LLM_PROXY_API_KEY: apiKey } });
 };
 
+const selectedDeepSeekAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected DeepSeek account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: {
+      DEEPSEEK_API_KEY: apiKey,
+      DEEPSEEK_KEY: null,
+      DEEPSEEK_PLATFORM_TOKEN: null,
+      DEEPSEEK_USER_TOKEN: null,
+    },
+    plainSettings: {
+      CODEXBAR_DEEPSEEK_PROFILE_ID: null,
+      CODEXBAR_DEEPSEEK_PROFILE_SCOPE: null,
+    },
+  });
+};
+
 const selectedGrokAccount = (
   accountId: string,
   raw: string,
@@ -683,7 +706,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "ibmbob" &&
     providerId !== "neuralwatt" &&
     providerId !== "sub2api" &&
-    providerId !== "llmproxy"
+    providerId !== "llmproxy" &&
+    providerId !== "deepseek"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -703,6 +727,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "neuralwatt") return selectedNeuralWattAccount(account.id, material);
       if (providerId === "sub2api") return selectedSub2APIAccount(account.id, material);
       if (providerId === "llmproxy") return selectedLLMProxyAccount(account.id, material);
+      if (providerId === "deepseek") return selectedDeepSeekAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

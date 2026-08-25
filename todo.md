@@ -56,7 +56,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add Neuralwatt selected API-key mapping, secure endpoint overrides, and exact quota/error parsing.
     - [x] Add sub2api selected group-key mapping with validated global instance URLs and plugin parser parity.
     - [x] Add LLM Proxy selected API-key mapping with private-network endpoint parity.
-    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 16 providers.
+    - [x] Add DeepSeek selected API-key mapping without cross-account platform-session enrichment.
+    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 15 providers.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.

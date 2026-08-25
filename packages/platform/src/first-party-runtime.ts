@@ -849,6 +849,10 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "LLM_PROXY_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "llmproxy.api";
   }
+  if (providerId === "deepseek") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPSEEK_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "deepseek.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

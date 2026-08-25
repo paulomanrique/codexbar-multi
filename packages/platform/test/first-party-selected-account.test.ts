@@ -292,6 +292,31 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical DeepSeek key while suppressing ambient platform context", async () => {
+    const key = tokenAccountVaultKey("deepseek", "account-0");
+    await expect(
+      resolve(config("deepseek"), "deepseek", { [key]: "  'deepseek-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        DEEPSEEK_API_KEY: "deepseek-selected",
+        DEEPSEEK_KEY: null,
+        DEEPSEEK_PLATFORM_TOKEN: null,
+        DEEPSEEK_USER_TOKEN: null,
+      },
+      plainSettings: {
+        CODEXBAR_DEEPSEEK_PROFILE_ID: null,
+        CODEXBAR_DEEPSEEK_PROFILE_SCOPE: null,
+      },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("deepseek"), "deepseek", { [key]: material }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,
