@@ -938,4 +938,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { SUB2API_API_KEY: "selected-key" },
     });
   });
+
+  it("maps a selected LLM Proxy key without copying its enterprise host", async () => {
+    const account = { id: "llmproxy-selected", label: "Proxy", addedAt: 0 };
+    const key = tokenAccountVaultKey("llmproxy", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "llmproxy",
+          extensions: { LLM_PROXY_BASE_URL: "https://proxy.example.test" },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: ' "selected-key" ' }),
+          "llmproxy",
+        ),
+      ),
+    ).resolves.toEqual({
+      id: account.id,
+      secureSettings: { LLM_PROXY_API_KEY: "selected-key" },
+    });
+  });
 });

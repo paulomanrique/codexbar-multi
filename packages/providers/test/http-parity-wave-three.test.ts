@@ -380,6 +380,113 @@ describe("Swift-derived HTTP provider parity wave three", () => {
     expect(snapshot.cost).toBeUndefined();
   });
 
+  it("normalizes LLM Proxy credentials and private-network endpoint paths", async () => {
+    const requests: Request[] = [];
+    await llmproxy.fetchUsage(
+      context(
+        () => json({ providers: {} }),
+        {
+          LLM_PROXY_API_KEY: "  'fixture-key'  ",
+          LLM_PROXY_BASE_URL: '  "http://192.168.1.20:8080/custom/v1/"  ',
+        },
+        requests,
+      ),
+    );
+    expect(requests[0]?.url.href).toBe("http://192.168.1.20:8080/custom/v1/quota-stats");
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer fixture-key", Accept: "application/json" },
+    });
+  });
+
+  it.each([
+    "http://public.example.test",
+    "https://user:pass@proxy.example.test",
+    "https://proxy.example.test%2f.attacker.test",
+  ])("rejects unsafe LLM Proxy endpoint %s before transport", async (endpoint) => {
+    const requests: Request[] = [];
+    await expect(
+      llmproxy.fetchUsage(
+        context(
+          () => json({ providers: {} }),
+          { LLM_PROXY_API_KEY: "fixture-key", LLM_PROXY_BASE_URL: endpoint },
+          requests,
+        ),
+      ),
+    ).rejects.toThrow("api-failure:");
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each([401, 403, 429, 500])(
+    "classifies LLM Proxy HTTP %s as the Swift generic API error",
+    async (statusCode) => {
+      await expect(
+        llmproxy.fetchUsage(
+          context(() => json({ detail: "fixture-key rejected" }, statusCode), {
+            LLM_PROXY_API_KEY: "fixture-key",
+            LLM_PROXY_BASE_URL: "https://proxy.example.test",
+          }),
+        ),
+      ).rejects.toThrow("api-failure:");
+    },
+  );
+
+  it("rejects LLM Proxy numeric strings and malformed provider objects like Swift Codable", async () => {
+    await expect(
+      llmproxy.fetchUsage(
+        context(() => json({ providers: { openai: { total_requests: "12" } } }), {
+          LLM_PROXY_API_KEY: "key",
+          LLM_PROXY_BASE_URL: "https://proxy.example.test",
+        }),
+      ),
+    ).rejects.toThrow("parse-failure:");
+    await expect(
+      llmproxy.fetchUsage(
+        context(() => json({ providers: { openai: "invalid" } }), {
+          LLM_PROXY_API_KEY: "key",
+          LLM_PROXY_BASE_URL: "https://proxy.example.test",
+        }),
+      ),
+    ).rejects.toThrow("parse-failure:");
+  });
+
+  it("drops an entire malformed LLM Proxy quota-group collection like Swift Codable", async () => {
+    const snapshot = await llmproxy.fetchUsage(
+      context(
+        () =>
+          json({
+            providers: {
+              openai: {
+                quota_groups: [
+                  { remaining_percent: 42, reset_time: "2026-09-01T00:00:00Z" },
+                  { remaining_percent: "bad", reset_time: "2026-08-30T00:00:00Z" },
+                ],
+              },
+            },
+          }),
+        { LLM_PROXY_API_KEY: "key", LLM_PROXY_BASE_URL: "https://proxy.example.test" },
+      ),
+    );
+    expect(snapshot.primary).toBeUndefined();
+    expect(snapshot.cost).toBeUndefined();
+  });
+
+  it("keeps LLM Proxy quota usage while ignoring a malformed reset date", async () => {
+    const snapshot = await llmproxy.fetchUsage(
+      context(
+        () =>
+          json({
+            providers: {
+              openai: {
+                quota_groups: [{ remaining_percent: 42, reset_time: "not-a-date" }],
+              },
+            },
+          }),
+        { LLM_PROXY_API_KEY: "key", LLM_PROXY_BASE_URL: "https://proxy.example.test" },
+      ),
+    );
+    expect(snapshot.primary).toEqual({ usedPercent: 58, resetsAt: undefined });
+  });
+
   it("maps Neuralwatt prepaid balance separately from subscription kWh and key allowance", async () => {
     const snapshot = await neuralwatt.fetchUsage(
       context(

@@ -274,6 +274,24 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical LLM Proxy key without copying its global base URL", async () => {
+    const key = tokenAccountVaultKey("llmproxy", "account-0");
+    await expect(
+      resolve(config("llmproxy"), "llmproxy", { [key]: "  'proxy-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { LLM_PROXY_API_KEY: "proxy-selected" },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("llmproxy"), "llmproxy", { [key]: material }),
+      ).rejects.toMatchObject({
+        kind: "missing-credential",
+      });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

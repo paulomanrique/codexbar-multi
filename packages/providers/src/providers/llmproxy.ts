@@ -4,7 +4,21 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { date, get, json, number, object, status } from "./_http.ts";
+import { normalizeEndpoint } from "@codexbar/core";
+import { date, get, json, object } from "./_http.ts";
+
+const clean = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
 const definition: ProviderDefinition = {
   id: "llmproxy",
   name: "LLM Proxy",
@@ -16,24 +30,55 @@ const definition: ProviderDefinition = {
   ],
   fetchUsage: async (ctx) => {
     const key =
-      ctx.settings.getSecret("LLM_PROXY_API_KEY") || ctx.settings.get("LLM_PROXY_API_KEY");
-    const configured = ctx.settings.get("LLM_PROXY_BASE_URL");
+      clean(ctx.settings.getSecret("LLM_PROXY_API_KEY")) ??
+      clean(ctx.settings.get("LLM_PROXY_API_KEY"));
+    const configured = clean(ctx.settings.get("LLM_PROXY_BASE_URL"));
     if (!key) throw ctx.fail.missingCredential("Missing LLM Proxy API key.");
     if (!configured) throw ctx.fail.missingCredential("Missing LLM Proxy base URL.");
-    const base = configured.replace(/\/+$/, "").endsWith("/v1")
-      ? configured.replace(/\/+$/, "")
-      : `${configured.replace(/\/+$/, "")}/v1`;
-    const response = await get(ctx, `${base}/quota-stats`, {
+    const endpoint = normalizeEndpoint(configured, { transport: "private-network-http" });
+    if (endpoint === undefined) {
+      throw ctx.fail.apiFailure(
+        "LLM Proxy endpoint override LLM_PROXY_BASE_URL must use HTTPS or private-network HTTP.",
+      );
+    }
+    const quotaURL = new URL(endpoint.href);
+    const rootPath = quotaURL.pathname.replace(/\/+$/u, "");
+    quotaURL.pathname = rootPath.endsWith("/v1")
+      ? `${rootPath}/quota-stats`
+      : `${rootPath}/v1/quota-stats`;
+    const response = await get(ctx, quotaURL.href, {
       headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
     });
-    status(ctx, "LLM Proxy", response);
+    if (response.status < 200 || response.status >= 300) {
+      const summary = response.bodyText.slice(0, 500).trim();
+      throw ctx.fail.apiFailure(
+        `LLM Proxy API returned HTTP ${response.status}${summary === "" ? "" : `: ${summary}`}.`,
+      );
+    }
     const root = object(json(ctx, "LLM Proxy", response));
     const providers = object(root?.providers);
     if (!root || !providers) throw ctx.fail.parseFailure("LLM Proxy providers are missing.");
+    const optionalNumber = (value: unknown, field: string): number | undefined => {
+      if (value === null || value === undefined) return undefined;
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw ctx.fail.parseFailure(`LLM Proxy ${field} must be a number.`);
+      }
+      return value;
+    };
+    const optionalInteger = (value: unknown, field: string): number | undefined => {
+      const parsed = optionalNumber(value, field);
+      if (parsed !== undefined && !Number.isInteger(parsed)) {
+        throw ctx.fail.parseFailure(`LLM Proxy ${field} must be an integer.`);
+      }
+      return parsed;
+    };
     const summary = object(root.summary);
-    let requests = number(summary?.total_requests);
-    let tokens = number(summary?.total_tokens);
-    let cost = number(summary?.approx_cost);
+    if (root.summary !== null && root.summary !== undefined && summary === undefined) {
+      throw ctx.fail.parseFailure("LLM Proxy summary must be an object.");
+    }
+    let requests = optionalInteger(summary?.total_requests, "summary.total_requests");
+    let tokens = optionalInteger(summary?.total_tokens, "summary.total_tokens");
+    let cost = optionalNumber(summary?.approx_cost, "summary.approx_cost");
     let providerRequestTotal = 0;
     let providerTokenTotal = 0;
     let providerCostTotal = 0;
@@ -51,19 +96,22 @@ const definition: ProviderDefinition = {
     }> = [];
     for (const [name, raw] of Object.entries(providers)) {
       const p = object(raw);
-      if (!p) continue;
-      const req = number(p.total_requests) ?? 0;
+      if (!p) throw ctx.fail.parseFailure(`LLM Proxy provider ${name} must be an object.`);
+      const req = optionalInteger(p.total_requests, `${name}.total_requests`) ?? 0;
       const t = object(p.tokens);
+      if (p.tokens !== null && p.tokens !== undefined && t === undefined) {
+        throw ctx.fail.parseFailure(`LLM Proxy provider ${name}.tokens must be an object.`);
+      }
       const tok =
-        (number(t?.input_cached) ?? 0) +
-        (number(t?.input_uncached) ?? 0) +
-        (number(t?.output) ?? 0);
-      const pcost = number(p.approx_cost);
+        (optionalInteger(t?.input_cached, `${name}.tokens.input_cached`) ?? 0) +
+        (optionalInteger(t?.input_uncached, `${name}.tokens.input_uncached`) ?? 0) +
+        (optionalInteger(t?.output, `${name}.tokens.output`) ?? 0);
+      const pcost = optionalNumber(p.approx_cost, `${name}.approx_cost`);
       providerRequestTotal += req;
       providerTokenTotal += tok;
-      credentialCount += number(p.credential_count) ?? 0;
-      activeCount += number(p.active_count) ?? 0;
-      exhaustedCount += number(p.exhausted_count) ?? 0;
+      credentialCount += optionalInteger(p.credential_count, `${name}.credential_count`) ?? 0;
+      activeCount += optionalInteger(p.active_count, `${name}.active_count`) ?? 0;
+      exhaustedCount += optionalInteger(p.exhausted_count, `${name}.exhausted_count`) ?? 0;
       if (pcost !== undefined) {
         providerCostTotal += pcost;
         hasProviderCost = true;
@@ -71,12 +119,29 @@ const definition: ProviderDefinition = {
       const groups = Array.isArray(p.quota_groups)
         ? p.quota_groups
         : Object.values(object(p.quota_groups) ?? {});
-      for (const group of groups) {
-        const g = object(group);
-        const remaining = number(g?.remaining_percent);
+      const decodedGroups = groups.map((group) => object(group));
+      const groupsAreValid = decodedGroups.every(
+        (group) =>
+          group !== undefined &&
+          (group.remaining_percent === null ||
+            group.remaining_percent === undefined ||
+            (typeof group.remaining_percent === "number" &&
+              Number.isFinite(group.remaining_percent))) &&
+          (group.reset_time === null ||
+            group.reset_time === undefined ||
+            typeof group.reset_time === "string"),
+      );
+      for (const g of groupsAreValid ? decodedGroups : []) {
+        if (g === undefined) continue;
+        const remaining = optionalNumber(g.remaining_percent, `${name}.remaining_percent`);
         if (remaining !== undefined && (minimum === undefined || remaining < minimum))
           minimum = remaining;
-        const d = date(g?.reset_time, ctx);
+        let d: string | undefined;
+        try {
+          d = date(g.reset_time, ctx);
+        } catch {
+          d = undefined;
+        }
         if (d && d > ctx.date.now().toISOString() && (!reset || d < reset)) reset = d;
       }
       rows.push({

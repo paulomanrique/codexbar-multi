@@ -586,6 +586,17 @@ const selectedSub2APIAccount = (
   });
 };
 
+const selectedLLMProxyAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected LLM Proxy account credential is invalid."));
+  }
+  return Effect.succeed({ id: accountId, secureSettings: { LLM_PROXY_API_KEY: apiKey } });
+};
+
 const selectedGrokAccount = (
   accountId: string,
   raw: string,
@@ -671,7 +682,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "elevenlabs" &&
     providerId !== "ibmbob" &&
     providerId !== "neuralwatt" &&
-    providerId !== "sub2api"
+    providerId !== "sub2api" &&
+    providerId !== "llmproxy"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -690,6 +702,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "ibmbob") return selectedIBMBobAccount(account.id, material);
       if (providerId === "neuralwatt") return selectedNeuralWattAccount(account.id, material);
       if (providerId === "sub2api") return selectedSub2APIAccount(account.id, material);
+      if (providerId === "llmproxy") return selectedLLMProxyAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );
