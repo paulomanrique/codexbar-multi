@@ -284,6 +284,47 @@ describe("Swift-derived HTTP provider wave B", () => {
     ).rejects.toThrow("permission-denied:");
   });
 
+  it.each([
+    [401, "authentication-expired"],
+    [403, "authentication-expired"],
+    [429, "api-failure"],
+    [503, "api-failure"],
+  ] as const)("classifies IBM Bob HTTP %s like the Swift oracle", async (statusCode, kind) => {
+    await expect(
+      ibmbob.fetchUsage(
+        context(() => response({}, statusCode), { BOBSHELL_API_KEY: "fixture-key" }),
+      ),
+    ).rejects.toThrow(`${kind}:`);
+  });
+
+  it.each(["eu-de.bob.ibm.com?unexpected=value", "eu-de.bob.ibm.com#fragment"])(
+    "rejects IBM Bob regional host suffix data in %s before a team request",
+    async (regionDomain) => {
+      const requests: Array<{ method: string; url: URL; options?: Record<string, unknown> }> = [];
+      await expect(
+        ibmbob.fetchUsage(
+          context(
+            () =>
+              response({
+                instances: [
+                  {
+                    instance_id: "instance",
+                    user_id: "user",
+                    region_domain: regionDomain,
+                    teams: [{ id: "team" }],
+                  },
+                ],
+              }),
+            { BOBSHELL_API_KEY: "fixture-key" },
+            requests,
+          ),
+        ),
+      ).rejects.toThrow("permission-denied:");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url.pathname).toBe("/admin/v1/profile");
+    },
+  );
+
   it("sends the OpenAI-compatible Doubao probe and handles missing credentials", async () => {
     const requests: Array<{ method: string; url: URL; options?: Record<string, unknown> }> = [];
     const snapshot = await doubao.fetchUsage(

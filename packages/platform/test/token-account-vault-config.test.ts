@@ -857,4 +857,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { ELEVENLABS_API_KEY: "selected-key", XI_API_KEY: null },
     });
   });
+
+  it("maps selected IBM Bob material to the canonical secure setting only", async () => {
+    const account = { id: "ibmbob-selected", label: "Enterprise", addedAt: 0 };
+    const key = tokenAccountVaultKey("ibmbob", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "ibmbob",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: " 'selected-key' " }),
+        "ibmbob",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { BOBSHELL_API_KEY: "selected-key" },
+    });
+  });
 });

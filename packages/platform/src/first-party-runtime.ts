@@ -833,6 +833,10 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "ELEVENLABS_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "elevenlabs.api";
   }
+  if (providerId === "ibmbob") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "BOBSHELL_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "ibmbob.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

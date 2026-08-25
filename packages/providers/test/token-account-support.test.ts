@@ -76,6 +76,7 @@ describe("provider token account support inventory", () => {
       "elevenlabs",
       "grok",
       "groq",
+      "ibmbob",
       "venice",
       "zai",
     ]);

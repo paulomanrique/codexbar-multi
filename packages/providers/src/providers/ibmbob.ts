@@ -1,10 +1,11 @@
 import type {
   FirstPartyProvider,
+  ProviderContext,
   ProviderDefinition,
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { date, get, json, number, object, status, string } from "./_http.ts";
+import { date, get, json, number, object, string } from "./_http.ts";
 
 const trustedHost = (host: string): boolean =>
   host === "bob.ibm.com" || host.endsWith(".bob.ibm.com");
@@ -24,6 +25,15 @@ const isJWT = (token: string): boolean => {
 };
 const amount = (value: number): string =>
   Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+const validateStatus = (ctx: ProviderContext, statusCode: number): void => {
+  if (statusCode >= 200 && statusCode < 300) return;
+  if (statusCode === 401 || statusCode === 403) {
+    throw ctx.fail.authenticationExpired(
+      "IBM Bob rejected the API key. Check that it is active and can read subscription usage.",
+    );
+  }
+  throw ctx.fail.apiFailure(`IBM Bob API returned HTTP ${statusCode}.`);
+};
 
 const definition: ProviderDefinition = {
   id: "ibmbob",
@@ -49,7 +59,7 @@ const definition: ProviderDefinition = {
     const profileResponse = await get(ctx, "https://api.us-east.bob.ibm.com/admin/v1/profile", {
       headers,
     });
-    status(ctx, "IBM Bob", profileResponse);
+    validateStatus(ctx, profileResponse.status);
     const profile = object(json(ctx, "IBM Bob", profileResponse));
     if (!profile || !Array.isArray(profile.instances))
       throw ctx.fail.parseFailure("IBM Bob profile must contain instances.");
@@ -81,6 +91,8 @@ const definition: ProviderDefinition = {
           url.password ||
           url.port ||
           url.pathname !== "/" ||
+          url.search ||
+          url.hash ||
           !url.hostname ||
           !trustedHost(url.hostname)
         )
@@ -100,7 +112,7 @@ const definition: ProviderDefinition = {
           `https://${host}/admin/v1/teams/${encodeURIComponent(teamID)}/users/${encodeURIComponent(userID)}`,
           { headers: { ...headers, "x-instance-id": instanceID, "x-team-id": teamID } },
         );
-        status(ctx, "IBM Bob", response);
+        validateStatus(ctx, response.status);
         const budget = object(json(ctx, "IBM Bob", response));
         const used = Math.max(0, number(budget?.usage) ?? 0);
         const rawLimit = number(budget?.budget_limit) ?? number(team.budget_limit);
