@@ -597,6 +597,17 @@ const selectedLLMProxyAccount = (
   return Effect.succeed({ id: accountId, secureSettings: { LLM_PROXY_API_KEY: apiKey } });
 };
 
+const selectedLiteLLMAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected LiteLLM account credential is invalid."));
+  }
+  return Effect.succeed({ id: accountId, secureSettings: { LITELLM_API_KEY: apiKey } });
+};
+
 const selectedDeepSeekAccount = (
   accountId: string,
   raw: string,
@@ -707,6 +718,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "neuralwatt" &&
     providerId !== "sub2api" &&
     providerId !== "llmproxy" &&
+    providerId !== "litellm" &&
     providerId !== "deepseek"
   ) {
     return Effect.fail(
@@ -727,6 +739,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "neuralwatt") return selectedNeuralWattAccount(account.id, material);
       if (providerId === "sub2api") return selectedSub2APIAccount(account.id, material);
       if (providerId === "llmproxy") return selectedLLMProxyAccount(account.id, material);
+      if (providerId === "litellm") return selectedLiteLLMAccount(account.id, material);
       if (providerId === "deepseek") return selectedDeepSeekAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),

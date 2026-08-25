@@ -5,7 +5,8 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { get, json, number, object, status, string } from "./_http.ts";
+import { normalizeEndpoint } from "@codexbar/core";
+import { get, json, object } from "./_http.ts";
 
 const clean = (value: string | undefined): string | undefined => {
   let result = value?.trim();
@@ -18,40 +19,87 @@ const clean = (value: string | undefined): string | undefined => {
   return result || undefined;
 };
 
-const endpoint = (raw: string): URL | undefined => {
-  try {
-    const url = new URL(raw);
-    const host = url.hostname.toLowerCase();
-    const privateIPv4 = /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/u.test(host);
-    const privateHost =
-      privateIPv4 || host === "localhost" || host.endsWith(".local") || host === "[::1]";
-    if (
-      !url.hostname ||
-      url.username ||
-      url.password ||
-      (url.protocol !== "https:" && !(url.protocol === "http:" && privateHost))
-    )
-      return undefined;
-    return url;
-  } catch {
-    return undefined;
-  }
-};
-
 const managementURL = (base: URL, path: string, query?: readonly [string, string]): URL => {
   const url = new URL(base);
   const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.at(-1)?.toLowerCase() === "v1") parts.pop();
+  if (parts.at(-1) === "v1") parts.pop();
   url.pathname = `/${[...parts, ...path.split("/").filter(Boolean)].map(encodeURIComponent).join("/")}`;
   url.search = "";
   if (query) url.searchParams.set(query[0], query[1]);
   return url;
 };
 
-const iso = (value: unknown, ctx: ProviderContext): string | undefined => {
-  const text = string(value);
-  if (!text || !Number.isFinite(Date.parse(text))) return undefined;
+const iso = (value: unknown, ctx: ProviderContext, field: string): string | undefined => {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw ctx.fail.parseFailure(`LiteLLM ${field} must be a string.`);
+  }
+  const text = value.trim();
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(text) ||
+    !Number.isFinite(Date.parse(text))
+  )
+    return undefined;
   return ctx.date.iso(text);
+};
+
+const optionalNumber = (
+  ctx: ProviderContext,
+  value: unknown,
+  field: string,
+): number | undefined => {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw ctx.fail.parseFailure(`LiteLLM ${field} must be a number.`);
+  }
+  return value;
+};
+
+const optionalString = (
+  ctx: ProviderContext,
+  value: unknown,
+  field: string,
+): string | undefined => {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw ctx.fail.parseFailure(`LiteLLM ${field} must be a string.`);
+  }
+  return value;
+};
+
+type ParsedTeam = {
+  readonly teamID: string;
+  readonly alias?: string;
+  readonly spend: number;
+  readonly budget?: number;
+  readonly reset?: string;
+};
+
+const parseTeams = (ctx: ProviderContext, value: unknown): readonly ParsedTeam[] => {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw ctx.fail.parseFailure("LiteLLM teams must be an array.");
+  }
+  return value.map((raw, index) => {
+    const team = object(raw);
+    if (!team) throw ctx.fail.parseFailure(`LiteLLM teams[${index}] must be an object.`);
+    const teamID = optionalString(ctx, team.team_id, `teams[${index}].team_id`);
+    if (teamID === undefined) {
+      throw ctx.fail.parseFailure(`LiteLLM teams[${index}].team_id is required.`);
+    }
+    const alias = clean(optionalString(ctx, team.team_alias, `teams[${index}].team_alias`));
+    const spend = optionalNumber(ctx, team.spend, `teams[${index}].spend`) ?? 0;
+    const budget = optionalNumber(ctx, team.max_budget, `teams[${index}].max_budget`);
+    const reset = iso(team.budget_reset_at, ctx, `teams[${index}].budget_reset_at`);
+    optionalString(ctx, team.budget_duration, `teams[${index}].budget_duration`);
+    return {
+      teamID,
+      ...(alias ? { alias } : {}),
+      spend,
+      ...(budget === undefined ? {} : { budget }),
+      ...(reset === undefined ? {} : { reset }),
+    };
+  });
 };
 
 const money = (ctx: ProviderContext, value: number): string => ctx.format.usd(value);
@@ -84,7 +132,11 @@ const request = async (ctx: ProviderContext, url: URL, key: string) => {
   const response = await get(ctx, url.href, {
     headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
   });
-  status(ctx, "LiteLLM", response);
+  if (response.status < 200 || response.status >= 300) {
+    throw ctx.fail.apiFailure(
+      `LiteLLM API returned HTTP ${response.status}: ${response.bodyText.slice(0, 500).trim()}`,
+    );
+  }
   return object(json(ctx, "LiteLLM", response));
 };
 
@@ -102,7 +154,7 @@ const definition: ProviderDefinition = {
     if (!key) throw ctx.fail.missingCredential("Missing LiteLLM API key.");
     const configured = clean(ctx.settings.get("LITELLM_BASE_URL"));
     if (!configured) throw ctx.fail.missingCredential("Missing LiteLLM base URL.");
-    const base = endpoint(configured);
+    const base = normalizeEndpoint(configured, { transport: "private-network-http" });
     if (!base)
       throw ctx.fail.apiFailure(
         "LITELLM_BASE_URL is not a valid secure or private-network endpoint.",
@@ -112,10 +164,11 @@ const definition: ProviderDefinition = {
     if (!keyRoot) throw ctx.fail.parseFailure("LiteLLM /key/info response must be an object.");
     const info = object(keyRoot.info);
     if (!info) throw ctx.fail.parseFailure("LiteLLM /key/info response did not include info.");
-    const userID = string(info.user_id);
-    const teamID = string(info.team_id);
-    const keyName = string(info.key_name);
-    const expiresAt = iso(info.expires, ctx);
+    const userID = clean(optionalString(ctx, info.user_id, "info.user_id"));
+    const teamID = clean(optionalString(ctx, info.team_id, "info.team_id"));
+    const keyName = clean(optionalString(ctx, info.key_name, "info.key_name"));
+    optionalNumber(ctx, info.spend, "info.spend");
+    const expiresAt = iso(info.expires, ctx, "info.expires");
     const keyInfo: KeyInfo = {
       ...(userID ? { userID } : {}),
       ...(teamID ? { teamID } : {}),
@@ -134,26 +187,36 @@ const definition: ProviderDefinition = {
       const user = object(root?.user_info);
       if (!root || !user)
         throw ctx.fail.parseFailure("LiteLLM /user/info response did not include user_info.");
-      const responseID = string(user.user_id) ?? string(root.user_id);
+      const responseID =
+        optionalString(ctx, user.user_id, "user_info.user_id") ??
+        optionalString(ctx, root.user_id, "user_id");
       if (responseID && responseID !== keyInfo.userID)
         throw ctx.fail.parseFailure("LiteLLM user_id did not match /key/info.");
-      const spend = number(user.spend) ?? 0;
-      const budget = number(user.max_budget);
-      const reset = iso(user.budget_reset_at, ctx);
-      const teams = Array.isArray(root.teams)
-        ? root.teams.map(object).filter((team): team is Record<string, unknown> => Boolean(team))
-        : [];
+      const spend = optionalNumber(ctx, user.spend, "user_info.spend") ?? 0;
+      const budget = optionalNumber(ctx, user.max_budget, "user_info.max_budget");
+      const reset = iso(user.budget_reset_at, ctx, "user_info.budget_reset_at");
+      const teams = parseTeams(ctx, root.teams);
       const team = keyInfo.teamID
-        ? teams.find((item) => string(item.team_id) === keyInfo.teamID)
+        ? teams.find((item) => item.teamID === keyInfo.teamID)
         : undefined;
-      const teamSpend = number(team?.spend) ?? 0;
-      const teamBudget = number(team?.max_budget);
-      const teamReset = iso(team?.budget_reset_at, ctx);
-      const teamAlias = string(team?.team_alias);
-      const email =
-        string(user.user_email) ??
-        string(user.user_alias) ??
-        string(object(user.metadata)?.preferred_username);
+      const teamSpend = team?.spend ?? 0;
+      const teamBudget = team?.budget;
+      const teamReset = team?.reset;
+      const teamAlias = team?.alias;
+      const userEmail = clean(optionalString(ctx, user.user_email, "user_info.user_email"));
+      const userAlias = clean(optionalString(ctx, user.user_alias, "user_info.user_alias"));
+      let preferredUsername: string | undefined;
+      if (user.metadata !== null && user.metadata !== undefined) {
+        const metadata = object(user.metadata);
+        if (!metadata) {
+          throw ctx.fail.parseFailure("LiteLLM user_info.metadata must be an object.");
+        }
+        preferredUsername =
+          typeof metadata.preferred_username === "string"
+            ? clean(metadata.preferred_username)
+            : undefined;
+      }
+      const email = userEmail ?? userAlias ?? preferredUsername;
       const output: Record<string, unknown> = {
         ...(budgetWindow(
           ctx,
@@ -220,13 +283,16 @@ const definition: ProviderDefinition = {
     const team = object(root?.team_info);
     if (!root || !team)
       throw ctx.fail.parseFailure("LiteLLM /team/info response did not include team_info.");
-    const responseID = string(team.team_id) ?? string(root.team_id);
+    const responseID =
+      clean(optionalString(ctx, team.team_id, "team_info.team_id")) ??
+      clean(optionalString(ctx, root.team_id, "team_id"));
     if (responseID && responseID !== keyInfo.teamID)
       throw ctx.fail.parseFailure("LiteLLM team_id did not match /key/info.");
-    const spend = number(team.spend) ?? 0;
-    const budget = number(team.max_budget);
-    const reset = iso(team.budget_reset_at, ctx);
-    const alias = string(team.team_alias);
+    const spend = optionalNumber(ctx, team.spend, "team_info.spend") ?? 0;
+    const budget = optionalNumber(ctx, team.max_budget, "team_info.max_budget");
+    const reset = iso(team.budget_reset_at, ctx, "team_info.budget_reset_at");
+    optionalString(ctx, team.budget_duration, "team_info.budget_duration");
+    const alias = clean(optionalString(ctx, team.team_alias, "team_info.team_alias"));
     return {
       ...(budgetWindow(
         ctx,

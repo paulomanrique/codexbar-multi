@@ -25,6 +25,22 @@ describe("normalizeEndpoint", () => {
     expect(
       normalizeEndpoint("http://192.168.1.10", { transport: "loopback-http" }),
     ).toBeUndefined();
+    expect(normalizeEndpoint("http://[::1]:4000", { transport: "loopback-http" })?.hostname).toBe(
+      "[::1]",
+    );
+    expect(
+      normalizeEndpoint("http://[fd12:3456::1]", { transport: "private-network-http" })?.hostname,
+    ).toBe("[fd12:3456::1]");
+    expect(
+      normalizeEndpoint("http://[fe80::1]", { transport: "private-network-http" })?.hostname,
+    ).toBe("[fe80::1]");
+    expect(
+      normalizeEndpoint("http://[2001:db8::1]", { transport: "private-network-http" }),
+    ).toBeUndefined();
+    expect(
+      normalizeEndpoint("http://proxy.local.:4000", { transport: "private-network-http" })
+        ?.hostname,
+    ).toBe("proxy.local.");
   });
 
   it("applies the HTTP method and timeout policy after endpoint normalization", () => {

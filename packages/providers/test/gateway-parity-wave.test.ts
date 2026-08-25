@@ -192,6 +192,146 @@ describe("Swift-derived LiteLLM, ZenMux, and Wayfinder parity", () => {
     ).rejects.toThrow("parse-failure: LiteLLM team_id did not match /key/info.");
   });
 
+  it("normalizes a scheme-less LiteLLM host and only removes a literal trailing v1", async () => {
+    for (const [baseURL, expectedPaths] of [
+      ["litellm.example.test/gateway/v1", ["/gateway/key/info", "/gateway/user/info"]],
+      [
+        "https://litellm.example.test/gateway/V1",
+        ["/gateway/V1/key/info", "/gateway/V1/user/info"],
+      ],
+    ] as const) {
+      const requests: Request[] = [];
+      await litellm.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname.endsWith("/key/info")
+              ? response({ info: { user_id: "user-123" } })
+              : response({ user_info: { user_id: "user-123" } }),
+          { LITELLM_API_KEY: "selected-key", LITELLM_BASE_URL: baseURL },
+          requests,
+        ),
+      );
+      expect(requests.map(({ url }) => url.pathname)).toEqual(expectedPaths);
+      expect(requests.every(({ url }) => url.protocol === "https:")).toBe(true);
+    }
+  });
+
+  it.each([
+    {
+      keyInfo: { user_id: "user-123", spend: "1" },
+      userInfo: { user_id: "user-123" },
+      expected: "info.spend",
+    },
+    {
+      keyInfo: { user_id: "user-123" },
+      userInfo: { user_id: "user-123", spend: "1" },
+      expected: "user_info.spend",
+    },
+    {
+      keyInfo: { user_id: "user-123" },
+      userInfo: { user_id: "user-123", max_budget: "100" },
+      expected: "user_info.max_budget",
+    },
+    {
+      keyInfo: { team_id: "team-123" },
+      userInfo: { team_id: "team-123", spend: "1" },
+      expected: "team_info.spend",
+    },
+  ])("rejects non-JSON-number LiteLLM $expected", async ({ keyInfo, userInfo, expected }) => {
+    await expect(
+      litellm.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname === "/key/info"
+              ? response({ info: keyInfo })
+              : request.url.pathname === "/user/info"
+                ? response({ user_info: userInfo })
+                : response({ team_info: userInfo }),
+          {
+            LITELLM_API_KEY: "selected-key",
+            LITELLM_BASE_URL: "https://litellm.example.test",
+          },
+        ),
+      ),
+    ).rejects.toThrow(`parse-failure: LiteLLM ${expected} must be a number.`);
+  });
+
+  it("rejects a non-string LiteLLM expiration like the Swift decoder", async () => {
+    await expect(
+      litellm.fetchUsage(
+        context(() => response({ info: { user_id: "user-123", expires: 123 } }), {
+          LITELLM_API_KEY: "selected-key",
+          LITELLM_BASE_URL: "https://litellm.example.test",
+        }),
+      ),
+    ).rejects.toThrow("parse-failure: LiteLLM info.expires must be a string.");
+  });
+
+  it.each([
+    { teams: {}, expected: "teams must be an array" },
+    { teams: [null], expected: "teams[0] must be an object" },
+    { teams: [{}], expected: "teams[0].team_id is required" },
+    { teams: [{ team_id: 123 }], expected: "teams[0].team_id must be a string" },
+    {
+      teams: [{ team_id: "unrelated", spend: "1" }],
+      expected: "teams[0].spend must be a number",
+    },
+  ])("rejects malformed LiteLLM user teams: $expected", async ({ teams, expected }) => {
+    await expect(
+      litellm.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname === "/key/info"
+              ? response({ info: { user_id: "user-123" } })
+              : response({ user_info: { user_id: "user-123" }, teams }),
+          {
+            LITELLM_API_KEY: "selected-key",
+            LITELLM_BASE_URL: "https://litellm.example.test",
+          },
+        ),
+      ),
+    ).rejects.toThrow(`parse-failure: LiteLLM ${expected}.`);
+  });
+
+  it.each([401, 403, 429, 500])(
+    "keeps LiteLLM HTTP %s terminal as an API failure with a bounded response summary",
+    async (status) => {
+      const echoed = `provider rejected selected-key ${"x".repeat(600)}`;
+      await expect(
+        litellm.fetchUsage(
+          context(() => ({ status, bodyText: echoed }), {
+            LITELLM_API_KEY: "selected-key",
+            LITELLM_BASE_URL: "https://litellm.example.test",
+          }),
+        ),
+      ).rejects.toThrow(
+        `api-failure: LiteLLM API returned HTTP ${status}: ${echoed.slice(0, 500)}`,
+      );
+    },
+  );
+
+  it("preserves LiteLLM request cancellation without trying a second endpoint", async () => {
+    const requests: Request[] = [];
+    const aborted = new Error("cancelled");
+    aborted.name = "AbortError";
+    await expect(
+      litellm.fetchUsage(
+        context(
+          () => {
+            throw aborted;
+          },
+          {
+            LITELLM_API_KEY: "selected-key",
+            LITELLM_BASE_URL: "https://litellm.example.test",
+          },
+          requests,
+        ),
+      ),
+    ).rejects.toBe(aborted);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.pathname).toBe("/key/info");
+  });
+
   it("maps ZenMux quota windows and retains the subscription when optional PAYG fails", async () => {
     const requests: Request[] = [];
     const subscription = {

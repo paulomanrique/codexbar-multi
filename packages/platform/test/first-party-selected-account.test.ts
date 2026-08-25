@@ -292,6 +292,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical LiteLLM key without copying its global base URL", async () => {
+    const key = tokenAccountVaultKey("litellm", "account-0");
+    await expect(
+      resolve(config("litellm"), "litellm", { [key]: "  'litellm-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { LITELLM_API_KEY: "litellm-selected" },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("litellm"), "litellm", { [key]: material }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
   it("selects a canonical DeepSeek key while suppressing ambient platform context", async () => {
     const key = tokenAccountVaultKey("deepseek", "account-0");
     await expect(

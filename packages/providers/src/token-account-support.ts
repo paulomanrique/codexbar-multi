@@ -50,6 +50,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
   "groq",
   "ibmbob",
   "llmproxy",
+  "litellm",
   "neuralwatt",
   "sub2api",
   "venice",

@@ -43,15 +43,12 @@ export const normalizeEndpoint = (raw: string, policy: EndpointPolicy = {}): URL
   }
 
   const scheme = endpoint.protocol.toLowerCase();
-  const host = endpoint.hostname.toLowerCase();
+  const parsedHost = endpoint.hostname.toLowerCase();
+  const unwrappedHost =
+    parsedHost.startsWith("[") && parsedHost.endsWith("]") ? parsedHost.slice(1, -1) : parsedHost;
+  const host = unwrappedHost.endsWith(".") ? unwrappedHost.slice(0, -1) : unwrappedHost;
   const authority = candidate.match(/^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i)?.[1];
-  if (
-    endpoint.username ||
-    endpoint.password ||
-    !host ||
-    endpoint.hostname.includes("%") ||
-    !authority
-  )
+  if (endpoint.username || endpoint.password || !host || parsedHost.includes("%") || !authority)
     return undefined;
   // Reject encoded authorities altogether. URL parsing can decode `%2e` or an
   // escaped host label before we inspect it, which would make allow-lists lie.
@@ -67,7 +64,12 @@ export const normalizeEndpoint = (raw: string, policy: EndpointPolicy = {}): URL
   if (scheme !== "https:" && !(scheme === "http:" && permitsHttp)) return undefined;
 
   const normalizedAllowedHosts = new Set(
-    [...(policy.allowedHosts ?? [])].map((allowed) => allowed.toLowerCase()),
+    [...(policy.allowedHosts ?? [])].map((allowed) =>
+      allowed
+        .toLowerCase()
+        .replace(/^\[|\]$/gu, "")
+        .replace(/\.$/u, ""),
+    ),
   );
   const allowedSuffixes = [...(policy.allowedDomainSuffixes ?? [])].map((suffix) =>
     suffix.toLowerCase().replace(/^\./, ""),

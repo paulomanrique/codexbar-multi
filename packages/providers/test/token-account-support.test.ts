@@ -78,6 +78,7 @@ describe("provider token account support inventory", () => {
       "grok",
       "groq",
       "ibmbob",
+      "litellm",
       "llmproxy",
       "neuralwatt",
       "sub2api",

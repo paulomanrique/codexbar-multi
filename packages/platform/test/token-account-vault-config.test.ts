@@ -966,6 +966,33 @@ describe("token-account vault config repository", () => {
     });
   });
 
+  it("maps a selected LiteLLM key while preserving its global base URL outside the vault", async () => {
+    const account = { id: "litellm-selected", label: "Virtual key", addedAt: 0 };
+    const key = tokenAccountVaultKey("litellm", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "litellm",
+          extensions: { LITELLM_BASE_URL: "https://litellm.example.test/v1" },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: ' "selected-key" ' }),
+          "litellm",
+        ),
+      ),
+    ).resolves.toEqual({
+      id: account.id,
+      secureSettings: { LITELLM_API_KEY: "selected-key" },
+    });
+  });
+
   it("maps a selected DeepSeek key without inheriting ambient platform context", async () => {
     const account = { id: "deepseek-selected", label: "DeepSeek", addedAt: 0 };
     const key = tokenAccountVaultKey("deepseek", account.id);

@@ -1298,20 +1298,34 @@ providers:
   - id: litellm
     swiftGlobs:
       - Sources/CodexBar/Providers/LiteLLM/**/*.swift
+      - Sources/CodexBarCore/Providers/LiteLLM/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*LiteLLM*Tests.swift
         - TestsLinux/*LiteLLM*Tests.swift
       tsGlobs:
         - packages/providers/test/gateway-parity-wave.test.ts
+        - packages/platform/test/first-party-runtime-litellm-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/token-account-vault-config.test.ts
     fixtures:
       - packages/providers/test/gateway-parity-wave.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/litellm.ts]
+      expected:
+        - packages/providers/src/providers/litellm.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/litellm.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/gateway-parity-wave.test.ts
+      - packages/platform/test/first-party-runtime-litellm-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/token-account-vault-config.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

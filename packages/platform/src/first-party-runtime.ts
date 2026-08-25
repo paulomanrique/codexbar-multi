@@ -849,6 +849,10 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "LLM_PROXY_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "llmproxy.api";
   }
+  if (providerId === "litellm") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "LITELLM_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "litellm.api";
+  }
   if (providerId === "deepseek") {
     const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPSEEK_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "deepseek.api";
