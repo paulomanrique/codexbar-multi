@@ -68,6 +68,16 @@ describe("provider token account support inventory", () => {
       PROVIDER_TOKEN_ACCOUNT_SUPPORT.filter((support) => support.runtimeSelectionAvailable).map(
         (support) => support.provider,
       ),
-    ).toEqual(["antigravity", "claude", "copilot", "deepinfra", "grok", "groq", "venice", "zai"]);
+    ).toEqual([
+      "antigravity",
+      "claude",
+      "copilot",
+      "deepinfra",
+      "elevenlabs",
+      "grok",
+      "groq",
+      "venice",
+      "zai",
+    ]);
   });
 });

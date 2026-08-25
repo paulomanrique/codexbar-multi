@@ -830,4 +830,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { VENICE_API_KEY: "selected-key", VENICE_KEY: null },
     });
   });
+
+  it("maps a selected ElevenLabs account without copying its global endpoint", async () => {
+    const account = { id: "elevenlabs-selected", label: "Studio", addedAt: 0 };
+    const key = tokenAccountVaultKey("elevenlabs", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "elevenlabs",
+          extensions: { ELEVENLABS_API_URL: "https://eleven.example.test" },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: ' "selected-key" ' }),
+        "elevenlabs",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { ELEVENLABS_API_KEY: "selected-key", XI_API_KEY: null },
+    });
+  });
 });

@@ -192,6 +192,66 @@ describe("Swift-derived HTTP provider parity wave three", () => {
     });
   });
 
+  it("preserves ElevenLabs canonical precedence, cleanup and endpoint composition", async () => {
+    for (const [endpoint, expectedPath] of [
+      [" 'eleven.example.test/custom' ", "/custom/v1/user/subscription"],
+      [' "https://eleven.example.test/custom/v1/" ', "/custom/v1/user/subscription"],
+    ] as const) {
+      const requests: Request[] = [];
+      await elevenlabs.fetchUsage(
+        context(
+          () => json({ character_count: 1, character_limit: 10 }),
+          {
+            ELEVENLABS_API_KEY: ' "canonical-key" ',
+            XI_API_KEY: "alias-key",
+            ELEVENLABS_API_URL: endpoint,
+          },
+          requests,
+        ),
+      );
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url.origin).toBe("https://eleven.example.test");
+      expect(requests[0]?.url.pathname).toBe(expectedPath);
+      expect(requests[0]?.options).toMatchObject({
+        headers: { "xi-api-key": "canonical-key", Accept: "application/json" },
+      });
+    }
+  });
+
+  it.each([
+    "http://attacker.test",
+    "https://user:pass@eleven.test",
+    "https://eleven.test%2f.attacker.test",
+  ])("rejects an unsafe ElevenLabs endpoint before transport: %s", async (endpoint) => {
+    const requests: Request[] = [];
+    await expect(
+      elevenlabs.fetchUsage(
+        context(
+          () => json({ character_count: 1, character_limit: 10 }),
+          { ELEVENLABS_API_KEY: "fixture-key", ELEVENLABS_API_URL: endpoint },
+          requests,
+        ),
+      ),
+    ).rejects.toThrow("api-failure: ElevenLabs endpoint override");
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each([
+    [401, "missing-credential"],
+    [403, "missing-credential"],
+    [429, "api-failure"],
+    [500, "api-failure"],
+    [201, "api-failure"],
+  ] as const)("classifies ElevenLabs HTTP %s as %s", async (status, kind) => {
+    await expect(
+      elevenlabs.fetchUsage(
+        context(() => json({ character_count: 1, character_limit: 10 }, status), {
+          ELEVENLABS_API_KEY: "fixture-key",
+        }),
+      ),
+    ).rejects.toThrow(`${kind}:`);
+  });
+
   it("sums ai& decimal spend exactly, chooses newest currency and rejects malformed logs", async () => {
     const snapshot = await aiand.fetchUsage(
       context(

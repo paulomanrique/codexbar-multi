@@ -5,12 +5,25 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { date, get, json, number, object, status, string } from "./_http.ts";
+import { normalizeEndpoint } from "@codexbar/core";
+import { date, get, json, number, object, string } from "./_http.ts";
+
+const clean = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
 const definition: ProviderDefinition = {
   id: "elevenlabs",
   name: "ElevenLabs",
-  endpoints: ["https://api.elevenlabs.io"],
-  auth: { type: "x-api-key", secret: "ELEVENLABS_API_KEY" },
+  endpoints: ["https://api.elevenlabs.io", { setting: "ELEVENLABS_API_URL", policy: "https" }],
   settings: [
     { key: "ELEVENLABS_API_KEY", title: "API key", type: "secure" },
     { key: "XI_API_KEY", title: "API key (legacy alias)", type: "secure" },
@@ -18,19 +31,30 @@ const definition: ProviderDefinition = {
   ],
   fetchUsage: async (ctx: ProviderContext) => {
     const key =
-      ctx.settings.getSecret("ELEVENLABS_API_KEY") ||
-      ctx.settings.get("ELEVENLABS_API_KEY") ||
-      ctx.settings.getSecret("XI_API_KEY") ||
-      ctx.settings.get("XI_API_KEY");
+      clean(ctx.settings.getSecret("ELEVENLABS_API_KEY")) ??
+      clean(ctx.settings.get("ELEVENLABS_API_KEY")) ??
+      clean(ctx.settings.getSecret("XI_API_KEY")) ??
+      clean(ctx.settings.get("XI_API_KEY"));
     if (!key) throw ctx.fail.missingCredential("Missing ElevenLabs API key.");
-    const configured = ctx.settings.get("ELEVENLABS_API_URL");
-    const root = (configured || "https://api.elevenlabs.io").replace(/\/+$/, "");
+    const configured = clean(ctx.settings.get("ELEVENLABS_API_URL"));
+    const endpoint = normalizeEndpoint(configured ?? "https://api.elevenlabs.io");
+    if (endpoint === undefined) {
+      throw ctx.fail.apiFailure(
+        "ElevenLabs endpoint override ELEVENLABS_API_URL must use HTTPS or a bare host.",
+      );
+    }
+    const root = endpoint.href.replace(/\/+$/u, "");
     const response = await get(
       ctx,
       `${root.endsWith("/v1") ? root : `${root}/v1`}/user/subscription`,
       { headers: { "xi-api-key": key, Accept: "application/json" } },
     );
-    status(ctx, "ElevenLabs", response);
+    if (response.status === 401 || response.status === 403) {
+      throw ctx.fail.missingCredential("ElevenLabs rejected the API key.");
+    }
+    if (response.status !== 200) {
+      throw ctx.fail.apiFailure(`ElevenLabs API returned HTTP ${response.status}.`);
+    }
     const payload = object(json(ctx, "ElevenLabs", response));
     if (!payload) throw ctx.fail.parseFailure("ElevenLabs response must be an object.");
     const used = number(payload.character_count);

@@ -210,6 +210,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical ElevenLabs API key and scrubs XI_API_KEY", async () => {
+    const key = tokenAccountVaultKey("elevenlabs", "account-0");
+    await expect(
+      resolve(config("elevenlabs"), "elevenlabs", { [key]: "  'eleven-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { ELEVENLABS_API_KEY: "eleven-selected", XI_API_KEY: null },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("elevenlabs"), "elevenlabs", { [key]: material }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

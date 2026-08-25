@@ -751,20 +751,27 @@ providers:
   - id: elevenlabs
     swiftGlobs:
       - Sources/CodexBar/Providers/ElevenLabs/**/*.swift
+      - Sources/CodexBarCore/Providers/ElevenLabs/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*ElevenLabs*Tests.swift
         - TestsLinux/*ElevenLabs*Tests.swift
       tsGlobs:
-        - packages/providers/test/**/*.test.ts
+        - packages/providers/test/http-parity-wave-three.test.ts
+        - packages/platform/test/first-party-runtime-elevenlabs-account.test.ts
     fixtures:
       - packages/providers/test/http-parity-wave-three.test.ts
+      - packages/platform/test/first-party-runtime-elevenlabs-account.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/elevenlabs.ts]
+      expected:
+        - packages/providers/src/providers/elevenlabs.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/elevenlabs.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/http-parity-wave-three.test.ts
+      - packages/platform/test/first-party-runtime-elevenlabs-account.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

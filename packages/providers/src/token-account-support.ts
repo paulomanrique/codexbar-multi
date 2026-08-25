@@ -44,6 +44,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
   "claude",
   "copilot",
   "deepinfra",
+  "elevenlabs",
   "grok",
   "groq",
   "venice",

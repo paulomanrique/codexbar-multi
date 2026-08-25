@@ -829,6 +829,10 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "VENICE_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "venice.api";
   }
+  if (providerId === "elevenlabs") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "ELEVENLABS_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "elevenlabs.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
