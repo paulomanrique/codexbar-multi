@@ -1048,6 +1048,7 @@ providers:
   - id: venice
     swiftGlobs:
       - Sources/CodexBar/Providers/Venice/**/*.swift
+      - Sources/CodexBarCore/Providers/Venice/**/*.swift
       - Sources/CodexBarCore/Resources/Plugins/venice.js
     tests:
       swiftGlobs:
@@ -1055,14 +1056,23 @@ providers:
         - TestsLinux/*Venice*Tests.swift
       tsGlobs:
         - packages/providers/test/plugin-derived-descriptors.test.ts
+        - packages/providers/test/venice-parity.test.ts
+        - packages/platform/test/first-party-runtime-venice-account.test.ts
     fixtures:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/venice-parity.test.ts
+      - packages/platform/test/first-party-runtime-venice-account.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/venice.ts]
+      expected:
+        - packages/providers/src/providers/venice.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/venice.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/plugin-derived-descriptors.test.ts
+      - packages/providers/test/venice-parity.test.ts
+      - packages/platform/test/first-party-runtime-venice-account.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

@@ -49,7 +49,8 @@ describe("first-party providers derived from upstream plugins", () => {
       expect(provider.descriptor.strategy?.id).toBe(provider.id);
       expect(provider.descriptor.settings?.some((setting) => setting.type === "secure")).toBe(true);
       expect(provider.descriptor.endpoints).not.toHaveLength(0);
-      expect(provider.descriptor.auth?.type).toBe("bearer");
+      if (provider.descriptor.id === "venice") expect(provider.descriptor.auth).toBeUndefined();
+      else expect(provider.descriptor.auth?.type).toBe("bearer");
     }
     expect(sub2api.descriptor.endpoints).toContainEqual({
       setting: "SUB2API_BASE_URL",

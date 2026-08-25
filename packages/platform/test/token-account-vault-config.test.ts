@@ -803,4 +803,31 @@ describe("token-account vault config repository", () => {
       secureSettings: { GROQ_API_KEY: "selected-key" },
     });
   });
+
+  it("maps a selected Venice account to its canonical key and clears the legacy alias", async () => {
+    const account = { id: "venice-selected", label: "Personal", addedAt: 0 };
+    const key = tokenAccountVaultKey("venice", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "venice",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+
+    const selected = await Effect.runPromise(
+      resolveSelectedFirstPartyAccountFromVault(
+        config,
+        memoryCredentials({ [key]: " selected-key " }),
+        "venice",
+      ),
+    );
+    expect(selected).toEqual({
+      id: account.id,
+      secureSettings: { VENICE_API_KEY: "selected-key", VENICE_KEY: null },
+    });
+  });
 });

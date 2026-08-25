@@ -512,6 +512,20 @@ const selectedGroqAccount = (
   });
 };
 
+const selectedVeniceAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected Venice account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: { VENICE_API_KEY: apiKey, VENICE_KEY: null },
+  });
+};
+
 const selectedGrokAccount = (
   accountId: string,
   raw: string,
@@ -592,7 +606,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "zai" &&
     providerId !== "copilot" &&
     providerId !== "deepinfra" &&
-    providerId !== "groq"
+    providerId !== "groq" &&
+    providerId !== "venice"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -606,6 +621,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "copilot") return selectedCopilotAccount(account.id, material, account);
       if (providerId === "deepinfra") return selectedDeepInfraAccount(account.id, material);
       if (providerId === "groq") return selectedGroqAccount(account.id, material);
+      if (providerId === "venice") return selectedVeniceAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

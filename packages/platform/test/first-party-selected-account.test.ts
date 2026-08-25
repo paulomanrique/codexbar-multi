@@ -194,6 +194,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical Venice API key and scrubs its ambient alias", async () => {
+    const key = tokenAccountVaultKey("venice", "account-0");
+    await expect(
+      resolve(config("venice"), "venice", { [key]: '  "venice-selected"  ' }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { VENICE_API_KEY: "venice-selected", VENICE_KEY: null },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(resolve(config("venice"), "venice", { [key]: material })).rejects.toMatchObject({
+        kind: "missing-credential",
+      });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

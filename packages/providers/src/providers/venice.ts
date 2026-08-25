@@ -5,11 +5,24 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
+import { status } from "./_http.ts";
+
+const cleanAPIKey = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
 const definition: ProviderDefinition = {
   id: "venice",
   name: "Venice",
   endpoints: ["https://api.venice.ai"],
-  auth: { type: "bearer", secret: "VENICE_API_KEY" },
   settings: [
     {
       key: "VENICE_API_KEY",
@@ -17,25 +30,42 @@ const definition: ProviderDefinition = {
       subtitle: "Venice API key used for the billing balance endpoint.",
       type: "secure",
     },
+    {
+      key: "VENICE_KEY",
+      title: "Legacy API key",
+      subtitle: "Legacy Venice environment alias.",
+      type: "secure",
+    },
   ],
 
   fetchUsage: async (ctx: ProviderContext) => {
-    const response: any = await ctx.http.getJSON("https://api.venice.ai/api/v1/billing/balance");
-    if (response.status !== 200) throw new Error(`Venice API error: HTTP ${response.status}`);
+    const key =
+      cleanAPIKey(ctx.settings.getSecret("VENICE_API_KEY")) ??
+      cleanAPIKey(ctx.settings.get("VENICE_API_KEY")) ??
+      cleanAPIKey(ctx.settings.getSecret("VENICE_KEY")) ??
+      cleanAPIKey(ctx.settings.get("VENICE_KEY"));
+    if (key === undefined) throw ctx.fail.missingCredential("Missing Venice API key.");
+    const response: any = await ctx.http.getJSON("https://api.venice.ai/api/v1/billing/balance", {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+    });
+    status(ctx, "Venice", response);
+    if (response.status !== 200) {
+      throw ctx.fail.apiFailure(`Venice API error: HTTP ${response.status}`);
+    }
 
     const payload: any = response.json;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      throw new Error("Failed to parse Venice response: expected an object");
+      throw ctx.fail.parseFailure("Failed to parse Venice response: expected an object");
     }
     if (typeof payload.canConsume !== "boolean") {
-      throw new Error("Failed to parse Venice response: canConsume must be a boolean");
+      throw ctx.fail.parseFailure("Failed to parse Venice response: canConsume must be a boolean");
     }
     if (
       !payload.balances ||
       typeof payload.balances !== "object" ||
       Array.isArray(payload.balances)
     ) {
-      throw new Error("Failed to parse Venice response: balances must be an object");
+      throw ctx.fail.parseFailure("Failed to parse Venice response: balances must be an object");
     }
 
     function optionalNumber(value: any, field: any) {
@@ -47,7 +77,7 @@ const definition: ProviderDefinition = {
             ? Number(value.trim())
             : Number.NaN;
       if (!Number.isFinite(number))
-        throw new Error(`Failed to parse Venice response: ${field} must be numeric`);
+        throw ctx.fail.parseFailure(`Failed to parse Venice response: ${field} must be numeric`);
       return number;
     }
 
@@ -56,7 +86,9 @@ const definition: ProviderDefinition = {
       payload.consumptionCurrency !== undefined &&
       typeof payload.consumptionCurrency !== "string"
     ) {
-      throw new Error("Failed to parse Venice response: consumptionCurrency must be a string");
+      throw ctx.fail.parseFailure(
+        "Failed to parse Venice response: consumptionCurrency must be a string",
+      );
     }
     const currency: any = payload.consumptionCurrency
       ? payload.consumptionCurrency.toUpperCase()

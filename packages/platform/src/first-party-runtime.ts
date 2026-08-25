@@ -825,6 +825,10 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "GROQ_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "groq.api";
   }
+  if (providerId === "venice") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "VENICE_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "venice.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
@@ -929,6 +933,20 @@ const executeProvider = (
       if (signal.aborted) markCancelled();
       else signal.addEventListener("abort", markCancelled, { once: true });
       const operationSignal = AbortSignal.any([signal, abortController.signal]);
+      const executeHttp = async (request: HttpRequest): Promise<HttpResponse> => {
+        try {
+          return await Effect.runPromise(options.http.execute(request), {
+            signal: operationSignal,
+          });
+        } catch (error) {
+          if (isAbortError(error) || hostCancelled || operationSignal.aborted) throw error;
+          if (error instanceof ClassifiedFetchFailure) throw error;
+          throw failure(
+            "network-failure",
+            error instanceof Error ? error.message : "Provider network request failed.",
+          );
+        }
+      };
       const descriptor = provider.descriptor;
       const timeZone = runtimeTimeZone(options.timeZone);
       const settings = new Map<string, string | undefined>();
@@ -1031,9 +1049,7 @@ const executeProvider = (
           timeoutMs: timeoutFrom(requestOptions),
           ...(body === undefined ? {} : { body }),
         };
-        const response = asProviderResponse(
-          await Effect.runPromise(options.http.execute(httpRequest), { signal: operationSignal }),
-        );
+        const response = asProviderResponse(await executeHttp(httpRequest));
         if (!parseJson) return response;
         try {
           return { ...response, json: JSON.parse(response.bodyText) as unknown };
@@ -1075,20 +1091,17 @@ const executeProvider = (
               }
             }
             return asProviderBinaryResponse(
-              await Effect.runPromise(
-                options.http.execute({
-                  url: url.href,
-                  method: "POST",
-                  headers,
-                  timeoutMs: timeoutFrom(
-                    requestOptions.timeoutSeconds === undefined
-                      ? {}
-                      : { timeoutSeconds: requestOptions.timeoutSeconds },
-                  ),
-                  body: requestOptions.body.slice(),
-                }),
-                { signal: operationSignal },
-              ),
+              await executeHttp({
+                url: url.href,
+                method: "POST",
+                headers,
+                timeoutMs: timeoutFrom(
+                  requestOptions.timeoutSeconds === undefined
+                    ? {}
+                    : { timeoutSeconds: requestOptions.timeoutSeconds },
+                ),
+                body: requestOptions.body.slice(),
+              }),
             );
           },
         },
