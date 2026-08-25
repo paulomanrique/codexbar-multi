@@ -49,6 +49,7 @@ providers:
         - Tests/CodexBarTests/*OpenAI*Tests.swift
         - TestsLinux/*OpenAI*Tests.swift
       tsGlobs:
+        - packages/providers/test/openai-credential-parity.test.ts
         - packages/providers/test/vertical-slice-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenAI/**/*
@@ -57,6 +58,7 @@ providers:
       real:
         - packages/providers/src/providers/openai.ts
     tsTestGlobs:
+      - packages/providers/test/openai-credential-parity.test.ts
       - packages/providers/test/vertical-slice-parity.test.ts
     status: partial
     oracleStatus: pending

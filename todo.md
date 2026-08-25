@@ -58,6 +58,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add LLM Proxy selected API-key mapping with private-network endpoint parity.
     - [x] Add DeepSeek selected API-key mapping without cross-account platform-session enrichment.
     - [x] Add LiteLLM selected virtual-key mapping while preserving its validated global proxy URL.
+    - [x] Normalize OpenAI Admin/legacy key precedence, project scope, and billing fallback policy.
     - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 14 providers.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.

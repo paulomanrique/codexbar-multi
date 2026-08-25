@@ -5,20 +5,76 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
+
+const clean = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim() ?? "";
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value === "" ? undefined : value;
+};
+
+class OpenAIHTTPError extends Error {
+  readonly endpoint: string;
+  readonly status: number;
+
+  constructor(endpoint: string, status: number) {
+    super(
+      endpoint === "credit balance"
+        ? status === 401
+          ? "OpenAI rejected this key for credit balance access (HTTP 401). Use an organization Admin API key for usage; project and service-account keys do not provide organization usage access."
+          : status === 403
+            ? "OpenAI API credit balance endpoint returned HTTP 403. Use a legacy/user API key with billing access; project keys may not expose credit grants."
+            : `OpenAI API credit balance error: HTTP ${status}`
+        : `OpenAI API usage ${endpoint} error: HTTP ${status}`,
+    );
+    this.name = "OpenAIHTTPError";
+    this.endpoint = endpoint;
+    this.status = status;
+  }
+
+  get credentialRejected(): boolean {
+    return this.status === 401 || this.status === 403;
+  }
+}
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
+
 const definition: ProviderDefinition = {
   id: "openai",
   name: "OpenAI",
   endpoints: ["https://api.openai.com"],
-  auth: { type: "bearer", secret: "OPENAI_API_KEY" },
   settings: [
+    { key: "OPENAI_ADMIN_KEY", title: "Admin API key", type: "secure" },
     { key: "OPENAI_API_KEY", title: "API key", type: "secure" },
     { key: "OPENAI_PROJECT_ID", title: "Project ID", type: "plain" },
     { key: "OPENAI_HISTORY_DAYS", title: "History days", type: "plain" },
-    { key: "OPENAI_ALLOW_BALANCE_FALLBACK", title: "Balance fallback", type: "plain" },
   ],
 
   fetchUsage: async (ctx: ProviderContext) => {
-    const projectID: any = ctx.settings.get("OPENAI_PROJECT_ID");
+    const adminKey =
+      clean(ctx.settings.getSecret("OPENAI_ADMIN_KEY")) ??
+      clean(ctx.settings.get("OPENAI_ADMIN_KEY"));
+    const legacyKey =
+      clean(ctx.settings.getSecret("OPENAI_API_KEY")) ?? clean(ctx.settings.get("OPENAI_API_KEY"));
+    const apiKey = adminKey ?? legacyKey;
+    if (!apiKey) throw ctx.fail.missingCredential("Missing OpenAI API key.");
+    const usesAdminKey = adminKey !== undefined;
+    const projectID: any = clean(ctx.settings.get("OPENAI_PROJECT_ID"));
+    const allowsLegacyBalanceFallback = projectID === undefined || !usesAdminKey;
+    const usageRequestOptions = {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      timeoutSeconds: 20,
+    };
+    const balanceRequestOptions = {
+      headers: usageRequestOptions.headers,
+      timeoutSeconds: 15,
+    };
     const rawHistoryDays: any = Number(ctx.settings.get("OPENAI_HISTORY_DAYS") || "30");
     const historyDays: any = Number.isInteger(rawHistoryDays)
       ? Math.max(1, Math.min(365, rawHistoryDays))
@@ -72,15 +128,17 @@ const definition: ProviderDefinition = {
       }
       return result;
     }
-    async function pages(path: any, groupBy: any) {
+    async function pages(path: any, groupBy: any, endpoint: string) {
       const buckets: any = [];
       for (const range of ranges()) {
         let page: any = null;
         const seen: any = new Set();
         for (let count = 0; count < 100; count += 1) {
-          const response: any = await ctx.http.getJSON(queryURL(path, range, groupBy, page));
-          if (response.status !== 200)
-            throw new Error(`OpenAI ${path} error: HTTP ${response.status}`);
+          const response: any = await ctx.http.getJSON(
+            queryURL(path, range, groupBy, page),
+            usageRequestOptions,
+          );
+          if (response.status !== 200) throw new OpenAIHTTPError(endpoint, response.status);
           const body: any = response.json;
           if (
             !body ||
@@ -106,8 +164,12 @@ const definition: ProviderDefinition = {
     }
 
     try {
-      const costBuckets: any = await pages("/v1/organization/costs", "line_item");
-      const completionBuckets: any = await pages("/v1/organization/usage/completions", "model");
+      const costBuckets: any = await pages("/v1/organization/costs", "line_item", "costs");
+      const completionBuckets: any = await pages(
+        "/v1/organization/usage/completions",
+        "model",
+        "completions",
+      );
       const daily: any = new Map();
       function bucket(raw: any) {
         if (
@@ -263,51 +325,92 @@ const definition: ProviderDefinition = {
         details,
       };
     } catch (usageError) {
-      if (ctx.settings.get("OPENAI_ALLOW_BALANCE_FALLBACK") !== "1") throw usageError;
-      const response: any = await ctx.http.getJSON(
-        "https://api.openai.com/v1/dashboard/billing/credit_grants",
-      );
-      if (response.status !== 200) throw usageError;
-      const body: any = response.json;
-      if (!body || typeof body !== "object" || Array.isArray(body)) throw usageError;
-      const granted: any = finite(body.total_granted, "total_granted", false);
-      const used: any = finite(body.total_used, "total_used", false);
-      const available: any = finite(body.total_available, "total_available", false);
-      const futureExpiries: any =
-        body.grants && Array.isArray(body.grants.data)
-          ? body.grants.data
-              .map((item: any) => item && finite(item.expires_at, "expires_at", true))
-              .filter((value: any) => value !== null && value * 1000 > Date.now())
-              .sort((a: any, b: any) => a - b)
-          : [];
-      const resetsAt: any = futureExpiries.length ? ctx.date.unixSeconds(futureExpiries[0]) : null;
-      const primary: any = {
-        usedPercent: granted > 0 ? ctx.pct(used, granted) : available > 0 ? 0 : 100,
-        resetDescription: `${usd(available)} available`,
-      };
-      if (resetsAt) primary.resetsAt = resetsAt;
-      const cost: any = {
-        used: Math.max(0, used),
-        limit: Math.max(0, granted),
-        currency: "USD",
-        period: "API credits",
-      };
-      if (resetsAt) cost.resetsAt = resetsAt;
-      return {
-        primary,
-        cost,
-        identity: { loginMethod: `API balance: ${usd(available)}` },
-        details: [
-          {
-            title: "API credits",
-            rows: [
-              { label: "Available", value: usd(available) },
-              { label: "Used", value: usd(used) },
-              { label: "Granted", value: usd(granted) },
-            ],
-          },
-        ],
-      };
+      if (isAbortError(usageError) || !allowsLegacyBalanceFallback) throw usageError;
+      try {
+        const response: any = await ctx.http.getJSON(
+          "https://api.openai.com/v1/dashboard/billing/credit_grants",
+          balanceRequestOptions,
+        );
+        if (response.status !== 200) {
+          throw new OpenAIHTTPError("credit balance", response.status);
+        }
+        const body: any = response.json;
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          throw new Error("Failed to parse OpenAI credit_grants response");
+        }
+        const requiredBillingNumber = (value: unknown, field: string): number => {
+          if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new Error(`OpenAI ${field} must be numeric`);
+          }
+          return value;
+        };
+        const optionalBillingNumber = (value: unknown, field: string): number | null => {
+          if (value === null || value === undefined) return null;
+          return requiredBillingNumber(value, field);
+        };
+        const granted = requiredBillingNumber(body.total_granted, "total_granted");
+        const used = requiredBillingNumber(body.total_used, "total_used");
+        const available = requiredBillingNumber(body.total_available, "total_available");
+        const nowMillis = ctx.date.now().getTime();
+        let grantRows: readonly unknown[] = [];
+        if (body.grants !== null && body.grants !== undefined) {
+          if (
+            typeof body.grants !== "object" ||
+            Array.isArray(body.grants) ||
+            !Array.isArray(body.grants.data)
+          ) {
+            throw new Error("Failed to parse OpenAI credit_grants response");
+          }
+          grantRows = body.grants.data;
+        }
+        const futureExpiries = grantRows
+          .map((raw, index) => {
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+              throw new Error(`OpenAI grants.data[${index}] must be an object`);
+            }
+            const item = raw as Record<string, unknown>;
+            optionalBillingNumber(item.grant_amount, "grant_amount");
+            optionalBillingNumber(item.used_amount, "used_amount");
+            return optionalBillingNumber(item.expires_at, "expires_at");
+          })
+          .filter((value): value is number => value !== null && value * 1000 > nowMillis)
+          .sort((a, b) => a - b);
+        const nextExpiry = futureExpiries.at(0);
+        const resetsAt = nextExpiry === undefined ? null : ctx.date.unixSeconds(nextExpiry);
+        const primary: any = {
+          usedPercent: granted > 0 ? ctx.pct(used, granted) : available > 0 ? 0 : 100,
+          resetDescription: `${usd(available)} available`,
+        };
+        if (resetsAt) primary.resetsAt = resetsAt;
+        const cost: any = {
+          used: Math.max(0, used),
+          limit: Math.max(0, granted),
+          currency: "USD",
+          period: "API credits",
+        };
+        if (resetsAt) cost.resetsAt = resetsAt;
+        return {
+          primary,
+          cost,
+          identity: { loginMethod: `API balance: ${usd(available)}` },
+          details: [
+            {
+              title: "API credits",
+              rows: [
+                { label: "Available", value: usd(available) },
+                { label: "Used", value: usd(used) },
+                { label: "Granted", value: usd(granted) },
+              ],
+            },
+          ],
+        };
+      } catch (balanceError) {
+        if (isAbortError(balanceError)) throw balanceError;
+        if (usageError instanceof OpenAIHTTPError && usageError.credentialRejected) {
+          throw balanceError;
+        }
+        throw usageError;
+      }
     }
   },
 };
