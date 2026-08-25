@@ -198,14 +198,33 @@ providers:
         - Tests/CodexBarTests/*OpenCode*Tests.swift
         - TestsLinux/*OpenCode*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-opencode-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/providers/test/open-code-billing.test.ts
+        - packages/providers/test/token-account-support.test.ts
         - packages/providers/test/web-cookie-wave-a.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenCode/**/*
     tsPaths:
-      expected: [packages/providers/src/providers/opencode.ts]
+      expected:
+        - packages/providers/src/providers/opencode.ts
+        - packages/providers/src/providers/open-code-billing.ts
+        - packages/providers/src/providers/open-code-cookie.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/opencode.ts
+        - packages/providers/src/providers/open-code-billing.ts
+        - packages/providers/src/providers/open-code-cookie.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-opencode-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/providers/test/open-code-billing.test.ts
+      - packages/providers/test/token-account-support.test.ts
       - packages/providers/test/web-cookie-wave-a.test.ts
     status: partial
     oracleStatus: pending

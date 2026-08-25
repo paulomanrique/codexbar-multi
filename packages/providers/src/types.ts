@@ -128,6 +128,8 @@ export interface ProviderContext {
   };
   readonly http: {
     get(url: string, options?: Record<string, unknown>): Promise<ProviderResponse>;
+    /** Raw POST for server-function protocols whose response is not necessarily JSON. */
+    post?(url: string, options?: Record<string, unknown>): Promise<ProviderResponse>;
     getJSON(url: string, options?: Record<string, unknown>): Promise<ProviderJSONResponse>;
     postJSON(url: string, options?: Record<string, unknown>): Promise<ProviderJSONResponse>;
     /**

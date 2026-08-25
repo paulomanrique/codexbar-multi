@@ -7,18 +7,24 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { number, object, status } from "./_http.ts";
+import { parseOpenCodeZenBilling } from "./open-code-billing.ts";
+import { openCodeRequestCookieHeader } from "./open-code-cookie.ts";
 
 const WORKSPACES = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f";
 const SUBSCRIPTION = "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4";
 const BILLING = "c83b78a614689c38ebee981f9b39a8b377716db85c1fd7dbab604adc02d3313d";
 const base = "https://opencode.ai";
+const userAgent =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
 const serverHeaders = (id: string, cookie: string, referer: string) => ({
   Cookie: cookie,
   "X-Server-Id": id,
-  "X-Server-Instance": "server-fn:codexbar-multi",
+  "X-Server-Instance": `server-fn:${crypto.randomUUID()}`,
   Origin: base,
   Referer: referer,
+  "User-Agent": userAgent,
   Accept: "text/javascript, application/json;q=0.9, */*;q=0.8",
 });
 const signedOut = (text: string) =>
@@ -27,7 +33,12 @@ const signedOut = (text: string) =>
   );
 const cookie = async (ctx: ProviderContext) => {
   const manual = ctx.settings.getSecret("OPENCODE_COOKIE") ?? ctx.settings.get("OPENCODE_COOKIE");
-  const value = manual?.trim() || (await ctx.browser.cookieHeader("opencode.ai")).trim();
+  if (manual?.trim()) {
+    const value = openCodeRequestCookieHeader(manual);
+    if (!value) throw ctx.fail.missingCredential("OpenCode cookie header is invalid.");
+    return value;
+  }
+  const value = openCodeRequestCookieHeader(await ctx.browser.cookieHeader("opencode.ai"));
   if (!value) throw ctx.fail.missingCredential("No OpenCode session cookie is available.");
   return value;
 };
@@ -123,6 +134,64 @@ const json = (text: string): unknown | undefined => {
   }
 };
 
+const explicitNullPayload = (text: string): boolean => {
+  const trimmed = text.trim();
+  if (trimmed.toLowerCase() === "null") return true;
+  if (/\]\s*=\s*\[\s*\]\s*,\s*null\s*\)\s*$/u.test(trimmed)) return true;
+  return json(trimmed) === null;
+};
+
+const subscriptionWindows = (
+  text: string,
+  now: Date,
+): { rolling?: Window; weekly?: Window; monthly?: Window } => {
+  const parsed = windows(json(text), now);
+  if (parsed.rolling && parsed.weekly) return parsed;
+  const rollingPercent = /rollingUsage[^}]*?usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)/u.exec(
+    text,
+  )?.[1];
+  const rollingReset = /rollingUsage[^}]*?resetInSec\s*:\s*([0-9]+)/u.exec(text)?.[1];
+  const weeklyPercent = /weeklyUsage[^}]*?usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)/u.exec(
+    text,
+  )?.[1];
+  const weeklyReset = /weeklyUsage[^}]*?resetInSec\s*:\s*([0-9]+)/u.exec(text)?.[1];
+  if (
+    rollingPercent === undefined ||
+    rollingReset === undefined ||
+    weeklyPercent === undefined ||
+    weeklyReset === undefined
+  ) {
+    return parsed;
+  }
+  return {
+    ...parsed,
+    rolling: { percent: clamp(Number(rollingPercent)), resetInSec: Number(rollingReset) },
+    weekly: { percent: clamp(Number(weeklyPercent)), resetInSec: Number(weeklyReset) },
+  };
+};
+
+const subscriptionSnapshot = (
+  ctx: ProviderContext,
+  parsed: ReturnType<typeof subscriptionWindows>,
+) => {
+  if (!parsed.rolling || !parsed.weekly) return undefined;
+  return {
+    primary: {
+      usedPercent: parsed.rolling.percent,
+      windowMinutes: 300,
+      resetsAt: ctx.date.unixMillis(ctx.date.nowMillis() + parsed.rolling.resetInSec * 1000),
+    },
+    secondary: {
+      usedPercent: parsed.weekly.percent,
+      windowMinutes: 10080,
+      resetsAt: ctx.date.unixMillis(ctx.date.nowMillis() + parsed.weekly.resetInSec * 1000),
+    },
+  };
+};
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
+
 const definition: ProviderDefinition = {
   id: "opencode",
   name: "OpenCode",
@@ -152,36 +221,82 @@ const definition: ProviderDefinition = {
       `${base}/_server?id=${encodeURIComponent(SUBSCRIPTION)}&args=${args}`,
       { headers: serverHeaders(SUBSCRIPTION, session, referer) },
     );
-    const subscription = response(ctx, "OpenCode", subscriptionResponse);
-    const parsed = windows(json(subscription), ctx.date.now());
-    if (parsed.rolling && parsed.weekly) {
-      const primary = parsed.rolling;
-      const secondary = parsed.weekly;
-      return {
-        primary: {
-          usedPercent: primary.percent,
-          windowMinutes: 300,
-          resetsAt: ctx.date.unixMillis(ctx.date.nowMillis() + primary.resetInSec * 1000),
-        },
-        secondary: {
-          usedPercent: secondary.percent,
-          windowMinutes: 10080,
-          resetsAt: ctx.date.unixMillis(ctx.date.nowMillis() + secondary.resetInSec * 1000),
-        },
-      };
+    let subscriptionFailure = ctx.fail.parseFailure(
+      "OpenCode subscription response is missing usage fields.",
+    );
+    if (
+      signedOut(subscriptionResponse.bodyText) ||
+      [401, 403].includes(subscriptionResponse.status)
+    ) {
+      throw ctx.fail.authenticationExpired("OpenCode session cookie is invalid or expired.");
     }
-    const billingResponse = await ctx.http.get(
-      `${base}/_server?id=${encodeURIComponent(BILLING)}&args=${args}`,
-      { headers: serverHeaders(BILLING, session, referer) },
-    );
-    const billing = object(json(response(ctx, "OpenCode", billingResponse)));
-    const usage = numeric(
-      billing?.monthlyUsageUSD ?? billing?.monthly_usage_usd ?? billing?.usage ?? billing?.spent,
-    );
-    const limit = numeric(billing?.monthlyLimitUSD ?? billing?.monthly_limit_usd ?? billing?.limit);
-    const balance = numeric(billing?.balanceUSD ?? billing?.balance_usd ?? billing?.balance);
-    if (usage === undefined)
-      throw ctx.fail.parseFailure("OpenCode response is missing subscription usage fields.");
+    if (subscriptionResponse.status < 200 || subscriptionResponse.status >= 300) {
+      subscriptionFailure = ctx.fail.apiFailure(
+        `OpenCode subscription API returned HTTP ${subscriptionResponse.status}.`,
+      );
+    } else if (explicitNullPayload(subscriptionResponse.bodyText)) {
+      subscriptionFailure = ctx.fail.apiFailure(
+        `No subscription usage data was returned for workspace ${workspaceId}.`,
+      );
+    } else {
+      const parsed = subscriptionWindows(subscriptionResponse.bodyText, ctx.date.now());
+      const snapshot = subscriptionSnapshot(ctx, parsed);
+      if (snapshot) return snapshot;
+      if (ctx.http.post !== undefined) {
+        const fallbackResponse = await ctx.http.post(`${base}/_server`, {
+          headers: {
+            ...serverHeaders(SUBSCRIPTION, session, referer),
+            "Content-Type": "application/json",
+          },
+          body: [workspaceId],
+        });
+        if (signedOut(fallbackResponse.bodyText) || [401, 403].includes(fallbackResponse.status)) {
+          throw ctx.fail.authenticationExpired("OpenCode session cookie is invalid or expired.");
+        }
+        if (fallbackResponse.status < 200 || fallbackResponse.status >= 300) {
+          subscriptionFailure = ctx.fail.apiFailure(
+            `OpenCode subscription API returned HTTP ${fallbackResponse.status}.`,
+          );
+        } else if (explicitNullPayload(fallbackResponse.bodyText)) {
+          subscriptionFailure = ctx.fail.apiFailure(
+            `No subscription usage data was returned for workspace ${workspaceId}.`,
+          );
+        } else {
+          const fallback = subscriptionSnapshot(
+            ctx,
+            subscriptionWindows(fallbackResponse.bodyText, ctx.date.now()),
+          );
+          if (fallback) return fallback;
+          subscriptionFailure = ctx.fail.parseFailure(
+            "OpenCode subscription response is missing usage fields.",
+          );
+        }
+      } else {
+        subscriptionFailure = ctx.fail.parseFailure(
+          "OpenCode subscription response is missing usage fields.",
+        );
+      }
+    }
+
+    let billingResponse: ProviderResponse;
+    try {
+      billingResponse = await ctx.http.get(
+        `${base}/_server?id=${encodeURIComponent(BILLING)}&args=${args}`,
+        { headers: serverHeaders(BILLING, session, `${base}/workspace/${workspaceId}`) },
+      );
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw subscriptionFailure;
+    }
+    if (signedOut(billingResponse.bodyText) || [401, 403].includes(billingResponse.status)) {
+      throw ctx.fail.authenticationExpired("OpenCode session cookie is invalid or expired.");
+    }
+    if (billingResponse.status < 200 || billingResponse.status >= 300) throw subscriptionFailure;
+    const billing = parseOpenCodeZenBilling(billingResponse.bodyText);
+    if (billing === undefined || billing.hasSubscription) throw subscriptionFailure;
+    const usage = billing.monthlyUsageUSD;
+    const limit = billing.monthlyLimitUSD;
+    const balance = billing.balanceUSD;
     return {
       ...(limit && limit > 0
         ? { primary: { usedPercent: clamp((usage / limit) * 100), windowMinutes: 43200 } }

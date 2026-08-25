@@ -938,6 +938,10 @@ const selectedStrategyAllowed = (
     const cookie = ownSetting(selectedAccount.secureSettings, "MISTRAL_COOKIE_HEADER");
     return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "mistral.web";
   }
+  if (providerId === "opencode") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "OPENCODE_COOKIE");
+    return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "opencode.web";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
@@ -1180,6 +1184,7 @@ const executeProvider = (
         settings: { get: getSetting, getSecret: (key) => secrets.get(key) },
         http: {
           get: (url, requestOptions) => request("GET", url, requestOptions),
+          post: (url, requestOptions) => request("POST", url, requestOptions),
           getJSON: async (url, requestOptions) =>
             (await request("GET", url, requestOptions, true)) as ProviderJSONResponse,
           postJSON: async (url, requestOptions) =>

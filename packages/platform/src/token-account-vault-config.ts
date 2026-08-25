@@ -14,6 +14,7 @@ import {
   parseAntigravityOAuthCredentialValue,
   resolveAntigravityCredentialEmail,
 } from "@codexbar/providers/providers/antigravity";
+import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-code-cookie";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
 
 export interface TokenAccountMigrationLock {
@@ -452,6 +453,23 @@ const selectedCookieAccount = (
   return Effect.succeed({ id: accountId, secureSettings: { [setting]: cookieHeader } });
 };
 
+const selectedOpenCodeAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const byteLength = new TextEncoder().encode(raw).byteLength;
+  const cookieHeader = openCodeRequestCookieHeader(raw);
+  if (
+    raw.includes("\u0000") ||
+    byteLength > 1024 * 1024 ||
+    cookieHeader === undefined ||
+    cookieHeader.includes("\u0000")
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected OpenCode account credential is invalid."));
+  }
+  return Effect.succeed({ id: accountId, secureSettings: { OPENCODE_COOKIE: cookieHeader } });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -779,7 +797,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "abacus" &&
     providerId !== "augment" &&
     providerId !== "cursor" &&
-    providerId !== "mistral"
+    providerId !== "mistral" &&
+    providerId !== "opencode"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -811,6 +830,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
         return selectedCookieAccount(account.id, material, "CURSOR_COOKIE", "Cursor");
       if (providerId === "mistral")
         return selectedCookieAccount(account.id, material, "MISTRAL_COOKIE_HEADER", "Mistral");
+      if (providerId === "opencode") return selectedOpenCodeAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

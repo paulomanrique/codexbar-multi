@@ -91,6 +91,7 @@ describe("provider token account support inventory", () => {
       "mistral",
       "neuralwatt",
       "openai",
+      "opencode",
       "openrouter",
       "sub2api",
       "venice",

@@ -217,6 +217,41 @@ describe("first-party selected accounts from the token-account vault", () => {
     expect(reads).toBe(1);
   });
 
+  it.each([
+    [
+      "provider=google; auth=session123; theme=dark; __Host-auth=host456",
+      "auth=session123; __Host-auth=host456",
+    ],
+    [
+      "curl https://opencode.ai -H 'Cookie: auth=first; auth=second; provider=google'",
+      "auth=first; auth=second",
+    ],
+    [
+      "curl https://opencode.ai --cookie '__Host-auth=host-only; theme=dark'",
+      "__Host-auth=host-only",
+    ],
+  ] as const)("selects only exact OpenCode auth cookies from %s", async (material, expected) => {
+    const key = tokenAccountVaultKey("opencode", "account-0");
+    await expect(resolve(config("opencode"), "opencode", { [key]: material })).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { OPENCODE_COOKIE: expected },
+    });
+  });
+
+  it.each([
+    "",
+    "account-token",
+    "provider=google; theme=dark",
+    "Auth=wrong-case; AUTH=also-wrong; __host-auth=wrong-case",
+    "auth=value\u0000suffix",
+    `auth=value; ignored=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected OpenCode cookie material", async (material) => {
+    const key = tokenAccountVaultKey("opencode", "account-0");
+    await expect(
+      resolve(config("opencode"), "opencode", { [key]: material }),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+  });
+
   it("selects an opaque Copilot token without inheriting the ambient API key", async () => {
     const key = tokenAccountVaultKey("copilot", "account-0");
     await expect(
