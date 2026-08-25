@@ -1057,10 +1057,17 @@ const executeProvider = (
       if (signal.aborted) markCancelled();
       else signal.addEventListener("abort", markCancelled, { once: true });
       const operationSignal = AbortSignal.any([signal, abortController.signal]);
-      const executeHttp = async (request: HttpRequest): Promise<HttpResponse> => {
+      const executeHttp = async (
+        request: HttpRequest,
+        requestSignal?: AbortSignal,
+      ): Promise<HttpResponse> => {
+        const signal =
+          requestSignal === undefined
+            ? operationSignal
+            : AbortSignal.any([operationSignal, requestSignal]);
         try {
           return await Effect.runPromise(options.http.execute(request), {
-            signal: operationSignal,
+            signal,
           });
         } catch (error) {
           if (isAbortError(error)) throw error;
@@ -1176,6 +1183,10 @@ const executeProvider = (
           }
         }
         const body = requestBody(method, requestOptions);
+        const requestSignal = requestOptions.signal;
+        if (requestSignal !== undefined && !(requestSignal instanceof AbortSignal)) {
+          throw failure("api-failure", "Provider request cancellation signal is invalid");
+        }
         const httpRequest: HttpRequest = {
           url: url.href,
           method,
@@ -1183,7 +1194,9 @@ const executeProvider = (
           timeoutMs: timeoutFrom(requestOptions),
           ...(body === undefined ? {} : { body }),
         };
-        const response = asProviderResponse(await executeHttp(httpRequest));
+        const response = asProviderResponse(
+          await executeHttp(httpRequest, requestSignal as AbortSignal | undefined),
+        );
         if (!parseJson) return response;
         try {
           return { ...response, json: JSON.parse(response.bodyText) as unknown };
@@ -1286,6 +1299,7 @@ const executeProvider = (
             }),
         env: { timeZone },
         sourceMode: fetchContext.sourceMode,
+        signal: operationSignal,
         date: {
           now,
           nowMillis: () => nowMillis,

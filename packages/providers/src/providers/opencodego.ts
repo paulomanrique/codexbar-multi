@@ -7,12 +7,22 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { number, object, status } from "./_http.ts";
+import {
+  parseOpenCodeGoBillingBalance,
+  parseOpenCodeGoZenBalance,
+} from "./open-code-go-balance.ts";
 import { openCodeRequestCookieHeader } from "./open-code-cookie.ts";
 
 const BASE = "https://opencode.ai";
 const USAGE_API = `${BASE}/zen/go/v1/usage`;
 const BILLING = "c83b78a614689c38ebee981f9b39a8b377716db85c1fd7dbab604adc02d3313d";
 const WORKSPACES = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f";
+const optionalBalanceStartDelayMs = 25;
+const optionalBalanceJoinMs = 250;
+const optionalBalanceTimeoutSeconds = 5;
+const userAgent =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
 const signedOut = (text: string) =>
   /login|sign in|auth\/authorize|not associated with an account|actor of type "public"/iu.test(
@@ -21,7 +31,8 @@ const signedOut = (text: string) =>
 const header = (id: string, cookie: string, referer: string) => ({
   Cookie: cookie,
   "X-Server-Id": id,
-  "X-Server-Instance": "server-fn:codexbar-multi",
+  "X-Server-Instance": `server-fn:${crypto.randomUUID()}`,
+  "User-Agent": userAgent,
   Origin: BASE,
   Referer: referer,
   Accept: "text/javascript, application/json;q=0.9, */*;q=0.8",
@@ -40,6 +51,20 @@ const parse = (raw: string): unknown | undefined => {
   }
 };
 const workspaceFrom = (raw: string) => /wrk_[A-Za-z0-9_-]+/u.exec(raw)?.[0];
+export const normalizeOpenCodeGoWorkspaceID = (raw: string | undefined): string | undefined => {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith("wrk_") && trimmed.length > 4) return trimmed;
+  try {
+    const parts = new URL(trimmed).pathname.split("/").filter(Boolean);
+    const index = parts.indexOf("workspace");
+    const candidate = index >= 0 ? parts[index + 1] : undefined;
+    if (candidate?.startsWith("wrk_") && candidate.length > 4) return candidate;
+  } catch {
+    // Non-URL text can still contain a workspace identifier.
+  }
+  return /wrk_[A-Za-z0-9]+/u.exec(trimmed)?.[0];
+};
 type Window = { readonly percent: number; readonly seconds: number };
 const value = (record: Record<string, unknown>, keys: readonly string[]) =>
   keys.map((key) => number(record[key])).find((candidate) => candidate !== undefined);
@@ -122,18 +147,41 @@ const allWindows = (raw: unknown, now: number) => {
   visit(raw);
   return found;
 };
-const numberDeep = (input: unknown, keys: readonly string[]): number | undefined => {
-  const record = object(input);
-  if (!record) return undefined;
-  for (const key of keys) {
-    const found = number(record[key]);
-    if (found !== undefined) return found;
-  }
-  for (const child of Object.values(record)) {
-    const found = numberDeep(child, keys);
-    if (found !== undefined) return found;
-  }
-  return undefined;
+const hydrationNumber = (raw: string, lane: string, field: string): number | undefined => {
+  const match = new RegExp(`${lane}[^}]*?${field}\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)`, "u").exec(
+    raw,
+  )?.[1];
+  return match === undefined ? undefined : number(match);
+};
+export const parseOpenCodeGoUsageText = (raw: string, now: number) => {
+  const jsonUsage = allWindows(parse(raw), now);
+  if (jsonUsage.rolling) return jsonUsage;
+  const rollingPercent = hydrationNumber(raw, "rollingUsage", "usagePercent");
+  const rollingReset = hydrationNumber(raw, "rollingUsage", "resetInSec");
+  if (rollingPercent === undefined || rollingReset === undefined) return jsonUsage;
+  const weeklyPercent = hydrationNumber(raw, "weeklyUsage", "usagePercent");
+  const weeklyReset = hydrationNumber(raw, "weeklyUsage", "resetInSec");
+  const monthlyPercent = hydrationNumber(raw, "monthlyUsage", "usagePercent");
+  const monthlyReset = hydrationNumber(raw, "monthlyUsage", "resetInSec");
+  return {
+    rolling: { percent: clamp(rollingPercent), seconds: Math.max(0, Math.trunc(rollingReset)) },
+    ...(weeklyPercent === undefined || weeklyReset === undefined
+      ? {}
+      : {
+          weekly: {
+            percent: clamp(weeklyPercent),
+            seconds: Math.max(0, Math.trunc(weeklyReset)),
+          },
+        }),
+    ...(monthlyPercent === undefined && monthlyReset === undefined
+      ? {}
+      : {
+          monthly: {
+            percent: clamp(monthlyPercent ?? 0),
+            seconds: Math.max(0, Math.trunc(monthlyReset ?? 0)),
+          },
+        }),
+  };
 };
 const apiKey = (raw: string | undefined): string | undefined => {
   let value = raw?.trim();
@@ -147,8 +195,8 @@ const apiKey = (raw: string | undefined): string | undefined => {
 };
 const apiKeyFrom = (ctx: ProviderContext): string | undefined =>
   apiKey(ctx.settings.getSecret("OPENCODE_API_KEY") ?? ctx.settings.get("OPENCODE_API_KEY"));
-const cancelled = (error: unknown): boolean =>
-  error instanceof Error && error.name === "AbortError";
+const cancelled = (error: unknown, ctx?: ProviderContext): boolean =>
+  ctx?.signal?.aborted === true || (error instanceof Error && error.name === "AbortError");
 const snapshot = (ctx: ProviderContext, usage: ReturnType<typeof allWindows>) => {
   const at = (candidate: Window | undefined) =>
     candidate ? ctx.date.unixMillis(ctx.date.nowMillis() + candidate.seconds * 1000) : undefined;
@@ -206,6 +254,64 @@ const cookie = async (ctx: ProviderContext) => {
   return result;
 };
 
+const fetchZenBalance = async (
+  ctx: ProviderContext,
+  workspace: string,
+  session: string,
+  signal: AbortSignal,
+): Promise<number | undefined> => {
+  const dashboard = await ctx.http.get(`${BASE}/workspace/${encodeURIComponent(workspace)}`, {
+    headers: {
+      Cookie: session,
+      "User-Agent": userAgent,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+    signal,
+    timeoutSeconds: optionalBalanceTimeoutSeconds,
+  });
+  const dashboardBalance = parseOpenCodeGoZenBalance(text(ctx, dashboard));
+  if (dashboardBalance !== undefined) return dashboardBalance;
+  const args = encodeURIComponent(JSON.stringify([workspace]));
+  const response = await ctx.http.get(
+    `${BASE}/_server?id=${encodeURIComponent(BILLING)}&args=${args}`,
+    {
+      headers: header(BILLING, session, `${BASE}/workspace/${encodeURIComponent(workspace)}`),
+      signal,
+      timeoutSeconds: optionalBalanceTimeoutSeconds,
+    },
+  );
+  return parseOpenCodeGoBillingBalance(text(ctx, response));
+};
+
+const completedOptionalZenBalance = async (
+  ctx: ProviderContext,
+  task: Promise<number | undefined>,
+  controller: AbortController,
+): Promise<number | undefined> => {
+  if (ctx.date.sleep === undefined) {
+    try {
+      return await task;
+    } catch (error) {
+      if (cancelled(error, ctx)) throw error;
+      return undefined;
+    }
+  }
+  const timeout = Symbol("OpenCode Go optional balance timeout");
+  try {
+    const result = await Promise.race([
+      task,
+      ctx.date.sleep(optionalBalanceJoinMs).then(() => timeout),
+    ]);
+    if (typeof result !== "symbol") return result;
+    controller.abort(new DOMException("OpenCode Go optional balance timed out.", "AbortError"));
+    void task.catch(() => undefined);
+    return undefined;
+  } catch (error) {
+    if (cancelled(error, ctx)) throw error;
+    return undefined;
+  }
+};
+
 /**
  * The public API is preferred in Auto mode, but its failure must not make a
  * still-valid browser session unusable.  Swift keeps the pre-existing web
@@ -213,41 +319,64 @@ const cookie = async (ctx: ProviderContext) => {
  */
 const fetchWebUsage = async (ctx: ProviderContext) => {
   const session = await cookie(ctx);
-  let workspace = ctx.settings.get("OPENCODEGO_WORKSPACE_ID")?.trim();
+  let workspace = normalizeOpenCodeGoWorkspaceID(ctx.settings.get("OPENCODEGO_WORKSPACE_ID"));
   if (!workspace) {
     const response = await ctx.http.get(`${BASE}/_server?id=${encodeURIComponent(WORKSPACES)}`, {
       headers: header(WORKSPACES, session, BASE),
     });
     workspace = workspaceFrom(text(ctx, response));
+    if (!workspace && ctx.http.post !== undefined) {
+      const fallback = await ctx.http.post(`${BASE}/_server`, {
+        headers: {
+          ...header(WORKSPACES, session, BASE),
+          "Content-Type": "application/json",
+        },
+        body: [],
+      });
+      workspace = workspaceFrom(text(ctx, fallback));
+    }
   }
   if (!workspace) throw ctx.fail.parseFailure("OpenCode Go response is missing a workspace ID.");
-  const page = await ctx.http.get(`${BASE}/workspace/${encodeURIComponent(workspace)}/go`, {
+  const pageTask = ctx.http.get(`${BASE}/workspace/${encodeURIComponent(workspace)}/go`, {
     headers: {
       Cookie: session,
+      "User-Agent": userAgent,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     },
   });
-  const usage = allWindows(parse(text(ctx, page)), ctx.date.nowMillis());
-  const args = encodeURIComponent(JSON.stringify([workspace]));
-  let balance: number | undefined;
+  const balanceController = new AbortController();
+  const balanceTask = (async () => {
+    if (ctx.date.sleep !== undefined) await ctx.date.sleep(optionalBalanceStartDelayMs);
+    balanceController.signal.throwIfAborted();
+    return fetchZenBalance(ctx, workspace, session, balanceController.signal);
+  })();
+  // The balance runs concurrently and can reject before the usage page settles. Attach a
+  // handler now to avoid an unhandled-rejection window; later awaits still observe the original.
+  void balanceTask.catch(() => undefined);
+  let page: ProviderResponse;
   try {
-    const response = await ctx.http.get(
-      `${BASE}/_server?id=${encodeURIComponent(BILLING)}&args=${args}`,
-      {
-        headers: header(BILLING, session, `${BASE}/workspace/${encodeURIComponent(workspace)}/go`),
-      },
-    );
-    balance = numberDeep(parse(text(ctx, response)), [
-      "zenBalanceUSD",
-      "zen_balance_usd",
-      "balanceUSD",
-      "balance_usd",
-      "balance",
-    ]);
+    page = await pageTask;
   } catch (error) {
-    if (cancelled(error)) throw error;
-    if (error instanceof Error && error.message.startsWith("authentication-expired")) throw error;
-    // The upstream balance request is optional and must not hide valid quota data.
+    balanceController.abort(new DOMException("OpenCode Go usage request failed.", "AbortError"));
+    void balanceTask.catch(() => undefined);
+    throw error;
+  }
+  let usage: ReturnType<typeof parseOpenCodeGoUsageText>;
+  try {
+    usage = parseOpenCodeGoUsageText(text(ctx, page), ctx.date.nowMillis());
+  } catch (error) {
+    balanceController.abort(new DOMException("OpenCode Go usage parsing failed.", "AbortError"));
+    void balanceTask.catch(() => undefined);
+    throw error;
+  }
+  let balance: number | undefined;
+  if (!usage.rolling) {
+    balance = await balanceTask;
+    if (balance === undefined) {
+      throw ctx.fail.parseFailure("OpenCode Go response is missing usage fields.");
+    }
+  } else {
+    balance = await completedOptionalZenBalance(ctx, balanceTask, balanceController);
   }
   return {
     ...(usage.rolling ? snapshot(ctx, usage) : {}),

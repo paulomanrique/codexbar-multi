@@ -6,7 +6,7 @@ import { makeFirstPartyProviderRuntime } from "../src/first-party-runtime.ts";
 
 const clock = {
   now: Effect.succeed(Date.parse("2026-08-20T12:00:00.000Z")),
-  sleep: () => Effect.void,
+  sleep: (milliseconds: number) => Effect.sleep(milliseconds),
 };
 const body = (value: unknown) =>
   new TextEncoder().encode(typeof value === "string" ? value : JSON.stringify(value));
@@ -56,11 +56,18 @@ const runtimeFor = (
             body: body({ rollingUsage: { usagePercent: 15, resetInSec: 600 } }),
             url: request.url,
           });
+        if (url.pathname === "/workspace/wrk_fixture")
+          return Effect.succeed({
+            status: 200,
+            headers: {},
+            body: body({ zenBalance: 7 }),
+            url: request.url,
+          });
         if (url.pathname === "/_server")
           return Effect.succeed({
             status: 200,
             headers: {},
-            body: body({ zenBalanceUSD: 7 }),
+            body: body({ customerID: "cus_fixture", balance: 700_000_000 }),
             url: request.url,
           });
         return Effect.fail(new InfrastructureError("test", "unexpected OpenCode Go request"));
@@ -85,7 +92,11 @@ describe("OpenCode Go host multi-strategy runtime", () => {
       "opencodego.api",
       "opencodego.web",
     ]);
-    expect(calls).toEqual(["/zen/go/v1/usage", "/workspace/wrk_fixture/go", "/_server"]);
+    expect(calls).toEqual([
+      "/zen/go/v1/usage",
+      "/workspace/wrk_fixture/go",
+      "/workspace/wrk_fixture",
+    ]);
   });
 
   it("keeps an explicit API request within the API strategy", async () => {
@@ -111,7 +122,7 @@ describe("OpenCode Go host multi-strategy runtime", () => {
       "opencodego.api",
       "opencodego.web",
     ]);
-    expect(calls).toEqual(["/workspace/wrk_fixture/go", "/_server"]);
+    expect(calls).toEqual(["/workspace/wrk_fixture/go", "/workspace/wrk_fixture"]);
   });
 
   it("reports a missing API key without making a web request in API mode", async () => {
@@ -177,6 +188,6 @@ describe("OpenCode Go host multi-strategy runtime", () => {
       runtimeFor(calls).fetch("opencodego", { sourceMode: "web", includeCredits: false }),
     );
     expect(outcome).toMatchObject({ strategyId: "opencodego.web", source: "web" });
-    expect(calls).toEqual(["/workspace/wrk_fixture/go", "/_server"]);
+    expect(calls).toEqual(["/workspace/wrk_fixture/go", "/workspace/wrk_fixture"]);
   });
 });

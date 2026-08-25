@@ -376,8 +376,8 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
       context((request) => {
         if (request.url.searchParams.get("id")?.startsWith("def"))
           return response('id: "wrk_fixture"');
-        if (request.url.searchParams.get("id")?.startsWith("c83"))
-          return json({ zenBalanceUSD: 8 });
+        if (request.url.pathname === "/workspace/wrk_fixture")
+          return response("<h2>現在の残高 $8.00</h2>");
         if (request.url.pathname.endsWith("/go"))
           return json({
             rollingUsage: { usagePercent: 10, resetInSec: 300 },
@@ -395,6 +395,103 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
     });
   });
 
+  it("falls back to the scaled OpenCode Go billing server balance", async () => {
+    const calls: Request[] = [];
+    const snapshot = await opencodego.fetchUsage(
+      context(
+        (request) => {
+          calls.push(request);
+          if (request.url.pathname.endsWith("/go"))
+            return json({ rollingUsage: { usagePercent: 15, resetInSec: 600 } });
+          if (request.url.pathname === "/workspace/wrk_fixture")
+            return json({ balanceUpdatedAt: 1_800_000_000 });
+          return response(
+            ';0x120;($R=>$R[0]={customerID:"cus_test",balance:$R[2]=2375000000,reload:!1})',
+          );
+        },
+        { OPENCODEGO_WORKSPACE_ID: "wrk_fixture" },
+      ),
+    );
+    expect(calls.map(({ url }) => url.pathname)).toEqual([
+      "/workspace/wrk_fixture/go",
+      "/workspace/wrk_fixture",
+      "/_server",
+    ]);
+    expect(calls[2]?.url.searchParams.get("args")).toBe('["wrk_fixture"]');
+    expect(calls[2]?.options?.headers).toMatchObject({
+      Cookie: "auth=fixture",
+      "X-Server-Id": "c83b78a614689c38ebee981f9b39a8b377716db85c1fd7dbab604adc02d3313d",
+      Origin: "https://opencode.ai",
+      Referer: "https://opencode.ai/workspace/wrk_fixture",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    });
+    expect(
+      ((calls[2]?.options?.headers ?? {}) as Record<string, string>)["X-Server-Instance"],
+    ).toMatch(/^server-fn:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(snapshot).toMatchObject({
+      primary: { usedPercent: 15 },
+      providerCost: { used: 23.75, limit: 0, currencyCode: "USD", period: "Zen balance" },
+    });
+  });
+
+  it("returns an OpenCode Go balance when subscription usage is unavailable", async () => {
+    const snapshot = await opencodego.fetchUsage(
+      context(
+        (request) => (request.url.pathname.endsWith("/go") ? json({}) : json({ zenBalance: 4.5 })),
+        { OPENCODEGO_WORKSPACE_ID: "wrk_fixture" },
+      ),
+    );
+    expect(snapshot).toEqual({
+      providerCost: { used: 4.5, limit: 0, currencyCode: "USD", period: "Zen balance" },
+    });
+  });
+
+  it("rejects OpenCode Go web responses without usage or balance", async () => {
+    await expect(
+      opencodego.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname.endsWith("/go")
+              ? json({})
+              : json({ balanceUpdatedAt: 1_800_000_000 }),
+          { OPENCODEGO_WORKSPACE_ID: "wrk_fixture" },
+        ),
+      ),
+    ).rejects.toThrow("parse-failure");
+  });
+
+  it("preserves a required OpenCode Go balance transport failure", async () => {
+    const transportFailure = new Error("network-failure: balance transport failed");
+    await expect(
+      opencodego.fetchUsage(
+        context(
+          (request) => {
+            if (request.url.pathname.endsWith("/go")) return json({});
+            throw transportFailure;
+          },
+          { OPENCODEGO_WORKSPACE_ID: "wrk_fixture" },
+        ),
+      ),
+    ).rejects.toBe(transportFailure);
+  });
+
+  it("suppresses an optional OpenCode Go balance failure when usage is valid", async () => {
+    const snapshot = await opencodego.fetchUsage(
+      context(
+        (request) => {
+          if (request.url.pathname.endsWith("/go"))
+            return json({ rollingUsage: { usagePercent: 21, resetInSec: 600 } });
+          throw new Error("network-failure: optional balance unavailable");
+        },
+        { OPENCODEGO_WORKSPACE_ID: "wrk_fixture" },
+      ),
+    );
+    expect(snapshot).toMatchObject({ primary: { usedPercent: 21 } });
+    expect(snapshot.providerCost).toBeUndefined();
+  });
+
   it("filters the manual OpenCode Go cookie at every request boundary", async () => {
     const cookies: string[] = [];
     await opencodego.fetchUsage(
@@ -406,7 +503,7 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
           if (request.url.pathname.endsWith("/go")) {
             return json({ rollingUsage: { usagePercent: 10, resetInSec: 300 } });
           }
-          return json({ zenBalanceUSD: 8 });
+          return json({ zenBalance: 8 });
         },
         {
           OPENCODEGO_COOKIE:
@@ -503,8 +600,7 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
           if (request.url.pathname === "/zen/go/v1/usage") return response("unavailable", 503);
           if (request.url.pathname.endsWith("/go"))
             return json({ rollingUsage: { usagePercent: 15, resetInSec: 600 } });
-          if (request.url.searchParams.get("id")?.startsWith("c83"))
-            return json({ zenBalanceUSD: 7 });
+          if (request.url.pathname === "/workspace/wrk_fixture") return json({ zenBalance: 7 });
           throw new Error(`unexpected request ${request.url}`);
         },
         {
@@ -518,7 +614,7 @@ describe("Swift-derived Cursor, OpenCode, and OpenCode Go web parity", () => {
     expect(calls.map((call) => call.pathname)).toEqual([
       "/zen/go/v1/usage",
       "/workspace/wrk_fixture/go",
-      "/_server",
+      "/workspace/wrk_fixture",
     ]);
     expect(snapshot).toEqual({
       primary: { usedPercent: 15, windowMinutes: 300, resetsAt: "2026-08-20T12:10:00.000Z" },

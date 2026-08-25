@@ -240,20 +240,24 @@ providers:
       tsGlobs:
         - packages/platform/test/first-party-runtime-opencodego-account.test.ts
         - packages/platform/test/first-party-selected-account.test.ts
+        - packages/providers/test/open-code-go-balance.test.ts
         - packages/providers/test/token-account-support.test.ts
         - packages/providers/test/web-cookie-wave-a.test.ts
         - packages/platform/test/opencodego-multistrategy.test.ts
     fixtures:
+      - packages/providers/test/open-code-go-balance.test.ts
       - packages/providers/test/web-cookie-wave-a.test.ts
     tsPaths:
       expected:
         - packages/providers/src/providers/opencodego.ts
+        - packages/providers/src/providers/open-code-go-balance.ts
         - packages/providers/src/providers/open-code-cookie.ts
         - packages/providers/src/token-account-support.ts
         - packages/platform/src/first-party-runtime.ts
         - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/opencodego.ts
+        - packages/providers/src/providers/open-code-go-balance.ts
         - packages/providers/src/providers/open-code-cookie.ts
         - packages/providers/src/token-account-support.ts
         - packages/platform/src/first-party-runtime.ts
@@ -261,6 +265,7 @@ providers:
     tsTestGlobs:
       - packages/platform/test/first-party-runtime-opencodego-account.test.ts
       - packages/platform/test/first-party-selected-account.test.ts
+      - packages/providers/test/open-code-go-balance.test.ts
       - packages/providers/test/token-account-support.test.ts
       - packages/providers/test/web-cookie-wave-a.test.ts
       - packages/platform/test/opencodego-multistrategy.test.ts

@@ -7,7 +7,10 @@ import { makeFirstPartyProviderRuntime } from "../src/first-party-runtime.ts";
 const selectedCookie =
   "provider=google; auth=go-selected-session; theme=dark; __Host-auth=go-selected-host";
 const expectedCookie = "auth=go-selected-session; __Host-auth=go-selected-host";
-const clock = { now: Effect.succeed(Date.parse("2026-08-25T12:00:00Z")), sleep: () => Effect.void };
+const clock = {
+  now: Effect.succeed(Date.parse("2026-08-25T12:00:00Z")),
+  sleep: (milliseconds: number) => Effect.sleep(milliseconds),
+};
 
 const response = (request: HttpRequest, body: unknown): HttpResponse => ({
   status: 200,
@@ -24,6 +27,7 @@ const pageUsage = {
 const makeRuntime = (options: {
   readonly workspace?: string;
   readonly execute: (request: HttpRequest) => Effect.Effect<HttpResponse, InfrastructureError>;
+  readonly sleep?: (milliseconds: number) => Effect.Effect<void>;
 }) =>
   makeFirstPartyProviderRuntime({
     providers: [opencodego],
@@ -52,14 +56,11 @@ const makeRuntime = (options: {
       remove: () => Effect.void,
     },
     http: { execute: options.execute },
-    clock,
+    clock: { ...clock, ...(options.sleep === undefined ? {} : { sleep: options.sleep }) },
   });
 
 const successfulResponse = (request: HttpRequest): HttpResponse =>
-  response(
-    request,
-    new URL(request.url).pathname.endsWith("/go") ? pageUsage : { zenBalanceUSD: 7 },
-  );
+  response(request, new URL(request.url).pathname.endsWith("/go") ? pageUsage : { zenBalance: 7 });
 
 describe("OpenCode Go selected cookie runtime", () => {
   it.each(["auto", "web"] as const)(
@@ -125,6 +126,33 @@ describe("OpenCode Go selected cookie runtime", () => {
     expect(requests[1]?.url).toContain("/workspace/wrk_found/go");
   });
 
+  it("retries workspace discovery with the Swift-compatible POST", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeRuntime({
+      execute: (request) => {
+        requests.push(request);
+        if (requests.length === 1) return Effect.succeed(response(request, { workspaces: [] }));
+        if (requests.length === 2) return Effect.succeed(response(request, 'id: "wrk_post"'));
+        return Effect.succeed(successfulResponse(request));
+      },
+    });
+    const outcome = await Effect.runPromise(
+      runtime.fetch("opencodego", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(outcome.snapshot).toMatchObject({
+      primary: { usedPercent: 15 },
+      providerCost: { used: 7 },
+    });
+    expect(requests).toHaveLength(4);
+    expect(requests[1]).toMatchObject({
+      method: "POST",
+      url: "https://opencode.ai/_server",
+      body: new TextEncoder().encode("[]"),
+      headers: { "Content-Type": "application/json", Cookie: expectedCookie },
+    });
+    expect(requests[2]?.url).toContain("/workspace/wrk_post/go");
+  });
+
   it("redacts the selected header and auth values", async () => {
     const runtime = makeRuntime({
       workspace: "wrk_global",
@@ -146,10 +174,26 @@ describe("OpenCode Go selected cookie runtime", () => {
     expect(error.message).not.toContain("go-selected-host");
   });
 
+  it("cancels balance work when the usage page is signed out", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeRuntime({
+      workspace: "wrk_global",
+      execute: (request) => {
+        requests.push(request);
+        return Effect.succeed(response(request, "Please sign in"));
+      },
+    });
+    await expect(
+      Effect.runPromise(runtime.fetch("opencodego", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "authentication-expired" });
+    await Effect.runPromise(Effect.sleep(40));
+    expect(requests).toHaveLength(1);
+  });
+
   it.each([
     ["workspace", undefined, 1],
     ["usage page", "wrk_global", 1],
-    ["optional billing", "wrk_global", 2],
+    ["optional dashboard balance", "wrk_global", 2],
   ] as const)("propagates cancellation during %s", async (_phase, workspace, hangAt) => {
     let calls = 0;
     let startedResolve: (() => void) | undefined;
@@ -182,5 +226,84 @@ describe("OpenCode Go selected cookie runtime", () => {
     const exit = await pending;
     expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     expect(calls).toBe(hangAt);
+  });
+
+  it("propagates cancellation during the billing server fallback", async () => {
+    let calls = 0;
+    let startedResolve: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+    const runtime = makeRuntime({
+      workspace: "wrk_global",
+      execute: (request) => {
+        calls += 1;
+        if (calls === 1) return Effect.succeed(response(request, pageUsage));
+        if (calls === 2)
+          return Effect.succeed(response(request, { balanceUpdatedAt: 1_800_000_000 }));
+        return Effect.tryPromise({
+          try: (signal) => {
+            startedResolve?.();
+            return new Promise<HttpResponse>((_resolve, reject) =>
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+            );
+          },
+          catch: (error) => new InfrastructureError("OpenCode Go transport", "cancelled", error),
+        });
+      },
+    });
+    const controller = new AbortController();
+    const pending = Effect.runPromiseExit(
+      runtime.fetch("opencodego", { sourceMode: "auto", includeCredits: false }),
+      { signal: controller.signal },
+    );
+    await started;
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    const exit = await pending;
+    expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    expect(calls).toBe(3);
+  });
+
+  it("does not stall valid usage on an optional balance request", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeRuntime({
+      workspace: "wrk_global",
+      sleep: () => Effect.void,
+      execute: (request) => {
+        requests.push(request);
+        return new URL(request.url).pathname.endsWith("/go")
+          ? Effect.succeed(response(request, pageUsage))
+          : Effect.never;
+      },
+    });
+    const outcome = await Effect.runPromise(
+      runtime.fetch("opencodego", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(outcome.snapshot).toMatchObject({ primary: { usedPercent: 15 } });
+    expect(outcome.snapshot.providerCost).toBeUndefined();
+    expect(requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/workspace/wrk_global/go",
+      "/workspace/wrk_global",
+    ]);
+  });
+
+  it("handles an early optional balance rejection while usage is still pending", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeRuntime({
+      workspace: "wrk_global",
+      execute: (request) => {
+        requests.push(request);
+        if (new URL(request.url).pathname.endsWith("/go")) {
+          return Effect.sleep(75).pipe(Effect.as(response(request, pageUsage)));
+        }
+        return Effect.fail(new InfrastructureError("OpenCode Go balance", "failed early"));
+      },
+    });
+    const outcome = await Effect.runPromise(
+      runtime.fetch("opencodego", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(outcome.snapshot).toMatchObject({ primary: { usedPercent: 15 } });
+    expect(outcome.snapshot.providerCost).toBeUndefined();
+    expect(requests).toHaveLength(2);
   });
 });
