@@ -333,6 +333,26 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical OpenAI Admin key while suppressing legacy key and project scope", async () => {
+    const key = tokenAccountVaultKey("openai", "account-0");
+    await expect(
+      resolve(config("openai"), "openai", { [key]: "  'openai-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        OPENAI_ADMIN_KEY: "openai-selected",
+        OPENAI_API_KEY: null,
+      },
+      plainSettings: { OPENAI_PROJECT_ID: null },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(resolve(config("openai"), "openai", { [key]: material })).rejects.toMatchObject({
+        kind: "missing-credential",
+      });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

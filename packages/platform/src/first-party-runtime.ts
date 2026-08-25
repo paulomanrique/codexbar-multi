@@ -857,6 +857,10 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPSEEK_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "deepseek.api";
   }
+  if (providerId === "openai") {
+    const adminKey = ownSetting(selectedAccount.secureSettings, "OPENAI_ADMIN_KEY");
+    return adminKey.present && Boolean(adminKey.value?.trim()) && strategy.id === "openai.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
@@ -967,7 +971,10 @@ const executeProvider = (
             signal: operationSignal,
           });
         } catch (error) {
-          if (isAbortError(error) || hostCancelled || operationSignal.aborted) throw error;
+          if (isAbortError(error)) throw error;
+          if (hostCancelled || operationSignal.aborted) {
+            throw new DOMException("Provider refresh cancelled.", "AbortError");
+          }
           if (error instanceof ClassifiedFetchFailure) throw error;
           throw failure(
             "network-failure",
@@ -1149,7 +1156,10 @@ const executeProvider = (
                   : options.browserSessions.cookieHeader(descriptor.id, domain);
               cookie = await Effect.runPromise(cookieHeader, { signal: operationSignal });
             } catch (error) {
-              if (isAbortError(error) || hostCancelled || operationSignal.aborted) throw error;
+              if (isAbortError(error)) throw error;
+              if (hostCancelled || operationSignal.aborted) {
+                throw new DOMException("Provider refresh cancelled.", "AbortError");
+              }
               if (error instanceof MissingBrowserCredentialError)
                 throw failure("missing-credential", missingBrowserCredentialMessage);
               throw error;

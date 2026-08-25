@@ -631,6 +631,24 @@ const selectedDeepSeekAccount = (
   });
 };
 
+const selectedOpenAIAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected OpenAI account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: {
+      OPENAI_ADMIN_KEY: apiKey,
+      OPENAI_API_KEY: null,
+    },
+    plainSettings: { OPENAI_PROJECT_ID: null },
+  });
+};
+
 const selectedGrokAccount = (
   accountId: string,
   raw: string,
@@ -719,7 +737,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "sub2api" &&
     providerId !== "llmproxy" &&
     providerId !== "litellm" &&
-    providerId !== "deepseek"
+    providerId !== "deepseek" &&
+    providerId !== "openai"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -741,6 +760,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "llmproxy") return selectedLLMProxyAccount(account.id, material);
       if (providerId === "litellm") return selectedLiteLLMAccount(account.id, material);
       if (providerId === "deepseek") return selectedDeepSeekAccount(account.id, material);
+      if (providerId === "openai") return selectedOpenAIAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

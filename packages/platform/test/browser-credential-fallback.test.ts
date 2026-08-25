@@ -269,7 +269,7 @@ describe("browser credential fallback slice", () => {
                 signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
               );
             },
-            catch: (error) => error,
+            catch: (error) => new InfrastructureError("cookie lookup", "aborted", error),
           }),
       },
     });

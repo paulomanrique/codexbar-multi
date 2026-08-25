@@ -77,9 +77,9 @@ const service = (config: PersistedCodexBarConfig | undefined) => {
           },
         ],
         [
-          "openai",
+          "cursor",
           {
-            provider: "openai",
+            provider: "cursor",
             requiresManualCookieSource: false,
             runtimeSelectionAvailable: false,
           },
@@ -194,12 +194,12 @@ describe("token account roster service", () => {
   it("rejects selection before mutation when the runtime mapper is incomplete", async () => {
     const { store, tokenAccounts } = service(accountConfig(0));
     const original = store.current;
-    const roster = await Effect.runPromise(tokenAccounts.list("openai"));
+    const roster = await Effect.runPromise(tokenAccounts.list("cursor"));
 
     await expect(
       Effect.runPromise(
         tokenAccounts.select({
-          provider: "openai",
+          provider: "cursor",
           accountId: "missing",
           expectedRevision: roster.revision,
         }),

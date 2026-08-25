@@ -49,15 +49,28 @@ providers:
         - Tests/CodexBarTests/*OpenAI*Tests.swift
         - TestsLinux/*OpenAI*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-openai-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/token-account-vault-config.test.ts
         - packages/providers/test/openai-credential-parity.test.ts
         - packages/providers/test/vertical-slice-parity.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenAI/**/*
     tsPaths:
-      expected: [packages/providers/src/providers/openai.ts]
+      expected:
+        - packages/providers/src/providers/openai.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/openai.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-openai-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/token-account-vault-config.test.ts
       - packages/providers/test/openai-credential-parity.test.ts
       - packages/providers/test/vertical-slice-parity.test.ts
     status: partial

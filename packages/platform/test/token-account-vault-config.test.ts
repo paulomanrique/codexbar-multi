@@ -1032,4 +1032,38 @@ describe("token-account vault config repository", () => {
       },
     });
   });
+
+  it("maps a selected OpenAI key as an unscoped Admin credential", async () => {
+    const account = { id: "openai-selected", label: "OpenAI", addedAt: 0 };
+    const key = tokenAccountVaultKey("openai", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "openai",
+          extensions: {
+            OPENAI_API_KEY: "ambient-legacy",
+            OPENAI_PROJECT_ID: "ambient-project",
+          },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: ' "selected-key" ' }),
+          "openai",
+        ),
+      ),
+    ).resolves.toEqual({
+      id: account.id,
+      secureSettings: {
+        OPENAI_ADMIN_KEY: "selected-key",
+        OPENAI_API_KEY: null,
+      },
+      plainSettings: { OPENAI_PROJECT_ID: null },
+    });
+  });
 });
