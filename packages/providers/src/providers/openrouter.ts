@@ -5,6 +5,10 @@ import type {
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
+
 const definition: ProviderDefinition = {
   id: "openrouter",
   name: "OpenRouter",
@@ -127,6 +131,7 @@ const definition: ProviderDefinition = {
         keyData = candidate;
       }
     } catch (error) {
+      if (isAbortError(error)) throw error;
       keyDegradation = degradationReason(error);
     }
     if (!keyData && !keyDegradation) keyDegradation = "Response was unavailable";
@@ -312,6 +317,7 @@ const definition: ProviderDefinition = {
           };
         }
       } catch (error) {
+        if (isAbortError(error)) throw error;
         activityDegradation = activityDegradationReason(null, error);
       }
     if (!costUsage && !activityDegradation) activityDegradation = "Response was unavailable";

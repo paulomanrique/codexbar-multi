@@ -60,7 +60,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add LiteLLM selected virtual-key mapping while preserving its validated global proxy URL.
     - [x] Normalize OpenAI Admin/legacy key precedence, project scope, and billing fallback policy.
     - [x] Add OpenAI selected Admin-key mapping with legacy-key and project-scope isolation.
-    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 13 providers.
+    - [x] Add OpenRouter selected API-key mapping while preserving global management and client settings.
+    - [ ] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
+    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 12 providers.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.

@@ -461,6 +461,36 @@ const suppressManagedAuth = (
   return true;
 };
 
+const openRouterManagementAuthSecret = (
+  descriptor: ProviderDescriptor,
+  method: "GET" | "POST",
+  url: URL,
+  requestOptions: Readonly<Record<string, unknown>>,
+): string | undefined => {
+  const requested = requestOptions.openRouterManagementAuth;
+  if (requested === undefined) return undefined;
+  const managementSecret = "OPENROUTER_MANAGEMENT_API_KEY";
+  if (
+    requested !== true ||
+    descriptor.id !== "openrouter" ||
+    descriptor.settings.find((setting) => setting.key === managementSecret)?.type !== "secure" ||
+    method !== "GET" ||
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "openrouter.ai" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/api/v1/activity" ||
+    url.hash !== ""
+  ) {
+    throw failure(
+      "permission-denied",
+      "OpenRouter management auth is unavailable for this request.",
+    );
+  }
+  return managementSecret;
+};
+
 const withoutHeader = (headers: Record<string, string>, name: string): void => {
   for (const key of Object.keys(headers))
     if (key.toLowerCase() === name.toLowerCase()) delete headers[key];
@@ -861,6 +891,10 @@ const selectedStrategyAllowed = (
     const adminKey = ownSetting(selectedAccount.secureSettings, "OPENAI_ADMIN_KEY");
     return adminKey.present && Boolean(adminKey.value?.trim()) && strategy.id === "openai.api";
   }
+  if (providerId === "openrouter") {
+    const apiKey = ownSetting(selectedAccount.secureSettings, "OPENROUTER_API_KEY");
+    return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "openrouter.api";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
@@ -1064,11 +1098,18 @@ const executeProvider = (
         const headers = headersFrom(requestOptions.headers);
         const auth = descriptor.auth;
         const authSuppressed = suppressManagedAuth(descriptor, url, requestOptions);
+        const managementAuthSecret = openRouterManagementAuthSecret(
+          descriptor,
+          method,
+          url,
+          requestOptions,
+        );
         if (authSuppressed) withoutHeader(headers, "Authorization");
         if (auth !== undefined && !authSuppressed) {
-          const secret = secrets.get(auth.secret) ?? settings.get(auth.secret);
+          const secretName = managementAuthSecret ?? auth.secret;
+          const secret = secrets.get(secretName) ?? settings.get(secretName);
           if (secret === undefined || secret === "")
-            throw failure("missing-credential", `Missing credential ${auth.secret}`);
+            throw failure("missing-credential", `Missing credential ${secretName}`);
           const managedHeader = authorizationHeader(descriptor, secret);
           if (managedHeader !== undefined) {
             const [name, value] = managedHeader;
@@ -1111,6 +1152,7 @@ const executeProvider = (
             if (!endpointAllowed(url, origins)) {
               throw failure("api-failure", `Provider endpoint is not declared: ${url.origin}`);
             }
+            openRouterManagementAuthSecret(descriptor, "POST", url, requestOptions);
             const headers = headersFrom(requestOptions.headers);
             const auth = descriptor.auth;
             if (auth !== undefined) {

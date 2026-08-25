@@ -53,6 +53,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
   "litellm",
   "neuralwatt",
   "openai",
+  "openrouter",
   "sub2api",
   "venice",
   "zai",

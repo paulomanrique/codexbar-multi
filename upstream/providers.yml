@@ -744,6 +744,9 @@ providers:
     lastReviewedCommit: 3bfbffdce
   - id: openrouter
     swiftGlobs:
+      - Sources/CodexBarCore/Providers/OpenRouter/**/*.swift
+      - Sources/CodexBarCore/Plugins/ProviderPluginRuntime.swift
+      - Sources/CodexBarCore/Plugins/QuickJSProviderPluginEngine.swift
       - Sources/CodexBar/Providers/OpenRouter/**/*.swift
       - Sources/CodexBarCore/Resources/Plugins/openrouter.js
     tests:
@@ -751,14 +754,27 @@ providers:
         - Tests/CodexBarTests/*OpenRouter*Tests.swift
         - TestsLinux/*OpenRouter*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-openrouter-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/token-account-vault-config.test.ts
         - packages/providers/test/plugin-derived-descriptors.test.ts
     fixtures:
       - packages/providers/test/plugin-derived-descriptors.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/openrouter.ts]
+      expected:
+        - packages/providers/src/providers/openrouter.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/openrouter.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-openrouter-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/token-account-vault-config.test.ts
       - packages/providers/test/plugin-derived-descriptors.test.ts
     status: partial
     oracleStatus: pending

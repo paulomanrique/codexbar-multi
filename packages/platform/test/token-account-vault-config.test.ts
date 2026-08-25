@@ -1066,4 +1066,36 @@ describe("token-account vault config repository", () => {
       plainSettings: { OPENAI_PROJECT_ID: null },
     });
   });
+
+  it("maps a selected OpenRouter key without copying its global management settings", async () => {
+    const account = { id: "openrouter-selected", label: "OpenRouter", addedAt: 0 };
+    const key = tokenAccountVaultKey("openrouter", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "openrouter",
+          extensions: {
+            OPENROUTER_MANAGEMENT_API_KEY: "global-management",
+            OPENROUTER_API_URL: "https://router.example.test/v1",
+            OPENROUTER_HTTP_REFERER: "https://codexbar.example.test",
+            OPENROUTER_X_TITLE: "CodexBar Multi",
+          },
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(
+          config,
+          memoryCredentials({ [key]: ' "selected-key" ' }),
+          "openrouter",
+        ),
+      ),
+    ).resolves.toEqual({
+      id: account.id,
+      secureSettings: { OPENROUTER_API_KEY: "selected-key" },
+    });
+  });
 });

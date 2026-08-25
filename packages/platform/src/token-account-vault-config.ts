@@ -649,6 +649,19 @@ const selectedOpenAIAccount = (
   });
 };
 
+const selectedOpenRouterAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const apiKey = normalizeOpaqueAPIKey(raw);
+  if (apiKey === undefined) {
+    return Effect.fail(
+      selectedAccountFailure("Selected OpenRouter account credential is invalid."),
+    );
+  }
+  return Effect.succeed({ id: accountId, secureSettings: { OPENROUTER_API_KEY: apiKey } });
+};
+
 const selectedGrokAccount = (
   accountId: string,
   raw: string,
@@ -738,7 +751,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "llmproxy" &&
     providerId !== "litellm" &&
     providerId !== "deepseek" &&
-    providerId !== "openai"
+    providerId !== "openai" &&
+    providerId !== "openrouter"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -761,6 +775,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "litellm") return selectedLiteLLMAccount(account.id, material);
       if (providerId === "deepseek") return selectedDeepSeekAccount(account.id, material);
       if (providerId === "openai") return selectedOpenAIAccount(account.id, material);
+      if (providerId === "openrouter") return selectedOpenRouterAccount(account.id, material);
       return selectedAntigravityAccount(account.id, material);
     }),
   );

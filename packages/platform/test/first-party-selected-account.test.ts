@@ -353,6 +353,22 @@ describe("first-party selected accounts from the token-account vault", () => {
     }
   });
 
+  it("selects a canonical OpenRouter key without copying global management or client settings", async () => {
+    const key = tokenAccountVaultKey("openrouter", "account-0");
+    await expect(
+      resolve(config("openrouter"), "openrouter", { [key]: "  'openrouter-selected'  " }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { OPENROUTER_API_KEY: "openrouter-selected" },
+    });
+
+    for (const material of ["", "   ", "''", "token\u0000value", "x".repeat(1024 * 1024 + 1)]) {
+      await expect(
+        resolve(config("openrouter"), "openrouter", { [key]: material }),
+      ).rejects.toMatchObject({ kind: "missing-credential" });
+    }
+  });
+
   it("selects z.ai team and personal accounts without inheriting team context", async () => {
     const zaiConfig = (metadata: Readonly<Record<string, string>>): PersistedCodexBarConfig => ({
       version: 1,

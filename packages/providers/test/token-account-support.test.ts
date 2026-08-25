@@ -82,6 +82,7 @@ describe("provider token account support inventory", () => {
       "llmproxy",
       "neuralwatt",
       "openai",
+      "openrouter",
       "sub2api",
       "venice",
       "zai",
