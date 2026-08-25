@@ -10,6 +10,8 @@ import { json, number, object, string } from "./_http.ts";
 
 type Dict = Record<string, unknown>;
 const clean = (value: string | undefined): string | undefined => value?.trim() || undefined;
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
 const csrf = (cookie: string): string | undefined =>
   /(?:^|;\s*)csrftoken=([^;\r\n]+)/iu.exec(cookie)?.[1]?.trim();
 const adminHeaders = (cookie: string, token: string | undefined, referer: string) => ({
@@ -163,7 +165,8 @@ const definition: ProviderDefinition = {
           (number(root?.ongoing_usage_balance) ?? 0);
         if (Number.isFinite(amount)) credits = Math.max(0, amount);
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
       // optional
     }
     if (csrfToken) {
@@ -186,7 +189,8 @@ const definition: ProviderDefinition = {
           if (usedPercent !== undefined && usedPercent >= 0 && usedPercent <= 100)
             vibe = { usedPercent, ...(reset ? { resetsAt: ctx.date.iso(reset) } : {}) };
         }
-      } catch {
+      } catch (error) {
+        if (isAbortError(error)) throw error;
         // optional
       }
     }

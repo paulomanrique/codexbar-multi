@@ -151,20 +151,40 @@ providers:
   - id: cursor
     swiftGlobs:
       - Sources/CodexBar/Providers/Cursor/**/*.swift
+      - Sources/CodexBar/SettingsStore+TokenAccounts.swift
+      - Sources/CodexBar/UsageStore+TokenAccounts.swift
       - Sources/CodexBarCore/Providers/Cursor/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Cursor*Tests.swift
+        - Tests/CodexBarTests/UsageStorePlanUtilizationTests.swift
         - TestsLinux/*Cursor*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-cookie-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/core/test/token-accounts.test.ts
+        - packages/providers/test/token-account-support.test.ts
         - packages/providers/test/web-cookie-wave-a.test.ts
     fixtures:
       - packages/providers/test/web-cookie-wave-a.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/cursor.ts]
+      expected:
+        - packages/providers/src/providers/cursor.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/core/src/token-accounts.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/cursor.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/core/src/token-accounts.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-cookie-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/core/test/token-accounts.test.ts
+      - packages/providers/test/token-account-support.test.ts
       - packages/providers/test/web-cookie-wave-a.test.ts
     status: partial
     oracleStatus: pending
@@ -598,14 +618,27 @@ providers:
         - Tests/CodexBarTests/*Augment*Tests.swift
         - TestsLinux/*Augment*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-cookie-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/providers/test/token-account-support.test.ts
         - packages/providers/test/kilo-kiro-augment-parity.test.ts
     fixtures:
       - packages/providers/test/kilo-kiro-augment-parity.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/augment.ts]
+      expected:
+        - packages/providers/src/providers/augment.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/augment.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-cookie-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/providers/test/token-account-support.test.ts
       - packages/providers/test/kilo-kiro-augment-parity.test.ts
     status: partial
     oracleStatus: pending
@@ -962,14 +995,27 @@ providers:
         - Tests/CodexBarTests/*Abacus*Tests.swift
         - TestsLinux/*Abacus*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-cookie-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/providers/test/token-account-support.test.ts
         - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
       - packages/providers/test/web-cookie-providers-d.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/abacus.ts]
+      expected:
+        - packages/providers/src/providers/abacus.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/abacus.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-cookie-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/providers/test/token-account-support.test.ts
       - packages/providers/test/web-cookie-providers-d.test.ts
     status: partial
     oracleStatus: pending
@@ -983,14 +1029,27 @@ providers:
         - Tests/CodexBarTests/*Mistral*Tests.swift
         - TestsLinux/*Mistral*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-cookie-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/providers/test/token-account-support.test.ts
         - packages/providers/test/web-cookie-providers-d.test.ts
     fixtures:
       - packages/providers/test/web-cookie-providers-d.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/mistral.ts]
+      expected:
+        - packages/providers/src/providers/mistral.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/mistral.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-cookie-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/providers/test/token-account-support.test.ts
       - packages/providers/test/web-cookie-providers-d.test.ts
     status: partial
     oracleStatus: pending

@@ -3,6 +3,7 @@ import type { ProviderId } from "@codexbar/contracts";
 export interface ProviderTokenAccountSupport {
   readonly provider: ProviderId;
   readonly requiresManualCookieSource: boolean;
+  readonly selectedAccountRequiresManualCookieSource: boolean;
   /** True only after the selected credential has a complete, fail-closed runtime mapper. */
   readonly runtimeSelectionAvailable: boolean;
 }
@@ -37,12 +38,18 @@ const providerTokenAccountSupportBase = [
   { provider: "sub2api", requiresManualCookieSource: false },
   { provider: "venice", requiresManualCookieSource: false },
   { provider: "zai", requiresManualCookieSource: false },
-] as const satisfies readonly Omit<ProviderTokenAccountSupport, "runtimeSelectionAvailable">[];
+] as const satisfies readonly Pick<
+  ProviderTokenAccountSupport,
+  "provider" | "requiresManualCookieSource"
+>[];
 
 const runtimeSelectableProviders = new Set<ProviderId>([
+  "abacus",
   "antigravity",
+  "augment",
   "claude",
   "copilot",
+  "cursor",
   "deepinfra",
   "deepseek",
   "elevenlabs",
@@ -51,6 +58,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
   "ibmbob",
   "llmproxy",
   "litellm",
+  "mistral",
   "neuralwatt",
   "openai",
   "openrouter",
@@ -62,6 +70,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
 export const PROVIDER_TOKEN_ACCOUNT_SUPPORT: readonly ProviderTokenAccountSupport[] =
   providerTokenAccountSupportBase.map((support) => ({
     ...support,
+    selectedAccountRequiresManualCookieSource: support.provider === "cursor",
     runtimeSelectionAvailable: runtimeSelectableProviders.has(support.provider),
   }));
 

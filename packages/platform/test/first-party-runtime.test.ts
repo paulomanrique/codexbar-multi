@@ -792,7 +792,9 @@ describe("first-party refresh runtime", () => {
       },
       fetchUsage: async (context) => {
         const cookie = await context.browser.cookieHeader("t3.chat");
-        throw new Error(`${context.settings.getSecret("PROBE_SECRET")} ${cookie} ${cookieValue}`);
+        throw new Error(
+          `${context.settings.getSecret("PROBE_SECRET")} ${cookie} ${cookieValue} locale en consent 1 endpoint 401`,
+        );
       },
     };
     const runtime = makeFirstPartyProviderRuntime({
@@ -804,7 +806,7 @@ describe("first-party refresh runtime", () => {
         remove: () => Effect.void,
       },
       browserSessions: {
-        cookieHeader: () => Effect.succeed(`session=${cookieValue}`),
+        cookieHeader: () => Effect.succeed(`session=${cookieValue}; NEXT_LOCALE=en; consent=1`),
       },
       http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
       clock: { now: Effect.succeed(1), sleep: () => Effect.void },
@@ -813,7 +815,7 @@ describe("first-party refresh runtime", () => {
     await expect(
       Effect.runPromise(runtime.fetch("t3chat", { sourceMode: "auto", includeCredits: true })),
     ).rejects.toMatchObject({
-      message: "[REDACTED] [REDACTED] [REDACTED]",
+      message: "[REDACTED] [REDACTED] [REDACTED] locale en consent 1 endpoint 401",
     });
   });
 

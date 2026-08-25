@@ -9,6 +9,8 @@ import type {
 import { date, json, number, object, string } from "./_http.ts";
 
 const clean = (value: string | undefined): string | undefined => value?.trim() || undefined;
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
 const headers = (cookie: string) => ({
   Accept: "application/json",
   "Content-Type": "application/json",
@@ -69,6 +71,7 @@ const definition: ProviderDefinition = {
       );
       billing = parse(ctx, billingResponse, "billing-info");
     } catch (error) {
+      if (isAbortError(error)) throw error;
       if (String(error).startsWith("authentication-expired:")) throw error;
     }
     const used = total - left;

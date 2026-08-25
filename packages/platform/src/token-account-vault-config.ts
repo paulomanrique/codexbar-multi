@@ -433,6 +433,25 @@ const normalizeOpaqueAPIKey = (raw: string): string | undefined => {
   return normalized;
 };
 
+const selectedCookieAccount = (
+  accountId: string,
+  raw: string,
+  setting: string,
+  providerName: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const cookieHeader = normalizeCookieHeader(raw);
+  if (
+    cookieHeader === undefined ||
+    cookieHeader.includes("\u0000") ||
+    new TextEncoder().encode(cookieHeader).byteLength > 1024 * 1024
+  ) {
+    return Effect.fail(
+      selectedAccountFailure(`Selected ${providerName} account credential is invalid.`),
+    );
+  }
+  return Effect.succeed({ id: accountId, secureSettings: { [setting]: cookieHeader } });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -718,8 +737,12 @@ export const resolveSelectedFirstPartyAccountFromVault = (
   credentials: CredentialStoreService,
   providerId: ProviderId,
 ): Effect.Effect<FirstPartySelectedAccount | undefined, ClassifiedFetchFailure> => {
-  const data = config?.providers.find((provider) => provider.id === providerId)?.tokenAccounts;
+  const providerConfig = config?.providers.find((provider) => provider.id === providerId);
+  const data = providerConfig?.tokenAccounts;
   if (data === undefined || data.accounts.length === 0) return Effect.succeed(undefined);
+  if (providerId === "cursor" && (providerConfig?.cookieSource ?? "auto") === "auto") {
+    return Effect.succeed(undefined);
+  }
   if (
     data.version !== 2 ||
     data.accounts.some((account) => hasOwnToken(account)) ||
@@ -752,7 +775,11 @@ export const resolveSelectedFirstPartyAccountFromVault = (
     providerId !== "litellm" &&
     providerId !== "deepseek" &&
     providerId !== "openai" &&
-    providerId !== "openrouter"
+    providerId !== "openrouter" &&
+    providerId !== "abacus" &&
+    providerId !== "augment" &&
+    providerId !== "cursor" &&
+    providerId !== "mistral"
   ) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
@@ -776,6 +803,14 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "deepseek") return selectedDeepSeekAccount(account.id, material);
       if (providerId === "openai") return selectedOpenAIAccount(account.id, material);
       if (providerId === "openrouter") return selectedOpenRouterAccount(account.id, material);
+      if (providerId === "abacus")
+        return selectedCookieAccount(account.id, material, "ABACUS_COOKIE_HEADER", "Abacus");
+      if (providerId === "augment")
+        return selectedCookieAccount(account.id, material, "AUGMENT_COOKIE_HEADER", "Augment");
+      if (providerId === "cursor")
+        return selectedCookieAccount(account.id, material, "CURSOR_COOKIE", "Cursor");
+      if (providerId === "mistral")
+        return selectedCookieAccount(account.id, material, "MISTRAL_COOKIE_HEADER", "Mistral");
       return selectedAntigravityAccount(account.id, material);
     }),
   );

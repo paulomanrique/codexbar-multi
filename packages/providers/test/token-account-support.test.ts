@@ -61,6 +61,11 @@ describe("provider token account support inventory", () => {
       "qoder",
       "stepfun",
     ]);
+    expect(
+      PROVIDER_TOKEN_ACCOUNT_SUPPORT.filter(
+        (support) => support.selectedAccountRequiresManualCookieSource,
+      ).map((support) => support.provider),
+    ).toEqual(["cursor"]);
   });
 
   it("exposes selection only after a complete runtime mapper exists", () => {
@@ -69,9 +74,12 @@ describe("provider token account support inventory", () => {
         (support) => support.provider,
       ),
     ).toEqual([
+      "abacus",
       "antigravity",
+      "augment",
       "claude",
       "copilot",
+      "cursor",
       "deepinfra",
       "deepseek",
       "elevenlabs",
@@ -80,6 +88,7 @@ describe("provider token account support inventory", () => {
       "ibmbob",
       "litellm",
       "llmproxy",
+      "mistral",
       "neuralwatt",
       "openai",
       "openrouter",

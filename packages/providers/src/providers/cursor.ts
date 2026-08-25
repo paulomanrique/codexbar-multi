@@ -16,6 +16,8 @@ type Usage = {
 };
 
 const clamp = (value: number): number => Math.max(0, Math.min(100, value));
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
 const membershipLabel = (value: string): string => {
   const plan =
     {
@@ -88,6 +90,7 @@ const definition: ProviderDefinition = {
     try {
       summaryResponse = await ctx.http.getJSON("https://cursor.com/api/usage-summary", { headers });
     } catch (error) {
+      if (isAbortError(error)) throw error;
       throw ctx.fail.networkFailure(error instanceof Error ? error.message : String(error));
     }
     status(ctx, "Cursor", summaryResponse);
@@ -125,7 +128,8 @@ const definition: ProviderDefinition = {
     try {
       const response = await ctx.http.getJSON("https://cursor.com/api/auth/me", { headers });
       if (response.status >= 200 && response.status < 300) user = object(response.json);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
       // Identity is explicitly optional in the upstream fan-out.
     }
     return {

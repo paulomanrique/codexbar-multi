@@ -137,13 +137,84 @@ describe("first-party selected accounts from the token-account vault", () => {
   });
 
   it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["cursor"] as const) {
+    for (const providerId of ["factory"] as const) {
       await expect(
         resolve(config(providerId), providerId, {
           [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
         }),
       ).rejects.toMatchObject({ kind: "missing-credential" });
     }
+  });
+
+  it.each([
+    ["abacus", "ABACUS_COOKIE_HEADER"],
+    ["augment", "AUGMENT_COOKIE_HEADER"],
+    ["cursor", "CURSOR_COOKIE"],
+    ["mistral", "MISTRAL_COOKIE_HEADER"],
+  ] as const)(
+    "selects a normalized %s cookie without ambient fallback",
+    async (providerId, key) => {
+      const credentialKey = tokenAccountVaultKey(providerId, "account-0");
+      const base = config(providerId);
+      const input =
+        providerId === "cursor"
+          ? {
+              ...base,
+              providers: base.providers.map((provider) => ({
+                ...provider,
+                cookieSource: "manual" as const,
+              })),
+            }
+          : base;
+      await expect(
+        resolve(input, providerId, {
+          [credentialKey]: "curl https://example.test -H 'Cookie: session=selected; csrf=secret'",
+        }),
+      ).resolves.toEqual({
+        id: "account-0",
+        secureSettings: { [key]: "session=selected; csrf=secret" },
+      });
+
+      for (const material of ["", "   ", "''", "cookie\u0000=value", "x".repeat(1024 * 1024 + 1)]) {
+        await expect(
+          resolve(input, providerId, { [credentialKey]: material }),
+        ).rejects.toMatchObject({ kind: "missing-credential" });
+      }
+    },
+  );
+
+  it("keeps a saved Cursor account passive while cookie source is automatic", async () => {
+    const base = config("cursor");
+    const input = (cookieSource: "auto" | "manual"): PersistedCodexBarConfig => ({
+      ...base,
+      providers: base.providers.map((provider) => ({ ...provider, cookieSource })),
+    });
+    let reads = 0;
+    const credentials: CredentialStoreService = {
+      read: () =>
+        Effect.sync(() => {
+          reads += 1;
+          return "WorkosCursorSessionToken=saved";
+        }),
+      write: () => Effect.void,
+      remove: () => Effect.void,
+    };
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(input("auto"), credentials, "cursor"),
+      ),
+    ).resolves.toBeUndefined();
+    expect(reads).toBe(0);
+
+    await expect(
+      Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(input("manual"), credentials, "cursor"),
+      ),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { CURSOR_COOKIE: "WorkosCursorSessionToken=saved" },
+    });
+    expect(reads).toBe(1);
   });
 
   it("selects an opaque Copilot token without inheriting the ambient API key", async () => {

@@ -373,6 +373,33 @@ const redact = (message: string, values: ReadonlySet<string>): string => {
   return redacted;
 };
 
+// Whole cookie headers are always redacted. Component values need a floor so common
+// preference cookies such as `en`, `0`, or `1` cannot corrupt every diagnostic string.
+const minimumComponentRedactionLength = 8;
+const redactionTextEncoder = new TextEncoder();
+
+const addCookieComponentRedactions = (redactionValues: Set<string>, cookie: string): void => {
+  for (const pair of cookie.split(";")) {
+    const separator = pair.indexOf("=");
+    if (separator < 0) continue;
+    const value = pair.slice(separator + 1).trim();
+    if (redactionTextEncoder.encode(value).byteLength >= minimumComponentRedactionLength) {
+      redactionValues.add(value);
+    }
+  }
+};
+
+const addSecretRedactions = (
+  redactionValues: Set<string>,
+  setting: string,
+  secret: string | undefined,
+): void => {
+  if (secret === undefined || secret === "") return;
+  redactionValues.add(secret);
+  if (!setting.toUpperCase().includes("COOKIE")) return;
+  addCookieComponentRedactions(redactionValues, secret);
+};
+
 const text = (body: Uint8Array): string => {
   if (body.byteLength > maximumResponseBytes)
     throw failure("api-failure", "Provider response exceeded 1 MiB");
@@ -895,6 +922,22 @@ const selectedStrategyAllowed = (
     const apiKey = ownSetting(selectedAccount.secureSettings, "OPENROUTER_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "openrouter.api";
   }
+  if (providerId === "abacus") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "ABACUS_COOKIE_HEADER");
+    return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "abacus.web";
+  }
+  if (providerId === "augment") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "AUGMENT_COOKIE_HEADER");
+    return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "augment.web";
+  }
+  if (providerId === "cursor") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "CURSOR_COOKIE");
+    return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "cursor.web";
+  }
+  if (providerId === "mistral") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "MISTRAL_COOKIE_HEADER");
+    return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "mistral.web";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
@@ -1052,7 +1095,7 @@ const executeProvider = (
           }
           const secret = selectedOverride.present ? selectedOverride.value : (stored ?? injected);
           secrets.set(setting.key, secret);
-          if (secret !== undefined) redactionValues.add(secret);
+          addSecretRedactions(redactionValues, setting.key, secret);
         } else {
           settings.set(setting.key, selectedOverride.present ? selectedOverride.value : injected);
         }
@@ -1080,7 +1123,7 @@ const executeProvider = (
         }
         const secret = selectedOverride.present ? selectedOverride.value : (stored ?? injected);
         secrets.set(descriptor.auth.secret, secret);
-        if (secret !== undefined) redactionValues.add(secret);
+        addSecretRedactions(redactionValues, descriptor.auth.secret, secret);
       }
       const getSetting = (key: string) => settings.get(key);
       const origins = endpointOrigins(descriptor, getSetting);
@@ -1207,10 +1250,7 @@ const executeProvider = (
               throw error;
             }
             redactionValues.add(cookie);
-            for (const pair of cookie.split(";")) {
-              const separator = pair.indexOf("=");
-              if (separator >= 0) redactionValues.add(pair.slice(separator + 1).trim());
-            }
+            addCookieComponentRedactions(redactionValues, cookie);
             return cookie;
           },
         },

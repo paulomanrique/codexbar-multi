@@ -73,6 +73,7 @@ const service = (config: PersistedCodexBarConfig | undefined) => {
           {
             provider: "claude",
             requiresManualCookieSource: true,
+            selectedAccountRequiresManualCookieSource: false,
             runtimeSelectionAvailable: true,
           },
         ],
@@ -81,6 +82,7 @@ const service = (config: PersistedCodexBarConfig | undefined) => {
           {
             provider: "cursor",
             requiresManualCookieSource: false,
+            selectedAccountRequiresManualCookieSource: true,
             runtimeSelectionAvailable: false,
           },
         ],

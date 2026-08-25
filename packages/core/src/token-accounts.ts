@@ -12,6 +12,7 @@ import type { ConfigRepositoryService, InfrastructureError } from "./services.ts
 export interface TokenAccountSupport {
   readonly provider: ProviderId;
   readonly requiresManualCookieSource: boolean;
+  readonly selectedAccountRequiresManualCookieSource: boolean;
   readonly runtimeSelectionAvailable: boolean;
 }
 
