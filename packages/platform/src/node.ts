@@ -79,6 +79,7 @@ export * from "./node-process-terminator.ts";
 export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
 export * from "./node-codex-priority.ts";
+export * from "./node-codex-login.ts";
 export * from "./node-local-cost-scan.ts";
 export * from "./node-grok-local-session.ts";
 export * from "./node-grok-local-token-scan.ts";
@@ -508,9 +509,10 @@ const runNodeProcess = (
       child = spawn(spec.command, [...(spec.args ?? [])], {
         cwd: spec.cwd,
         env: Object.fromEntries(
-          Object.entries({ ...baseEnvironment, ...spec.env }).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
+          Object.entries({
+            ...(spec.inheritEnvironment === false ? {} : baseEnvironment),
+            ...spec.env,
+          }).filter((entry): entry is [string, string] => entry[1] !== undefined),
         ),
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
@@ -1175,7 +1177,9 @@ export const makeNodeDiscoveredProviderSettings = (
 export {
   accountIdFromJwt,
   discoverNodeCodexCredential,
+  parseNodeCodexAuthJson,
   type NodeCodexCredential,
+  type ParsedNodeCodexAuth,
 } from "./node-codex-credential.ts";
 export {
   deriveClaudeOAuthHistoryOwnerIdentifier,

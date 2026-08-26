@@ -169,12 +169,14 @@ components:
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
 
   - id: token-accounts
-    description: Metadata-only account rosters, native-vault separation, selection, rename, and crash-recoverable removal.
+    description: Metadata-only account rosters, native-vault separation, selection, rename, crash-recoverable removal, and host-owned Codex login ingress.
     swiftGlobs:
       - Sources/CodexBarCore/TokenAccounts.swift
       - Sources/CodexBar/SettingsStore+TokenAccounts.swift
       - Sources/CodexBar/PreferencesProviderSettingsRows.swift
       - Sources/CodexBar/PreferencesCodexAccountsSection.swift
+      - Sources/CodexBar/CodexLoginRunner.swift
+      - Sources/CodexBar/ManagedCodexAccountService.swift
     tsPaths:
       - packages/contracts/src/config.ts
       - packages/contracts/src/ipc.ts
@@ -182,6 +184,7 @@ components:
       - packages/core/src/token-accounts.ts
       - packages/providers/src/token-account-support.ts
       - packages/platform/src/token-account-vault-config.ts
+      - packages/platform/src/node-codex-login.ts
       - apps/desktop/src/ipc/api.ts
       - apps/desktop/src/main/index.ts
       - apps/desktop/src/main/token-account-removal.ts
@@ -192,10 +195,13 @@ components:
     tests:
       - Tests/CodexBarTests/SettingsStoreCoverageTests.swift
       - Tests/CodexBarTests/StatusMenuTokenAccountSwitcherTests.swift
+      - Tests/CodexBarTests/CodexLoginRunnerTests.swift
+      - Tests/CodexBarTests/ManagedCodexAccountServiceTests.swift
       - packages/core/test/config.test.ts
       - packages/core/test/token-accounts.test.ts
       - packages/providers/test/token-account-support.test.ts
       - packages/platform/test/token-account-vault-config.test.ts
+      - packages/platform/test/node-codex-login.test.ts
       - apps/desktop/test/ipc-contract.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts

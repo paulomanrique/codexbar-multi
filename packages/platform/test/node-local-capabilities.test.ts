@@ -352,4 +352,23 @@ describe("Node first-party local capabilities", () => {
       event: "quota_reached",
     });
   });
+
+  it("can suppress the base environment for a security-sensitive child", async () => {
+    const runner = makeNodeProcessRunner({
+      environment: { PROVIDER_SECRET: "must-not-inherit", PATH: process.env.PATH },
+    });
+    const result = await Effect.runPromise(
+      runner.run({
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(JSON.stringify({secret:process.env.PROVIDER_SECRET,safe:process.env.CODEXBAR_SAFE}))",
+        ],
+        env: { CODEXBAR_SAFE: "visible" },
+        inheritEnvironment: false,
+      }),
+    );
+
+    expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({ safe: "visible" });
+  });
 });

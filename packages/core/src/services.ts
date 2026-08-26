@@ -167,6 +167,8 @@ export interface ProcessSpec {
   readonly args?: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
+  /** False for security-sensitive children that must not inherit the host environment. */
+  readonly inheritEnvironment?: boolean;
   readonly stdin?: Uint8Array;
   readonly timeoutMs?: number;
 }

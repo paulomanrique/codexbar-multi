@@ -26,6 +26,7 @@ providers:
         - packages/platform/test/first-party-runtime-codex-account.test.ts
         - packages/platform/test/first-party-selected-account.test.ts
         - packages/platform/test/node-codex-home.test.ts
+        - packages/platform/test/node-codex-login.test.ts
         - apps/desktop/test/preload-token-accounts.test.ts
         - apps/desktop/test/renderer-token-accounts.test.ts
         - apps/desktop/test/settings-view-model.test.ts
@@ -45,6 +46,7 @@ providers:
         - packages/platform/src/first-party-runtime.ts
         - packages/platform/src/node-codex-credential.ts
         - packages/platform/src/node-codex-home.ts
+        - packages/platform/src/node-codex-login.ts
         - packages/platform/src/token-account-vault-config.ts
         - packages/core/src/token-accounts.ts
         - packages/core/src/config.ts
@@ -60,6 +62,7 @@ providers:
         - packages/platform/src/first-party-runtime.ts
         - packages/platform/src/node-codex-credential.ts
         - packages/platform/src/node-codex-home.ts
+        - packages/platform/src/node-codex-login.ts
         - packages/platform/src/token-account-vault-config.ts
         - packages/core/src/token-accounts.ts
         - packages/core/src/config.ts
@@ -75,6 +78,7 @@ providers:
       - packages/platform/test/first-party-runtime-codex-account.test.ts
       - packages/platform/test/first-party-selected-account.test.ts
       - packages/platform/test/node-codex-home.test.ts
+      - packages/platform/test/node-codex-login.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
       - apps/desktop/test/settings-view-model.test.ts

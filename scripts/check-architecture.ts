@@ -73,7 +73,7 @@ const ipcBoundaryRoots = [
 ] as const;
 const persistedSecretSchemaPattern =
   /\b(?:ProviderTokenAccount|ProviderTokenAccountData|ProviderConfig|CodexBarConfig)\b/;
-const tokenAccountRecoveryMarkerPattern = /\bpendingTokenAccountDeletion\b/;
+const tokenAccountRecoveryMarkerPattern = /\bpendingTokenAccount(?:Addition|Deletion)\b/;
 for (const root of ipcBoundaryRoots) {
   const paths = root.endsWith(".ts")
     ? [join(repositoryRoot, root)]

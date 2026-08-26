@@ -38,6 +38,6 @@ test("keeps secret-bearing persisted schemas off the IPC boundary", async () => 
   assert.match(source, /persistedSecretSchemaPattern/);
   assert.match(source, /ProviderTokenAccountData/);
   assert.match(source, /secret-bearing persisted schema crosses IPC boundary/);
-  assert.match(source, /pendingTokenAccountDeletion/);
+  assert.match(source, /pendingTokenAccount\(\?:Addition\|Deletion\)/);
   assert.match(source, /token-account recovery marker crosses IPC boundary/);
 });

@@ -9,7 +9,7 @@ import {
   type PersistedCodexBarConfig,
   type PersistedProviderConfig,
 } from "@codexbar/core";
-import { PROVIDER_IDS, type ProviderId } from "@codexbar/contracts";
+import { PROVIDER_IDS, type ProviderId, type ProviderTokenAccount } from "@codexbar/contracts";
 import { tokenAccountSupportForProvider } from "@codexbar/providers";
 import {
   parseAntigravityOAuthCredentialValue,
@@ -83,10 +83,47 @@ const containsLegacyTokenAccountData = (config: PersistedCodexBarConfig): boolea
 const containsPendingTokenAccountDeletion = (config: PersistedCodexBarConfig): boolean =>
   config.providers.some((provider) => provider.pendingTokenAccountDeletion !== undefined);
 
+const containsPendingTokenAccountAddition = (config: PersistedCodexBarConfig): boolean =>
+  config.providers.some((provider) => provider.pendingTokenAccountAddition !== undefined);
+
+const validMetadataString = (value: string, allowEmpty: boolean): boolean =>
+  (allowEmpty || value.length > 0) && value.length <= 256 && !/\p{Cc}/u.test(value);
+
+const validPendingAccount = (account: ProviderTokenAccount): boolean =>
+  !hasOwnToken(account) &&
+  validMetadataString(account.id, false) &&
+  validMetadataString(account.label, true) &&
+  Number.isFinite(account.addedAt) &&
+  (account.lastUsed === undefined || Number.isFinite(account.lastUsed)) &&
+  [
+    account.externalIdentifier,
+    account.usageScope,
+    account.organizationId,
+    account.workspaceID,
+  ].every((value) => value === undefined || validMetadataString(value, true));
+
 const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureError | undefined => {
   for (const provider of config.providers) {
     const tokenAccounts = provider.tokenAccounts;
+    const pendingAddition = provider.pendingTokenAccountAddition;
     const pending = provider.pendingTokenAccountDeletion;
+    if (pendingAddition !== undefined && pending !== undefined) {
+      return invalidMetadataError(
+        new Error("A provider cannot add and delete token accounts in the same recovery state."),
+      );
+    }
+    if (pendingAddition !== undefined && !firstPartyProviderIds.has(provider.id)) {
+      return invalidMetadataError(
+        new Error("Plugin token-account addition recovery is not supported."),
+      );
+    }
+    if (
+      pendingAddition !== undefined &&
+      (!validPendingAccount(pendingAddition.account) ||
+        !/^[a-f0-9]{64}$/u.test(pendingAddition.credentialSha256))
+    ) {
+      return invalidMetadataError(new Error("Pending token-account addition metadata is invalid."));
+    }
     if (pending !== undefined && !firstPartyProviderIds.has(provider.id)) {
       return invalidMetadataError(
         new Error("Plugin token-account deletion recovery is not supported."),
@@ -101,6 +138,14 @@ const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureEr
     }
     if (hasDuplicateAccountIds(tokenAccounts.accounts)) {
       return invalidMetadataError(new Error("Token account IDs must be unique per provider."));
+    }
+    if (
+      pendingAddition !== undefined &&
+      tokenAccounts.accounts.some((account) => account.id === pendingAddition.account.id)
+    ) {
+      return invalidMetadataError(
+        new Error("A pending token-account addition must not already be selectable."),
+      );
     }
     if (pending !== undefined) {
       if (tokenAccounts.accounts.some((account) => account.id === pending.accountId)) {
@@ -198,6 +243,79 @@ const reconcilePendingTokenAccountDeletions = (
   );
 };
 
+const reconcilePendingTokenAccountAdditions = (
+  config: PersistedCodexBarConfig,
+  repository: ConfigRepositoryService,
+  credentials: CredentialStoreService,
+): Effect.Effect<PersistedCodexBarConfig, InfrastructureError> => {
+  if (!containsPendingTokenAccountAddition(config)) return Effect.succeed(config);
+  return Effect.gen(function* () {
+    const providers: PersistedProviderConfig[] = [];
+    for (const provider of config.providers) {
+      const pending = provider.pendingTokenAccountAddition;
+      if (pending === undefined) {
+        providers.push(provider);
+        continue;
+      }
+      const credential = yield* credentials
+        .read(tokenAccountVaultKey(provider.id, pending.account.id))
+        .pipe(
+          Effect.mapError((error) =>
+            tokenAccountLifecycleError(
+              "read pending token account credential",
+              new Error(error.operation),
+            ),
+          ),
+        );
+      const { pendingTokenAccountAddition: _pending, ...providerBase } = provider;
+      if (credential === undefined) {
+        // A crash before the vault write aborts an unpublished addition.
+        providers.push(providerBase);
+        continue;
+      }
+      if (sha256Hex(credential) !== pending.credentialSha256) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError(
+            "verify pending token account credential",
+            new Error("Credential readback did not match the staged fingerprint."),
+          ),
+        );
+      }
+      const currentAccounts = provider.tokenAccounts?.accounts ?? [];
+      if (currentAccounts.some((account) => account.id === pending.account.id)) {
+        return yield* Effect.fail(
+          invalidMetadataError(new Error("Pending token-account ID already exists in the roster.")),
+        );
+      }
+      const accounts = [...currentAccounts, pending.account];
+      const currentActiveIndex = Math.min(
+        Math.max(provider.tokenAccounts?.activeIndex ?? 0, 0),
+        Math.max(currentAccounts.length - 1, 0),
+      );
+      providers.push({
+        ...providerBase,
+        tokenAccounts: {
+          version: 2,
+          accounts,
+          activeIndex: pending.makeActive ? accounts.length - 1 : currentActiveIndex,
+        },
+      });
+    }
+    const recovered: PersistedCodexBarConfig = { ...config, providers };
+    yield* repository
+      .save(recovered)
+      .pipe(
+        Effect.mapError((error) =>
+          tokenAccountLifecycleError(
+            "save token account addition recovery",
+            new Error(error.operation),
+          ),
+        ),
+      );
+    return recovered;
+  });
+};
+
 const migrateTokenAccountsToVault = (
   config: PersistedCodexBarConfig,
   repository: ConfigRepositoryService,
@@ -283,11 +401,12 @@ const loadFreshAndMigrateUnderHeldLock = (
     if (freshConfig === undefined) return undefined;
     if (
       containsLegacyTokenAccountData(freshConfig) &&
-      containsPendingTokenAccountDeletion(freshConfig)
+      (containsPendingTokenAccountAddition(freshConfig) ||
+        containsPendingTokenAccountDeletion(freshConfig))
     ) {
       return yield* Effect.fail(
         invalidMetadataError(
-          new Error("Legacy token accounts cannot contain pending vault deletions."),
+          new Error("Legacy token accounts cannot contain pending vault lifecycle operations."),
         ),
       );
     }
@@ -296,7 +415,12 @@ const loadFreshAndMigrateUnderHeldLock = (
       : freshConfig;
     const invalid = assertMetadataOnlyV2(current);
     if (invalid !== undefined) return yield* Effect.fail(invalid);
-    return yield* reconcilePendingTokenAccountDeletions(current, repository, credentials);
+    const afterDeletion = yield* reconcilePendingTokenAccountDeletions(
+      current,
+      repository,
+      credentials,
+    );
+    return yield* reconcilePendingTokenAccountAdditions(afterDeletion, repository, credentials);
   });
 
 interface TokenAccountIdentityChange {
@@ -356,6 +480,11 @@ const commitVaultBackedConfigMutation = (
   repository: ConfigRepositoryService,
   credentials: CredentialStoreService,
 ): Effect.Effect<PersistedCodexBarConfig, InfrastructureError> => {
+  if (containsPendingTokenAccountAddition(next)) {
+    return Effect.fail(
+      invalidMetadataError(new Error("Pending token-account additions are host-owned.")),
+    );
+  }
   if (containsPendingTokenAccountDeletion(next)) {
     return Effect.fail(
       invalidMetadataError(new Error("Pending token-account deletions are host-owned.")),
@@ -430,7 +559,11 @@ export const makeTokenAccountVaultConfigRepository = (
     Effect.mapError((error) => vaultError("load config", error)),
     Effect.flatMap((config) => {
       if (config === undefined) return Effect.succeed(undefined);
-      if (!containsLegacyTokenAccountData(config) && !containsPendingTokenAccountDeletion(config)) {
+      if (
+        !containsLegacyTokenAccountData(config) &&
+        !containsPendingTokenAccountAddition(config) &&
+        !containsPendingTokenAccountDeletion(config)
+      ) {
         const invalid = assertMetadataOnlyV2(config);
         return invalid === undefined ? Effect.succeed(config) : Effect.fail(invalid);
       }
@@ -440,9 +573,14 @@ export const makeTokenAccountVaultConfigRepository = (
   save: (config) => {
     const invalid = assertMetadataOnlyV2(config);
     if (invalid !== undefined) return Effect.fail(invalid);
-    if (containsPendingTokenAccountDeletion(config)) {
+    if (
+      containsPendingTokenAccountAddition(config) ||
+      containsPendingTokenAccountDeletion(config)
+    ) {
       return Effect.fail(
-        invalidMetadataError(new Error("Pending token-account deletions are host-owned.")),
+        invalidMetadataError(
+          new Error("Pending token-account lifecycle operations are host-owned."),
+        ),
       );
     }
     return lock.runExclusive(
@@ -669,6 +807,188 @@ const selectedCodexAccount = (
     },
   });
 };
+
+export interface AddCodexTokenAccountCredentialRequest {
+  readonly accountId: string;
+  readonly label: string;
+  readonly credentialJson: string;
+  readonly addedAt: number;
+  readonly externalIdentifier?: string;
+}
+
+const normalizedAddAccountId = (accountId: string): string | undefined => {
+  const trimmed = accountId.trim();
+  if (trimmed.length === 0 || trimmed.length > 256 || /\p{Cc}/u.test(trimmed)) return undefined;
+  return trimmed;
+};
+
+const normalizedAddAccountLabel = (label: string, fallbackIndex: number): string | undefined => {
+  const trimmed = label.trim();
+  const resolved = trimmed.length === 0 ? `Account ${fallbackIndex}` : trimmed;
+  if (resolved.length > 256 || /\p{Cc}/u.test(resolved)) return undefined;
+  return resolved;
+};
+
+const normalizedCodexCredentialJson = (credentialJson: string): string | undefined => {
+  const trimmed = credentialJson.trim();
+  if (trimmed.length === 0 || trimmed.includes("\u0000")) return undefined;
+  if (new TextEncoder().encode(trimmed).byteLength > 1024 * 1024) return undefined;
+  return trimmed;
+};
+
+/**
+ * Host-owned account creation path for Codex auth material. Callers must pass a
+ * backend-read auth.json payload or login result; renderer IPC must not expose
+ * this function directly.
+ */
+export const addCodexTokenAccountCredentialToVault = (
+  repository: ConfigRepositoryService,
+  credentials: CredentialStoreService,
+  lock: TokenAccountMigrationLock,
+  request: AddCodexTokenAccountCredentialRequest,
+): Effect.Effect<PersistedCodexBarConfig, InfrastructureError> =>
+  lock.runExclusive(
+    Effect.gen(function* () {
+      const accountId = normalizedAddAccountId(request.accountId);
+      if (accountId === undefined) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Invalid account ID.")),
+        );
+      }
+      const credentialJson = normalizedCodexCredentialJson(request.credentialJson);
+      if (credentialJson === undefined) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Invalid Codex credential.")),
+        );
+      }
+      yield* selectedCodexAccount(accountId, credentialJson).pipe(
+        Effect.mapError((error) => tokenAccountLifecycleError("add token account", error)),
+      );
+
+      const current = yield* loadFreshAndMigrateUnderHeldLock(repository, credentials);
+      if (current === undefined) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Config is missing.")),
+        );
+      }
+      const provider = current.providers.find((entry) => entry.id === "codex");
+      if (provider === undefined) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Codex provider is missing.")),
+        );
+      }
+      const existingAccounts = provider.tokenAccounts?.accounts ?? [];
+      if (existingAccounts.some((account) => account.id === accountId)) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Account ID already exists.")),
+        );
+      }
+      const externalIdentifier = request.externalIdentifier?.trim();
+      if (
+        externalIdentifier !== undefined &&
+        (externalIdentifier.length === 0 ||
+          !validMetadataString(externalIdentifier, false) ||
+          existingAccounts.some((account) => account.externalIdentifier === externalIdentifier))
+      ) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError(
+            "add token account",
+            new Error("Provider account already exists or is invalid."),
+          ),
+        );
+      }
+      const label = normalizedAddAccountLabel(request.label, existingAccounts.length + 1);
+      if (label === undefined) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Invalid account label.")),
+        );
+      }
+      if (!Number.isFinite(request.addedAt) || request.addedAt < 0) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError("add token account", new Error("Invalid addedAt timestamp.")),
+        );
+      }
+
+      const key = tokenAccountVaultKey("codex", accountId);
+      const existingCredential = yield* credentials
+        .read(key)
+        .pipe(
+          Effect.mapError((error) =>
+            tokenAccountLifecycleError("read token account credential", new Error(error.operation)),
+          ),
+        );
+      if (existingCredential !== undefined) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError(
+            "add token account",
+            new Error("Credential key already exists."),
+          ),
+        );
+      }
+
+      const nextAccount = {
+        id: accountId,
+        label,
+        addedAt: request.addedAt,
+        ...(externalIdentifier === undefined ? {} : { externalIdentifier }),
+      } as const;
+      const staged: PersistedCodexBarConfig = {
+        ...current,
+        providers: current.providers.map((entry) =>
+          entry.id === "codex"
+            ? {
+                ...entry,
+                pendingTokenAccountAddition: {
+                  version: 1 as const,
+                  account: nextAccount,
+                  credentialSha256: sha256Hex(credentialJson),
+                  makeActive: true,
+                },
+              }
+            : entry,
+        ),
+      };
+      const invalid = assertMetadataOnlyV2(staged);
+      if (invalid !== undefined) return yield* Effect.fail(invalid);
+
+      yield* repository
+        .save(staged)
+        .pipe(
+          Effect.mapError((error) =>
+            tokenAccountLifecycleError("stage token account addition", new Error(error.operation)),
+          ),
+        );
+      yield* credentials
+        .write(key, credentialJson)
+        .pipe(
+          Effect.mapError((error) =>
+            tokenAccountLifecycleError(
+              "write token account credential",
+              new Error(error.operation),
+            ),
+          ),
+        );
+      const verified = yield* credentials
+        .read(key)
+        .pipe(
+          Effect.mapError((error) =>
+            tokenAccountLifecycleError(
+              "verify token account credential",
+              new Error(error.operation),
+            ),
+          ),
+        );
+      if (verified !== credentialJson) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError(
+            "verify token account credential",
+            new Error("Credential readback did not match."),
+          ),
+        );
+      }
+      return yield* reconcilePendingTokenAccountAdditions(staged, repository, credentials);
+    }),
+  );
 
 const selectedClaudeAccount = (
   accountId: string,

@@ -47,6 +47,33 @@ export const PendingTokenAccountDeletion = Schema.Struct({
 });
 export type PendingTokenAccountDeletion = Schema.Schema.Type<typeof PendingTokenAccountDeletion>;
 
+/**
+ * Durable, non-secret intent used while the host publishes a new vault-backed
+ * account. The credential hash proves readback equality without persisting the
+ * credential itself. This marker is never projected over renderer IPC.
+ */
+export const PendingTokenAccountAddition = Schema.Struct({
+  version: Schema.Literal(1),
+  account: Schema.Struct({
+    id: Schema.String,
+    label: Schema.String,
+    addedAt: Schema.Number,
+    lastUsed: Schema.optional(Schema.Number),
+    externalIdentifier: Schema.optional(Schema.String),
+    usageScope: Schema.optional(Schema.String),
+    organizationId: Schema.optional(Schema.String),
+    workspaceID: Schema.optional(Schema.String),
+    /** Secret-bearing input is never valid in the recovery marker. */
+    token: Schema.optional(Schema.Never),
+  }),
+  credentialSha256: Schema.String.pipe(
+    Schema.check(Schema.isMinLength(64), Schema.isMaxLength(64)),
+    Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  ),
+  makeActive: Schema.Boolean,
+});
+export type PendingTokenAccountAddition = Schema.Schema.Type<typeof PendingTokenAccountAddition>;
+
 export const QuotaWarningWindowConfig = Schema.Struct({
   thresholds: Schema.optional(Schema.Array(Schema.Number)),
   enabled: Schema.optional(Schema.Boolean),
@@ -72,6 +99,7 @@ export const ProviderConfig = Schema.Struct({
   workspaceID: Schema.optional(Schema.String),
   enterpriseHost: Schema.optional(Schema.String),
   tokenAccounts: Schema.optional(ProviderTokenAccountData),
+  pendingTokenAccountAddition: Schema.optional(PendingTokenAccountAddition),
   pendingTokenAccountDeletion: Schema.optional(PendingTokenAccountDeletion),
   quotaWarnings: Schema.optional(QuotaWarningConfig),
   accentColor: Schema.optional(Schema.String),

@@ -86,6 +86,46 @@ describe("CodexBarConfig coding (Swift parity)", () => {
     }
   });
 
+  it("round-trips only the typed non-secret token-account addition marker", () => {
+    const marker = {
+      version: 1,
+      account: {
+        id: "account-2",
+        label: "Personal",
+        addedAt: 42,
+        externalIdentifier: "workspace-1",
+      },
+      credentialSha256: "a".repeat(64),
+      makeActive: true,
+    };
+    const input = {
+      version: 1,
+      providers: [{ id: "codex", pendingTokenAccountAddition: marker }],
+    };
+
+    const decoded = decodeCodexBarConfig(input);
+
+    expect(decoded.providers[0]?.pendingTokenAccountAddition).toEqual(marker);
+    expect(decoded.providers[0]?.extensions).toEqual({});
+    expect(encodeCodexBarConfig(decoded)).toEqual(input);
+
+    for (const invalid of [
+      { ...marker, version: 2 },
+      { ...marker, credentialSha256: "not-a-fingerprint" },
+      { ...marker, makeActive: undefined },
+      { ...marker, token: "must-not-persist" },
+      { ...marker, account: { ...marker.account, token: "must-not-persist" } },
+      { ...marker, account: { ...marker.account, id: "bad\naccount" } },
+    ]) {
+      expect(() =>
+        decodeCodexBarConfig({
+          version: 1,
+          providers: [{ id: "codex", pendingTokenAccountAddition: invalid }],
+        }),
+      ).toThrow(ConfigDecodeError);
+    }
+  });
+
   it("matches Swift encodeIfPresent omissions after decoding null legacy values", () => {
     const decoded = decodeCodexBarConfig({
       version: 1,

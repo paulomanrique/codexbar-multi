@@ -6,6 +6,7 @@ import {
   type ProviderSourceMode,
   type ProviderTokenAccount,
   type ProviderTokenAccountData,
+  type PendingTokenAccountAddition,
   type PendingTokenAccountDeletion,
   type QuotaWarningConfig,
 } from "@codexbar/contracts";
@@ -53,6 +54,8 @@ export interface PersistedProviderConfig {
   readonly workspaceID?: string;
   readonly enterpriseHost?: string;
   readonly tokenAccounts?: ProviderTokenAccountData;
+  /** Host-only, non-secret recovery marker; never projected to renderer DTOs. */
+  readonly pendingTokenAccountAddition?: PendingTokenAccountAddition;
   /** Host-only, non-secret recovery marker; never projected to renderer DTOs. */
   readonly pendingTokenAccountDeletion?: PendingTokenAccountDeletion;
   readonly quotaWarnings?: QuotaWarningConfig;
@@ -115,6 +118,7 @@ const providerFields = new Set([
   "workspaceID",
   "enterpriseHost",
   "tokenAccounts",
+  "pendingTokenAccountAddition",
   "pendingTokenAccountDeletion",
   "quotaWarnings",
   "accentColor",
@@ -183,6 +187,103 @@ const optionalPendingTokenAccountDeletion = (
     throw new ConfigDecodeError(`${path}.accountId is invalid.`);
   }
   return { version: 1, accountId };
+};
+
+const pendingTokenAccountFieldNames = new Set([
+  "id",
+  "label",
+  "addedAt",
+  "lastUsed",
+  "externalIdentifier",
+  "usageScope",
+  "organizationId",
+  "workspaceID",
+]);
+
+const optionalPendingTokenAccountAddition = (
+  value: unknown,
+  path: string,
+): PendingTokenAccountAddition | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new ConfigDecodeError(`${path} must be an object.`);
+  if (
+    Object.keys(value).some(
+      (key) =>
+        key !== "version" &&
+        key !== "account" &&
+        key !== "credentialSha256" &&
+        key !== "makeActive",
+    )
+  ) {
+    throw new ConfigDecodeError(`${path} contains unsupported fields.`);
+  }
+  const version = optionalNumber(own(value, "version"), `${path}.version`);
+  if (version !== 1) throw new ConfigDecodeError(`${path}.version is invalid.`);
+  const rawAccount = own(value, "account");
+  if (!isRecord(rawAccount)) throw new ConfigDecodeError(`${path}.account must be an object.`);
+  if (Object.keys(rawAccount).some((key) => !pendingTokenAccountFieldNames.has(key))) {
+    throw new ConfigDecodeError(`${path}.account contains unsupported fields.`);
+  }
+  const id = optionalString(own(rawAccount, "id"), `${path}.account.id`);
+  const label = optionalString(own(rawAccount, "label"), `${path}.account.label`);
+  const addedAt = optionalNumber(own(rawAccount, "addedAt"), `${path}.account.addedAt`);
+  if (
+    id === undefined ||
+    id.length === 0 ||
+    id.length > 256 ||
+    /\p{Cc}/u.test(id) ||
+    label === undefined ||
+    label.length > 256 ||
+    /\p{Cc}/u.test(label) ||
+    addedAt === undefined
+  ) {
+    throw new ConfigDecodeError(`${path}.account is invalid.`);
+  }
+  const lastUsed = optionalNumber(own(rawAccount, "lastUsed"), `${path}.account.lastUsed`);
+  const externalIdentifier = optionalString(
+    own(rawAccount, "externalIdentifier"),
+    `${path}.account.externalIdentifier`,
+  );
+  const usageScope = optionalString(own(rawAccount, "usageScope"), `${path}.account.usageScope`);
+  const organizationId = optionalString(
+    own(rawAccount, "organizationId"),
+    `${path}.account.organizationId`,
+  );
+  const workspaceID = optionalString(own(rawAccount, "workspaceID"), `${path}.account.workspaceID`);
+  for (const [field, entry] of [
+    ["externalIdentifier", externalIdentifier],
+    ["usageScope", usageScope],
+    ["organizationId", organizationId],
+    ["workspaceID", workspaceID],
+  ] as const) {
+    if (entry !== undefined && (entry.length > 256 || /\p{Cc}/u.test(entry))) {
+      throw new ConfigDecodeError(`${path}.account.${field} is invalid.`);
+    }
+  }
+  const credentialSha256 = optionalString(
+    own(value, "credentialSha256"),
+    `${path}.credentialSha256`,
+  );
+  if (credentialSha256 === undefined || !/^[a-f0-9]{64}$/u.test(credentialSha256)) {
+    throw new ConfigDecodeError(`${path}.credentialSha256 is invalid.`);
+  }
+  const makeActive = optionalBoolean(own(value, "makeActive"), `${path}.makeActive`);
+  if (makeActive === undefined) throw new ConfigDecodeError(`${path}.makeActive is required.`);
+  return {
+    version: 1,
+    account: {
+      id,
+      label,
+      addedAt,
+      ...(lastUsed === undefined ? {} : { lastUsed }),
+      ...(externalIdentifier === undefined ? {} : { externalIdentifier }),
+      ...(usageScope === undefined ? {} : { usageScope }),
+      ...(organizationId === undefined ? {} : { organizationId }),
+      ...(workspaceID === undefined ? {} : { workspaceID }),
+    },
+    credentialSha256,
+    makeActive,
+  };
 };
 
 const jsonValue = (value: unknown, path: string): ConfigJsonValue => {
@@ -424,6 +525,10 @@ export const decodeCodexBarConfig = (
       own(rawProvider, "tokenAccounts"),
       `${path}.tokenAccounts`,
     );
+    const pendingTokenAccountAddition = optionalPendingTokenAccountAddition(
+      own(rawProvider, "pendingTokenAccountAddition"),
+      `${path}.pendingTokenAccountAddition`,
+    );
     const pendingTokenAccountDeletion = optionalPendingTokenAccountDeletion(
       own(rawProvider, "pendingTokenAccountDeletion"),
       `${path}.pendingTokenAccountDeletion`,
@@ -454,6 +559,7 @@ export const decodeCodexBarConfig = (
       ...(workspaceID === undefined ? {} : { workspaceID }),
       ...(enterpriseHost === undefined ? {} : { enterpriseHost }),
       ...(tokenAccounts === undefined ? {} : { tokenAccounts }),
+      ...(pendingTokenAccountAddition === undefined ? {} : { pendingTokenAccountAddition }),
       ...(pendingTokenAccountDeletion === undefined ? {} : { pendingTokenAccountDeletion }),
       ...(quotaWarnings === undefined ? {} : { quotaWarnings }),
       ...(accentColor === undefined ? {} : { accentColor }),
@@ -496,6 +602,7 @@ export const encodeCodexBarConfig = (config: PersistedCodexBarConfig): Record<st
       workspaceID: provider.workspaceID,
       enterpriseHost: provider.enterpriseHost,
       tokenAccounts: provider.tokenAccounts,
+      pendingTokenAccountAddition: provider.pendingTokenAccountAddition,
       pendingTokenAccountDeletion: provider.pendingTokenAccountDeletion,
       quotaWarnings: provider.quotaWarnings,
       accentColor: provider.accentColor,

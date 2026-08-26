@@ -9,15 +9,29 @@ export interface NodeCodexCredential {
   readonly personalAccessToken?: string;
 }
 
-export function accountIdFromJwt(token: string | undefined): string | undefined {
+export interface ParsedNodeCodexAuth {
+  readonly credential: NodeCodexCredential;
+  readonly email?: string;
+  readonly plan?: string;
+}
+
+const jwtPayload = (token: string | undefined): Record<string, unknown> | undefined => {
   if (token === undefined) return undefined;
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return undefined;
-    const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<
-      string,
-      unknown
-    >;
+    const parsed: unknown = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export function accountIdFromJwt(token: string | undefined): string | undefined {
+  const payload = jwtPayload(token);
+  if (payload !== undefined) {
     const direct = nonEmptyString(payload.chatgpt_account_id);
     if (direct !== undefined) return direct;
     const auth = payload["https://api.openai.com/auth"];
@@ -33,6 +47,62 @@ export function accountIdFromJwt(token: string | undefined): string | undefined 
       }
     }
     return undefined;
+  }
+  return undefined;
+}
+
+export function parseNodeCodexAuthJson(sourceText: string): ParsedNodeCodexAuth | undefined {
+  if (
+    sourceText.includes("\u0000") ||
+    Buffer.byteLength(sourceText, "utf8") === 0 ||
+    Buffer.byteLength(sourceText, "utf8") > 1024 * 1024
+  ) {
+    return undefined;
+  }
+  try {
+    const source: unknown = JSON.parse(sourceText);
+    if (typeof source !== "object" || source === null || Array.isArray(source)) return undefined;
+    const root = source as Record<string, unknown>;
+    const tokens =
+      typeof root.tokens === "object" && root.tokens !== null && !Array.isArray(root.tokens)
+        ? (root.tokens as Record<string, unknown>)
+        : {};
+    const apiKey = nonEmptyString(root.OPENAI_API_KEY);
+    const accessToken = nonEmptyString(apiKey ?? tokens.access_token ?? tokens.accessToken);
+    const personalAccessToken = nonEmptyString(
+      root.personal_access_token ?? root.personalAccessToken,
+    );
+    if (accessToken === undefined && personalAccessToken === undefined) return undefined;
+    const idToken = nonEmptyString(tokens.id_token ?? tokens.idToken);
+    const payload = jwtPayload(idToken);
+    const auth =
+      payload?.["https://api.openai.com/auth"] !== null &&
+      typeof payload?.["https://api.openai.com/auth"] === "object" &&
+      !Array.isArray(payload?.["https://api.openai.com/auth"])
+        ? (payload["https://api.openai.com/auth"] as Record<string, unknown>)
+        : undefined;
+    const profile =
+      payload?.["https://api.openai.com/profile"] !== null &&
+      typeof payload?.["https://api.openai.com/profile"] === "object" &&
+      !Array.isArray(payload?.["https://api.openai.com/profile"])
+        ? (payload["https://api.openai.com/profile"] as Record<string, unknown>)
+        : undefined;
+    const configuredAccount = nonEmptyString(tokens.account_id ?? tokens.accountId);
+    const accountId =
+      apiKey === undefined
+        ? (configuredAccount ?? accountIdFromJwt(idToken) ?? accountIdFromJwt(accessToken))
+        : undefined;
+    const email = nonEmptyString(payload?.email ?? profile?.email)?.toLowerCase();
+    const plan = nonEmptyString(auth?.chatgpt_plan_type ?? payload?.chatgpt_plan_type);
+    return {
+      credential: {
+        ...(accessToken === undefined ? {} : { accessToken }),
+        ...(accountId === undefined ? {} : { accountId }),
+        ...(personalAccessToken === undefined ? {} : { personalAccessToken }),
+      },
+      ...(email === undefined ? {} : { email }),
+      ...(plan === undefined ? {} : { plan }),
+    };
   } catch {
     return undefined;
   }
@@ -53,31 +123,7 @@ export function discoverNodeCodexCredential(
   try {
     const sourceText =
       options.read === undefined ? readPrivateAuthFile(authPath) : options.read(authPath);
-    const source = JSON.parse(sourceText) as Record<string, unknown>;
-    if (typeof source !== "object" || source === null || Array.isArray(source)) return {};
-    const tokens =
-      typeof source.tokens === "object" && source.tokens !== null && !Array.isArray(source.tokens)
-        ? (source.tokens as Record<string, unknown>)
-        : {};
-    const apiKey = nonEmptyString(source.OPENAI_API_KEY);
-    const access = apiKey ?? tokens.access_token ?? tokens.accessToken;
-    const idToken = tokens.id_token ?? tokens.idToken;
-    const configuredAccount = tokens.account_id ?? tokens.accountId;
-    const accessToken = nonEmptyString(access);
-    const personalAccessToken = nonEmptyString(
-      source.personal_access_token ?? source.personalAccessToken,
-    );
-    const accountId =
-      apiKey === undefined
-        ? (nonEmptyString(configuredAccount) ??
-          accountIdFromJwt(typeof idToken === "string" ? idToken : undefined) ??
-          accountIdFromJwt(accessToken))
-        : undefined;
-    return {
-      ...(accessToken === undefined ? {} : { accessToken }),
-      ...(accountId === undefined ? {} : { accountId }),
-      ...(personalAccessToken === undefined ? {} : { personalAccessToken }),
-    };
+    return parseNodeCodexAuthJson(sourceText)?.credential ?? {};
   } catch {
     return {};
   }

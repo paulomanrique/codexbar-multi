@@ -3,6 +3,7 @@ import { Effect, Fiber, Semaphore } from "effect";
 import {
   InfrastructureError,
   makeTokenAccountRosterService,
+  sha256Hex,
   type ConfigRepositoryService,
   type CredentialStoreService,
   type PersistedCodexBarConfig,
@@ -10,6 +11,7 @@ import {
 } from "@codexbar/core";
 import type { ProviderId } from "@codexbar/contracts";
 import {
+  addCodexTokenAccountCredentialToVault,
   makeTokenAccountVaultConfigRepository,
   resolveSelectedFirstPartyAccountFromVault,
   tokenAccountVaultKey,
@@ -43,6 +45,33 @@ const v1Config = (
       },
     },
     { id: "codex", enabled: true, extensions: {} },
+  ],
+});
+
+const v2CodexConfig = (
+  accounts: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly addedAt: number;
+  }> = [],
+  activeIndex = 0,
+): PersistedCodexBarConfig => ({
+  version: 1,
+  providers: [
+    {
+      id: "codex",
+      enabled: true,
+      extensions: {},
+      ...(accounts.length === 0
+        ? {}
+        : {
+            tokenAccounts: {
+              version: 2,
+              activeIndex,
+              accounts,
+            },
+          }),
+    },
   ],
 });
 
@@ -574,6 +603,187 @@ describe("token-account vault config repository", () => {
     expect(saved?.providers.find((provider) => provider.id === "claude")?.enabled).toBe(false);
     expect(saved?.sessionQuotaNotificationsEnabled).toBe(false);
     expect(saved?.providers[0]?.tokenAccounts?.version).toBe(2);
+  });
+
+  it("adds a Codex credential through the host vault lifecycle and selects it", async () => {
+    const repository = memoryRepository(v2CodexConfig());
+    const credentials = memoryCredentials();
+    const lock = memoryLock();
+    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+
+    const saved = await Effect.runPromise(
+      addCodexTokenAccountCredentialToVault(repository, credentials, lock, {
+        accountId: "codex-account",
+        label: "  Personal  ",
+        credentialJson,
+        addedAt: 42,
+      }),
+    );
+
+    expect(lock.events).toEqual(["acquire", "release"]);
+    expect(credentials.writes).toEqual([
+      { key: tokenAccountVaultKey("codex", "codex-account"), value: credentialJson },
+    ]);
+    expect(saved.providers[0]?.tokenAccounts).toEqual({
+      version: 2,
+      activeIndex: 0,
+      accounts: [{ id: "codex-account", label: "Personal", addedAt: 42 }],
+    });
+    await expect(
+      Effect.runPromise(resolveSelectedFirstPartyAccountFromVault(saved, credentials, "codex")),
+    ).resolves.toMatchObject({
+      id: "codex-account",
+      secureSettings: { CODEX_ACCESS_TOKEN: "selected-oauth" },
+    });
+  });
+
+  it("does not touch the vault when staging the Codex addition fails", async () => {
+    const repository = memoryRepository(v2CodexConfig(), true);
+    const credentials = memoryCredentials();
+
+    await expect(
+      Effect.runPromise(
+        addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
+          accountId: "codex-account",
+          label: "Personal",
+          credentialJson: JSON.stringify({ tokens: { access_token: "selected-oauth" } }),
+          addedAt: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "stage token account addition" });
+
+    expect(credentials.writes).toEqual([]);
+    expect(credentials.removes).toEqual([]);
+    expect(repository.current?.providers[0]?.tokenAccounts).toBeUndefined();
+  });
+
+  it("does not overwrite a divergent orphaned Codex credential", async () => {
+    const key = tokenAccountVaultKey("codex", "codex-account");
+    const repository = memoryRepository(v2CodexConfig());
+    const credentials = memoryCredentials({ [key]: "different" });
+
+    await expect(
+      Effect.runPromise(
+        addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
+          accountId: "codex-account",
+          label: "Personal",
+          credentialJson: JSON.stringify({ tokens: { access_token: "selected-oauth" } }),
+          addedAt: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "add token account" });
+
+    expect(credentials.values.get(key)).toBe("different");
+    expect(credentials.writes).toEqual([]);
+    expect(repository.saves).toEqual([]);
+  });
+
+  it("recovers staged Codex metadata after the credential write", async () => {
+    const key = tokenAccountVaultKey("codex", "codex-account");
+    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const staged: PersistedCodexBarConfig = {
+      ...v2CodexConfig(),
+      providers: [
+        {
+          id: "codex",
+          enabled: true,
+          extensions: {},
+          pendingTokenAccountAddition: {
+            version: 1,
+            account: { id: "codex-account", label: "Account 1", addedAt: 1 },
+            credentialSha256: sha256Hex(credentialJson),
+            makeActive: true,
+          },
+        },
+      ],
+    };
+    const repository = memoryRepository(staged);
+    const credentials = memoryCredentials({ [key]: credentialJson });
+    const wrapped = vaultRepository(repository, credentials);
+
+    const saved = await Effect.runPromise(wrapped.load);
+
+    expect(credentials.writes).toEqual([]);
+    expect(credentials.removes).toEqual([]);
+    expect(saved?.providers[0]?.pendingTokenAccountAddition).toBeUndefined();
+    expect(saved?.providers[0]?.tokenAccounts?.accounts).toEqual([
+      { id: "codex-account", label: "Account 1", addedAt: 1 },
+    ]);
+  });
+
+  it("discards an unpublished Codex addition when recovery finds no credential", async () => {
+    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const staged: PersistedCodexBarConfig = {
+      ...v2CodexConfig(),
+      providers: [
+        {
+          id: "codex",
+          enabled: true,
+          extensions: {},
+          pendingTokenAccountAddition: {
+            version: 1,
+            account: { id: "codex-account", label: "Account 1", addedAt: 1 },
+            credentialSha256: sha256Hex(credentialJson),
+            makeActive: true,
+          },
+        },
+      ],
+    };
+    const repository = memoryRepository(staged);
+
+    const recovered = await Effect.runPromise(
+      vaultRepository(repository, memoryCredentials()).load,
+    );
+
+    expect(recovered?.providers[0]?.pendingTokenAccountAddition).toBeUndefined();
+    expect(recovered?.providers[0]?.tokenAccounts).toBeUndefined();
+  });
+
+  it("keeps the Codex addition marker when final publication fails and recovers later", async () => {
+    const underlying = memoryRepository(v2CodexConfig());
+    let saveCount = 0;
+    let failFinalSave = true;
+    const repository: ConfigRepositoryService = {
+      load: underlying.load,
+      save: (config) => {
+        saveCount += 1;
+        return failFinalSave && saveCount === 2
+          ? Effect.fail(new InfrastructureError("save", "final save failed"))
+          : underlying.save(config);
+      },
+      modify: underlying.modify,
+    };
+    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentials = memoryCredentials();
+
+    await expect(
+      Effect.runPromise(
+        addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
+          accountId: "codex-account",
+          label: "Personal",
+          credentialJson,
+          addedAt: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "save token account addition recovery" });
+
+    expect(underlying.current?.providers[0]?.pendingTokenAccountAddition).toMatchObject({
+      version: 1,
+      account: { id: "codex-account" },
+    });
+    expect(credentials.values.get(tokenAccountVaultKey("codex", "codex-account"))).toBe(
+      credentialJson,
+    );
+
+    failFinalSave = false;
+    const recovered = await Effect.runPromise(
+      makeTokenAccountVaultConfigRepository(repository, credentials, memoryLock()).load,
+    );
+
+    expect(recovered?.providers[0]?.pendingTokenAccountAddition).toBeUndefined();
+    expect(recovered?.providers[0]?.tokenAccounts?.accounts).toEqual([
+      { id: "codex-account", label: "Personal", addedAt: 1 },
+    ]);
   });
 
   it("stages metadata removal before deleting and verifying the native credential", async () => {
