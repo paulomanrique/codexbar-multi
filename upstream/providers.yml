@@ -1720,12 +1720,14 @@ providers:
   - id: wayfinder
     swiftGlobs:
       - Sources/CodexBar/Providers/Wayfinder/**/*.swift
+      - Sources/CodexBarCore/Providers/Wayfinder/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Wayfinder*Tests.swift
         - TestsLinux/*Wayfinder*Tests.swift
       tsGlobs:
         - packages/providers/test/gateway-parity-wave.test.ts
+        - packages/platform/test/node-http-transport.test.ts
     fixtures:
       - packages/providers/test/gateway-parity-wave.test.ts
     tsPaths:
@@ -1734,6 +1736,7 @@ providers:
         - packages/providers/src/providers/wayfinder.ts
     tsTestGlobs:
       - packages/providers/test/gateway-parity-wave.test.ts
+      - packages/platform/test/node-http-transport.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

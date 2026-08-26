@@ -206,6 +206,9 @@ const definition: ProviderDefinition = {
       })
       .sort((left, right) => right.requests - left.requests || left.name.localeCompare(right.name));
     const requests = requiredInteger(ctx, "/v1/savings", savings.requests, "requests");
+    requiredInteger(ctx, "/v1/savings", savings.tokens, "tokens");
+    requiredNumber(ctx, "/v1/savings", savings.realized, "realized");
+    requiredNumber(ctx, "/v1/savings", savings.baseline, "baseline");
     const saved = requiredNumber(ctx, "/v1/savings", savings.saved, "saved");
     const savedPct = requiredNumber(ctx, "/v1/savings", savings.saved_pct, "saved_pct");
     const priced = requiredBoolean(ctx, "/v1/savings", savings.priced, "priced");
