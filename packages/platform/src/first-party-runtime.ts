@@ -890,7 +890,10 @@ export const makeFirstPartyProviderRuntime = (
               fetchContext.sourceMode === "auto" &&
               (strategy.id !== "claude.admin-api" || options.runtime !== "cli") &&
               error instanceof ClassifiedFetchFailure &&
-              strategy.fallbackOn?.includes(error.kind) === true,
+              (strategy.fallbackOn?.includes(error.kind) === true ||
+                // Provider descriptors may narrow fallback within a classified kind (for example,
+                // an API strategy that falls back only on HTTP 404, not every API failure).
+                strategy.fallbackWhen?.(error) === true),
           }),
         ),
     );

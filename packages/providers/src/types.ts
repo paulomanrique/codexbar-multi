@@ -291,6 +291,8 @@ export interface ProviderStrategy {
     | "network-failure"
     | "api-failure"
   )[];
+  /** Optional provider-specific refinement for failures whose kind alone is too broad. */
+  readonly fallbackWhen?: (error: { readonly kind: string; readonly message: string }) => boolean;
 }
 
 export interface FirstPartyProvider extends ProviderStrategy {

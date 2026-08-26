@@ -58,6 +58,28 @@ const apiTokenKind = (value: string): "coding-plan" | "standard" | "unknown" =>
       : "unknown";
 
 const positive = (value: unknown): number => Math.max(0, number(value) ?? 0);
+const payloadData = (root: Record<string, unknown>): Record<string, unknown> =>
+  object(root.data) ?? root;
+const failureKind = (error: unknown): string | undefined =>
+  typeof error === "object" && error !== null && "kind" in error && typeof error.kind === "string"
+    ? error.kind
+    : error instanceof Error
+      ? /^([a-z]+(?:-[a-z]+)*):/u.exec(error.message)?.[1]
+      : undefined;
+const failureMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+const isAbort = (error: unknown): boolean => error instanceof Error && error.name === "AbortError";
+const isAuthenticationFailure = (error: unknown): boolean =>
+  failureKind(error) === "authentication-expired";
+const isEndpointFallbackFailure = (error: unknown): boolean => {
+  const kind = failureKind(error);
+  return (
+    kind === "authentication-expired" ||
+    kind === "network-failure" ||
+    kind === "parse-failure" ||
+    (kind === "api-failure" && /HTTP (?:404|405)\b/u.test(failureMessage(error)))
+  );
+};
 const timestamp = (ctx: ProviderContext, value: unknown): string | undefined => {
   const raw = number(value);
   if (raw === undefined || raw <= 0) return undefined;
@@ -73,18 +95,42 @@ const duration = (start: unknown, end: unknown): number | undefined => {
 };
 
 const services = (ctx: ProviderContext, root: Record<string, unknown>): readonly Service[] => {
-  const rows = Array.isArray(root.model_remains) ? root.model_remains : [];
+  const data = payloadData(root);
+  const multiServiceRows = Array.isArray(data.services) ? data.services : [];
+  if (multiServiceRows.length > 0) {
+    const multiServices: Service[] = [];
+    for (const raw of multiServiceRows) {
+      const row = object(raw);
+      if (!row) continue;
+      const name = string(row.service_type);
+      const window = string(row.window_type);
+      const used = number(row.usage);
+      const limit = number(row.limit);
+      if (!name || !window || used === undefined || limit === undefined || limit <= 0) continue;
+      const percent = number(row.percent) ?? ctx.pct(used, limit);
+      multiServices.push({
+        name,
+        used: Math.max(0, used),
+        limit,
+        percent: Math.max(0, Math.min(100, percent)),
+        label: `${name} · ${window}`,
+      });
+    }
+    if (multiServices.length > 0) return multiServices;
+  }
+
+  const rows = Array.isArray(data.model_remains) ? data.model_remains : [];
   const result: Service[] = [];
   for (const raw of rows) {
     const row = object(raw);
     if (!row) continue;
     const name = string(row.model_name) ?? "General";
     const intervalTotal = positive(row.current_interval_total_count);
-    const intervalUsage = positive(row.current_interval_usage_count);
+    const intervalRemainingCount = positive(row.current_interval_usage_count);
     const intervalRemaining = number(row.current_interval_remaining_percent);
     const intervalLimit = intervalTotal || (intervalRemaining === undefined ? 0 : 100);
     const intervalUsed = intervalTotal
-      ? intervalUsage
+      ? Math.max(0, intervalTotal - intervalRemainingCount)
       : Math.max(0, 100 - (intervalRemaining ?? 100));
     if (intervalLimit > 0 || intervalRemaining !== undefined) {
       const resetsAt = timestamp(ctx, row.end_time);
@@ -100,10 +146,12 @@ const services = (ctx: ProviderContext, root: Record<string, unknown>): readonly
       });
     }
     const weeklyTotal = positive(row.current_weekly_total_count);
-    const weeklyUsage = positive(row.current_weekly_usage_count);
+    const weeklyRemainingCount = positive(row.current_weekly_usage_count);
     const weeklyRemaining = number(row.current_weekly_remaining_percent);
     const weeklyLimit = weeklyTotal || (weeklyRemaining === undefined ? 0 : 100);
-    const weeklyUsed = weeklyTotal ? weeklyUsage : Math.max(0, 100 - (weeklyRemaining ?? 100));
+    const weeklyUsed = weeklyTotal
+      ? Math.max(0, weeklyTotal - weeklyRemainingCount)
+      : Math.max(0, 100 - (weeklyRemaining ?? 100));
     if (weeklyLimit > 0 || weeklyRemaining !== undefined) {
       const resetsAt = timestamp(ctx, row.weekly_end_time);
       const windowMinutes = duration(row.weekly_start_time, row.weekly_end_time);
@@ -122,6 +170,23 @@ const services = (ctx: ProviderContext, root: Record<string, unknown>): readonly
 };
 
 const snapshot = (ctx: ProviderContext, root: Record<string, unknown>) => {
+  const data = payloadData(root);
+  const baseResponse = object(data.base_resp) ?? object(root.base_resp);
+  const code = number(baseResponse?.status_code);
+  if (code !== undefined && code !== 0) {
+    const message = string(baseResponse?.status_msg) ?? `status_code ${code}`;
+    const normalized = message.toLowerCase();
+    if (
+      code === 1004 ||
+      normalized.includes("invalid api key") ||
+      normalized.includes("cookie") ||
+      normalized.includes("log in") ||
+      normalized.includes("login")
+    ) {
+      throw ctx.fail.authenticationExpired("MiniMax credentials expired.");
+    }
+    throw ctx.fail.apiFailure(`MiniMax API returned ${message}.`);
+  }
   const lanes = services(ctx, root);
   if (lanes.length === 0) throw ctx.fail.parseFailure("MiniMax response has no model remains.");
   const primaryIndex = lanes.findIndex((lane) => lane.name.trim().toLowerCase() === "general");
@@ -135,7 +200,19 @@ const snapshot = (ctx: ProviderContext, root: Record<string, unknown>) => {
     ...(lane.resetsAt ? { resetsAt: lane.resetsAt } : {}),
     resetDescription: `${ctx.format.number(lane.used)} / ${ctx.format.number(lane.limit)} ${lane.label}`,
   }));
-  const plan = string(root.current_subscribe_title) ?? string(root.subscribe_title);
+  const plan =
+    string(data.current_subscribe_title) ??
+    string(data.plan_name) ??
+    string(data.combo_title) ??
+    string(data.current_plan_title) ??
+    string(object(data.current_combo_card)?.title) ??
+    string(data.subscribe_title);
+  const pointsBalance =
+    number(data.points_balance) ??
+    number(data.point_balance) ??
+    number(data.credits_balance) ??
+    number(data.credit_balance) ??
+    number(data.balance);
   return {
     ...(windows[0] ? { primary: windows[0] } : {}),
     ...(windows[1] ? { secondary: windows[1] } : {}),
@@ -150,15 +227,26 @@ const snapshot = (ctx: ProviderContext, root: Record<string, unknown>) => {
         })),
       },
     ],
+    ...(pointsBalance !== undefined && pointsBalance >= 0
+      ? {
+          providerCost: {
+            used: pointsBalance,
+            limit: 0,
+            currencyCode: "Points",
+            period: "MiniMax points balance",
+          },
+        }
+      : {}),
     identity: plan ? { loginMethod: plan } : {},
   };
 };
 
-const tryAPI = async (ctx: ProviderContext, token: string, requestedRegion: Region) => {
-  const regions: readonly Region[] = requestedRegion === "global" ? ["global", "cn"] : ["cn"];
-  let globalCredentialFailure = false;
-  for (const currentRegion of regions) {
-    for (const path of ["/v1/token_plan/remains", "/v1/api/openplatform/coding_plan/remains"]) {
+const tryAPIRegion = async (ctx: ProviderContext, token: string, currentRegion: Region) => {
+  const paths = ["/v1/token_plan/remains", "/v1/api/openplatform/coding_plan/remains"] as const;
+  let firstCredentialFailure = false;
+  let lastError: unknown;
+  for (const [index, path] of paths.entries()) {
+    try {
       const response = await ctx.http.getJSON(apiURL(currentRegion, path), {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -168,20 +256,44 @@ const tryAPI = async (ctx: ProviderContext, token: string, requestedRegion: Regi
         },
       });
       const body = object(response.json);
-      const code = number(object(body?.base_resp)?.status_code);
-      const credentialFailure = response.status === 401 || response.status === 403 || code === 1004;
-      if (credentialFailure) {
-        globalCredentialFailure ||= currentRegion === "global";
-        continue;
+      const data = body ? payloadData(body) : undefined;
+      const code = number(
+        object(data?.base_resp)?.status_code ?? object(body?.base_resp)?.status_code,
+      );
+      if (response.status === 401 || response.status === 403 || code === 1004) {
+        throw ctx.fail.authenticationExpired("MiniMax rejected the API token.");
       }
       status(ctx, "MiniMax", response);
       if (!body) throw ctx.fail.parseFailure("MiniMax response must be an object.");
       return snapshot(ctx, body);
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      lastError = error;
+      if (index === 0 && isEndpointFallbackFailure(error)) {
+        firstCredentialFailure = isAuthenticationFailure(error);
+        continue;
+      }
+      if (firstCredentialFailure) {
+        throw ctx.fail.authenticationExpired("MiniMax rejected the API token.");
+      }
+      throw error;
     }
   }
-  if (globalCredentialFailure)
-    throw ctx.fail.authenticationExpired("MiniMax rejected the API token.");
-  throw ctx.fail.authenticationExpired("MiniMax rejected the API token.");
+  throw lastError ?? ctx.fail.parseFailure("MiniMax API endpoints did not return usage.");
+};
+
+const tryAPI = async (ctx: ProviderContext, token: string, requestedRegion: Region) => {
+  if (requestedRegion === "cn") return tryAPIRegion(ctx, token, "cn");
+  try {
+    return await tryAPIRegion(ctx, token, "global");
+  } catch (error) {
+    if (isAbort(error) || !isAuthenticationFailure(error)) throw error;
+    try {
+      return await tryAPIRegion(ctx, token, "cn");
+    } catch {
+      throw error;
+    }
+  }
 };
 
 const webCredential = async (ctx: ProviderContext) => {
@@ -226,10 +338,12 @@ const webCredential = async (ctx: ProviderContext) => {
 };
 
 const webHeaders = (
+  currentHost: string,
   selectedRegion: Region,
   credential: Awaited<ReturnType<typeof webCredential>>,
 ) => {
-  const origin = `https://${platformHost(selectedRegion)}`;
+  const origin = `https://${currentHost}`;
+  const refererOrigin = `https://${platformHost(selectedRegion)}`;
   return {
     Cookie: credential.cookieHeader,
     ...(credential.authorizationToken
@@ -239,7 +353,7 @@ const webHeaders = (
     "Accept-Language": "en-US,en;q=0.9",
     "User-Agent": miniMaxUserAgent,
     Origin: origin,
-    Referer: `${origin}/user-center/payment/coding-plan`,
+    Referer: `${refererOrigin}/user-center/payment/coding-plan`,
     "X-Requested-With": "XMLHttpRequest",
   };
 };
@@ -255,7 +369,7 @@ const webUsage = async (ctx: ProviderContext) => {
     try {
       const response = await ctx.http.getJSON(
         `https://${currentHost}/v1/api/openplatform/coding_plan/remains${suffix}`,
-        { headers: webHeaders(credential.region, credential) },
+        { headers: webHeaders(currentHost, credential.region, credential) },
       );
       const root = object(response.json);
       const code = number(object(root?.base_resp)?.status_code);
@@ -266,9 +380,9 @@ const webUsage = async (ctx: ProviderContext) => {
       if (!root) throw ctx.fail.parseFailure("MiniMax response must be an object.");
       return snapshot(ctx, root);
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") throw error;
+      if (isAbort(error)) throw error;
       terminalError = error instanceof Error ? error : new Error(String(error));
-      if (terminalError.message.startsWith("authentication-expired:")) throw terminalError;
+      if (!isEndpointFallbackFailure(error) || isAuthenticationFailure(error)) throw error;
     }
   }
   throw terminalError ?? ctx.fail.apiFailure("MiniMax coding-plan endpoints did not succeed.");
@@ -314,7 +428,8 @@ const apiStrategy: ProviderStrategy = {
   id: "minimax.api",
   kind: "api",
   autoRequiresAnySecret: ["MINIMAX_CODING_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_TOKEN"],
-  fallbackOn: ["authentication-expired", "missing-credential", "api-failure"],
+  fallbackOn: ["authentication-expired", "missing-credential"],
+  fallbackWhen: (error) => error.kind === "api-failure" && /HTTP 404\b/u.test(error.message),
   fetchUsage: async (ctx) => {
     const token = apiToken(ctx);
     if (!token) throw ctx.fail.missingCredential("MiniMax API token is not configured.");

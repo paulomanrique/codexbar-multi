@@ -183,7 +183,7 @@ describe("Swift-derived complex cloud provider wave B", () => {
     expect(snapshot).toEqual({ identity: { loginMethod: "Business" } });
   });
 
-  it("retries the MiniMax China token-plan endpoint after global credential failure and maps weekly lanes", async () => {
+  it("retries the MiniMax China token-plan endpoint and treats count fields as remaining", async () => {
     const requests: Request[] = [];
     const snapshot = await minimax.fetchUsage(
       context(
@@ -217,9 +217,57 @@ describe("Swift-derived complex cloud provider wave B", () => {
       "api.minimaxi.com/v1/token_plan/remains",
     ]);
     expect(snapshot).toMatchObject({
-      primary: { usedPercent: 25, windowMinutes: 300 },
-      secondary: { usedPercent: 25, windowMinutes: 10080 },
+      primary: { usedPercent: 75, windowMinutes: 300 },
+      secondary: { usedPercent: 75, windowMinutes: 10080 },
       identity: { loginMethod: "Token Plan Pro" },
     });
+  });
+
+  it("maps MiniMax data.services payloads and point balances", async () => {
+    const snapshot = await minimax.fetchUsage(
+      context(
+        () =>
+          response({
+            base_resp: { status_code: 0 },
+            data: {
+              plan_name: "Coding Plan Enterprise",
+              points_balance: 12.5,
+              services: [
+                {
+                  service_type: "general",
+                  window_type: "weekly",
+                  usage: 20,
+                  limit: 100,
+                  percent: 20,
+                },
+              ],
+            },
+          }),
+        { MINIMAX_API_TOKEN: "sk-cp-fixture" },
+      ),
+    );
+    expect(snapshot).toMatchObject({
+      primary: {
+        usedPercent: 20,
+        resetDescription: "20 / 100 general · weekly",
+      },
+      providerCost: {
+        used: 12.5,
+        limit: 0,
+        currencyCode: "Points",
+        period: "MiniMax points balance",
+      },
+      identity: { loginMethod: "Coding Plan Enterprise" },
+    });
+  });
+
+  it("narrows MiniMax API fallback to authentication and HTTP 404", () => {
+    const apiStrategy = minimax.strategies?.find((strategy) => strategy.id === "minimax.api");
+    expect(apiStrategy?.fallbackOn).toEqual(["authentication-expired", "missing-credential"]);
+    expect(apiStrategy?.fallbackWhen?.({ kind: "api-failure", message: "HTTP 404" })).toBe(true);
+    expect(apiStrategy?.fallbackWhen?.({ kind: "api-failure", message: "HTTP 500" })).toBe(false);
+    expect(apiStrategy?.fallbackWhen?.({ kind: "network-failure", message: "offline" })).toBe(
+      false,
+    );
   });
 });
