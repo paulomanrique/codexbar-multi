@@ -20,6 +20,8 @@ import type {
   LoginRequestDTO,
   HostFailureStageDTO,
   HostStatusDTO,
+  CodexBrowserSessionStatusDTO,
+  CodexBrowserSessionStatusesDTO,
 } from "@codexbar/contracts";
 
 import { createLocalization } from "./localization.ts";
@@ -37,7 +39,9 @@ import {
   historySince,
   implementationPresentation,
   safeDateFromTimestamp,
+  codexBrowserSessionStatusForRoster,
   shouldAutoCancelCodexAccountLogin,
+  shouldAutoCancelCodexBrowserSession,
   shouldPublishCodexAccountLoginFailure,
 } from "./view-model.ts";
 import {
@@ -612,11 +616,21 @@ function App() {
   const [tokenAccountLoading, setTokenAccountLoading] = useState(false);
   const [tokenAccountPending, setTokenAccountPending] = useState(false);
   const [codexAccountLoginPending, setCodexAccountLoginPending] = useState(false);
+  const [codexBrowserSessionStatus, setCodexBrowserSessionStatus] = useState<
+    CodexBrowserSessionStatusDTO["status"] | undefined
+  >(undefined);
+  const [codexBrowserSessionPending, setCodexBrowserSessionPending] = useState<
+    "start" | "cancel" | "logout" | undefined
+  >(undefined);
   const [tokenAccountError, setTokenAccountError] = useState<string>();
   const codexAccountLoginCancelled = useRef(false);
   const codexAccountLoginAutoCancelRequested = useRef(false);
   const selectedProviderFirstPartyIdRef = useRef<ProviderId | undefined>(undefined);
   const tokenAccountScope = useRef(0);
+  const tokenAccountRosterRef = useRef<TokenAccountRosterDTO | undefined>(undefined);
+  const codexBrowserSessionScope = useRef(0);
+  const codexBrowserSessionMutation = useRef(0);
+  const codexBrowserLoginAccountId = useRef<string | undefined>(undefined);
   const [savingSessionQuotaNotificationSettings, setSavingSessionQuotaNotificationSettings] =
     useState(false);
   const [sessionQuotaNotificationSettingsError, setSessionQuotaNotificationSettingsError] =
@@ -682,6 +696,8 @@ function App() {
     selectedProviderSettings?.tokenAccounts === undefined
       ? undefined
       : selectedProviderFirstPartyId;
+  tokenAccountRosterRef.current = tokenAccountRoster;
+  const activeTokenAccountId = tokenAccountRoster?.accounts[tokenAccountRoster.activeIndex]?.id;
   const filteredProviders =
     snapshot?.providers.filter((provider) => {
       const query = providerSearch.trim().toLocaleLowerCase(localization.locale);
@@ -774,6 +790,30 @@ function App() {
     );
   }, [activityVersion, localization, selectedTokenAccountProvider]);
   useEffect(() => {
+    const scope = ++codexBrowserSessionScope.current;
+    setCodexBrowserSessionStatus(undefined);
+    const roster = tokenAccountRosterRef.current;
+    if (
+      selectedProviderFirstPartyId !== "codex" ||
+      roster?.provider !== "codex" ||
+      activeTokenAccountId === undefined
+    ) {
+      return;
+    }
+    void window.codexbar.getCodexBrowserSessionStatuses({ expectedRevision: roster.revision }).then(
+      (result) => {
+        if (codexBrowserSessionScope.current !== scope) return;
+        const current = tokenAccountRosterRef.current;
+        const status = codexBrowserSessionStatusForRoster(result, current);
+        setCodexBrowserSessionStatus(status ?? "unavailable");
+      },
+      () => {
+        if (codexBrowserSessionScope.current !== scope) return;
+        setCodexBrowserSessionStatus("unavailable");
+      },
+    );
+  }, [activeTokenAccountId, selectedProviderFirstPartyId, tokenAccountRoster?.revision]);
+  useEffect(() => {
     if (
       !shouldAutoCancelCodexAccountLogin(
         codexAccountLoginPending,
@@ -787,6 +827,33 @@ function App() {
     codexAccountLoginAutoCancelRequested.current = true;
     void window.codexbar.cancelCodexAccountLogin({ provider: "codex" }).catch(() => undefined);
   }, [codexAccountLoginPending, selectedProviderFirstPartyId]);
+  useEffect(() => {
+    const accountId = codexBrowserLoginAccountId.current;
+    if (
+      !shouldAutoCancelCodexBrowserSession(
+        codexBrowserSessionPending,
+        selectedProviderFirstPartyId,
+        activeTokenAccountId,
+        accountId,
+      )
+    ) {
+      return;
+    }
+    if (accountId === undefined) return;
+    codexBrowserLoginAccountId.current = undefined;
+    setCodexBrowserSessionPending("cancel");
+    void window.codexbar.cancelCodexBrowserSession({ accountId }).catch(() => {
+      if (selectedProviderFirstPartyIdRef.current !== "codex") return;
+      setCodexBrowserSessionStatus("unavailable");
+      setTokenAccountError(localization.upstream("Unavailable"));
+      reconcileCodexBrowserSession(codexBrowserSessionScope.current);
+    });
+  }, [
+    activeTokenAccountId,
+    codexBrowserSessionPending,
+    localization,
+    selectedProviderFirstPartyId,
+  ]);
   useEffect(() => {
     if (selectedProviderFirstPartyId === undefined) {
       setHistory(undefined);
@@ -1033,6 +1100,155 @@ function App() {
         setTokenAccountError(localization.upstream("Unavailable"));
       }
     });
+  };
+  const publishCodexBrowserSessionResult = (
+    result: CodexBrowserSessionStatusesDTO,
+    scope: number,
+    requestedAccountId: string,
+  ): boolean => {
+    if (
+      codexBrowserSessionScope.current !== scope ||
+      selectedProviderFirstPartyIdRef.current !== "codex"
+    ) {
+      return false;
+    }
+    const current = tokenAccountRosterRef.current;
+    if (current?.accounts[current.activeIndex]?.id !== requestedAccountId) return false;
+    const status = codexBrowserSessionStatusForRoster(result, current);
+    if (status === undefined) return false;
+    setCodexBrowserSessionStatus(status);
+    return true;
+  };
+  function reconcileCodexBrowserSession(scope: number): void {
+    void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+      (roster) => {
+        if (
+          codexBrowserSessionScope.current === scope &&
+          selectedProviderFirstPartyIdRef.current === "codex"
+        ) {
+          const current = tokenAccountRosterRef.current;
+          const sameScope =
+            current?.provider === "codex" &&
+            current.revision === roster.revision &&
+            current.accounts[current.activeIndex]?.id === roster.accounts[roster.activeIndex]?.id;
+          setTokenAccountRoster(roster);
+          if (sameScope) {
+            void window.codexbar
+              .getCodexBrowserSessionStatuses({ expectedRevision: roster.revision })
+              .then((result) => {
+                if (
+                  codexBrowserSessionScope.current === scope &&
+                  selectedProviderFirstPartyIdRef.current === "codex"
+                ) {
+                  setCodexBrowserSessionStatus(
+                    codexBrowserSessionStatusForRoster(result, roster) ?? "unavailable",
+                  );
+                }
+              })
+              .catch(() => undefined);
+          }
+        }
+      },
+      () => undefined,
+    );
+  }
+  const startCodexBrowserSession = (): void => {
+    const roster = tokenAccountRosterRef.current;
+    const accountId = roster?.accounts[roster.activeIndex]?.id;
+    if (
+      roster?.provider !== "codex" ||
+      accountId === undefined ||
+      codexBrowserSessionPending !== undefined
+    ) {
+      return;
+    }
+    const scope = codexBrowserSessionScope.current;
+    const mutation = ++codexBrowserSessionMutation.current;
+    codexBrowserLoginAccountId.current = accountId;
+    setCodexBrowserSessionPending("start");
+    setTokenAccountError(undefined);
+    void window.codexbar
+      .startCodexBrowserSession({ accountId, expectedRevision: roster.revision })
+      .then((result) => {
+        if (!publishCodexBrowserSessionResult(result, scope, accountId)) return;
+        if (
+          result.statuses.find((status) => status.accountId === accountId)?.status !== "persisted"
+        )
+          return;
+        void window.codexbar
+          .refreshProvider({ provider: "codex", source: "web" })
+          .then(loadOverview)
+          .then(() => setActivityVersion((version) => version + 1))
+          .catch(() => setError(localization.upstream("Unavailable")));
+      })
+      .catch(() => {
+        if (
+          codexBrowserSessionScope.current !== scope ||
+          selectedProviderFirstPartyIdRef.current !== "codex"
+        ) {
+          return;
+        }
+        setCodexBrowserSessionStatus("unavailable");
+        setTokenAccountError(localization.upstream("Login failed"));
+        reconcileCodexBrowserSession(scope);
+      })
+      .finally(() => {
+        if (codexBrowserSessionMutation.current !== mutation) return;
+        codexBrowserLoginAccountId.current = undefined;
+        setCodexBrowserSessionPending(undefined);
+      });
+  };
+  const cancelCodexBrowserSession = (): void => {
+    const accountId = codexBrowserLoginAccountId.current;
+    if (codexBrowserSessionPending !== "start" || accountId === undefined) return;
+    codexBrowserLoginAccountId.current = undefined;
+    setCodexBrowserSessionPending("cancel");
+    void window.codexbar.cancelCodexBrowserSession({ accountId }).catch(() => {
+      if (selectedProviderFirstPartyIdRef.current === "codex") {
+        setTokenAccountError(localization.upstream("Unavailable"));
+      }
+    });
+  };
+  const logoutCodexBrowserSession = (): void => {
+    const roster = tokenAccountRosterRef.current;
+    const accountId = roster?.accounts[roster.activeIndex]?.id;
+    if (
+      roster?.provider !== "codex" ||
+      accountId === undefined ||
+      codexBrowserSessionPending !== undefined
+    ) {
+      return;
+    }
+    const scope = codexBrowserSessionScope.current;
+    const mutation = ++codexBrowserSessionMutation.current;
+    setCodexBrowserSessionPending("logout");
+    setTokenAccountError(undefined);
+    void window.codexbar
+      .logoutCodexBrowserSession({ accountId, expectedRevision: roster.revision })
+      .then((result) => {
+        if (!publishCodexBrowserSessionResult(result, scope, accountId)) return;
+        void window.codexbar
+          .refreshProvider({ provider: "codex", source: "auto" })
+          .then(loadOverview)
+          .then(() => setActivityVersion((version) => version + 1))
+          .catch(() => undefined);
+      })
+      .catch(() => {
+        if (
+          codexBrowserSessionScope.current !== scope ||
+          selectedProviderFirstPartyIdRef.current !== "codex"
+        ) {
+          return;
+        }
+        setCodexBrowserSessionStatus("unavailable");
+        setTokenAccountError(localization.upstream("Unavailable"));
+        reconcileCodexBrowserSession(scope);
+      })
+      .finally(() => {
+        if (codexBrowserSessionMutation.current === mutation) {
+          setCodexBrowserSessionPending(undefined);
+        }
+      });
   };
   const updateSessionQuotaNotificationSettings = (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
@@ -1426,6 +1642,12 @@ function App() {
                   cancel: localization.upstream("Cancel"),
                   source: copy.source,
                   manual: localization.upstream("Manual"),
+                  browserSession: localization.upstream("Browser cookies"),
+                  connected: localization.upstream("Connected"),
+                  disconnected: localization.upstream("Disconnected"),
+                  unavailable: localization.upstream("Unavailable"),
+                  refreshSession: localization.upstream("Refresh Session"),
+                  clearSession: localization.upstream("Clear"),
                 }}
                 error={tokenAccountError}
                 loginPending={
@@ -1435,6 +1657,17 @@ function App() {
                 loading={tokenAccountLoading}
                 pending={tokenAccountPending}
                 roster={tokenAccountRoster}
+                {...(selectedProviderFirstPartyId === "codex"
+                  ? {
+                      browserSession: {
+                        status: codexBrowserSessionStatus,
+                        pending: codexBrowserSessionPending,
+                        onStart: startCodexBrowserSession,
+                        onCancel: cancelCodexBrowserSession,
+                        onLogout: logoutCodexBrowserSession,
+                      },
+                    }
+                  : {})}
                 {...(selectedProviderSettings.tokenAccounts.selectionSetsCookieSource === undefined
                   ? {}
                   : {

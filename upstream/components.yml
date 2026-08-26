@@ -158,6 +158,11 @@ components:
       - packages/platform/src/**/*.ts
       - packages/providers/src/providers/codex-dashboard-authority.ts
       - packages/providers/src/**/*.ts
+      - apps/desktop/src/main/browser-session-controller.ts
+      - apps/desktop/src/main/browser-session-policy.ts
+      - apps/desktop/src/main/browser-session.ts
+      - apps/desktop/src/main/codex-browser-session.ts
+      - apps/desktop/src/preload/codex-browser-session-api.ts
     tests:
       - Tests/CodexBarTests/APITokenFetchStrategyTests.swift
       - Tests/CodexBarTests/CodexPATTests.swift
@@ -167,6 +172,12 @@ components:
       - packages/providers/test/codex-dashboard-authority.test.ts
       - packages/platform/test/browser-session-credentials.test.ts
       - packages/platform/test/first-party-runtime-codex-account.test.ts
+      - apps/desktop/test/browser-session-controller.test.ts
+      - apps/desktop/test/browser-session-policy.test.ts
+      - apps/desktop/test/codex-browser-session.test.ts
+      - apps/desktop/test/preload-codex-browser-session.test.ts
+      - apps/desktop/test/ipc-validation.test.ts
+      - apps/desktop/test/main-wiring.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenAI/*.html
       - Tests/CodexBarTests/Fixtures/codex-config-*.toml
@@ -192,14 +203,19 @@ components:
       - packages/platform/src/browser-session-cleanup-journal.ts
       - packages/platform/src/node-codex-credential.ts
       - packages/platform/src/node-codex-login.ts
+      - packages/platform/src/node.ts
       - apps/desktop/src/ipc/api.ts
       - apps/desktop/src/main/index.ts
       - apps/desktop/src/main/codex-account-login.ts
+      - apps/desktop/src/main/codex-browser-session.ts
       - apps/desktop/src/main/browser-session-controller.ts
+      - apps/desktop/src/main/browser-session-policy.ts
       - apps/desktop/src/main/browser-session.ts
+      - apps/desktop/src/main/ipc-validation.ts
       - apps/desktop/src/main/provider-settings.ts
       - apps/desktop/src/main/token-account-removal.ts
       - apps/desktop/src/preload/token-accounts-api.ts
+      - apps/desktop/src/preload/codex-browser-session-api.ts
       - apps/desktop/src/renderer/index.tsx
       - apps/desktop/src/renderer/settings-view-model.ts
       - apps/desktop/src/renderer/token-account-settings.tsx
@@ -216,15 +232,20 @@ components:
       - packages/platform/test/token-account-vault-config.test.ts
       - packages/platform/test/first-party-runtime-codex-account.test.ts
       - packages/platform/test/browser-session-cleanup-journal.test.ts
+      - packages/platform/test/browser-session-credentials.test.ts
       - apps/desktop/test/browser-session-controller.test.ts
       - packages/platform/test/node-codex-login.test.ts
       - packages/platform/test/node-discovered-provider-settings.test.ts
       - apps/cli/test/codex-credential.test.ts
       - apps/desktop/test/codex-account-login.test.ts
+      - apps/desktop/test/codex-browser-session.test.ts
+      - apps/desktop/test/browser-session-policy.test.ts
       - apps/desktop/test/ipc-contract.test.ts
+      - apps/desktop/test/ipc-validation.test.ts
       - apps/desktop/test/provider-settings.test.ts
       - apps/desktop/test/preload-provider-settings.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
+      - apps/desktop/test/preload-codex-browser-session.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
       - apps/desktop/test/renderer-view-model.test.ts
       - apps/desktop/test/settings-view-model.test.ts
@@ -355,12 +376,20 @@ components:
       - apps/desktop/src/main/**/*.ts
       - apps/desktop/src/preload/**/*.ts
       - apps/desktop/src/renderer/**/*.tsx
+      - apps/desktop/src/renderer/**/*.ts
+      - apps/desktop/src/renderer/**/*.css
+      - apps/desktop/src/ipc/**/*.ts
       - packages/contracts/src/ipc.ts
     tests:
       - Tests/CodexBarTests/Menu*Tests.swift
       - Tests/CodexBarTests/Widget*Tests.swift
       - Tests/CodexBarTests/DashboardSnapshotBuilderTests.swift
       - apps/desktop/test/renderer-view-model.test.ts
+      - apps/desktop/test/renderer-token-accounts.test.ts
+      - apps/desktop/test/token-account-settings.test.tsx
+      - apps/desktop/test/preload-codex-browser-session.test.ts
+      - apps/desktop/test/ipc-contract.test.ts
+      - apps/desktop/test/ipc-validation.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/usage-snapshot-current.json
     status: partial

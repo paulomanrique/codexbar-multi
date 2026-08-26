@@ -7,6 +7,9 @@ import type {
   DefaultBrowserSessionStatusStateDTO,
   ProviderSettingsListDTO,
   ProviderId,
+  CodexBrowserSessionStatusesDTO,
+  CodexBrowserSessionStatusDTO,
+  TokenAccountRosterDTO,
 } from "@codexbar/contracts";
 import { PROVIDER_IDS } from "@codexbar/contracts";
 
@@ -50,6 +53,17 @@ export const shouldAutoCancelCodexAccountLogin = (
   cancellationRequested: boolean,
 ): boolean => pending && selectedProvider !== "codex" && !cancellationRequested;
 
+/** Leaving the exact Codex account is a cancellation boundary for its login window. */
+export const shouldAutoCancelCodexBrowserSession = (
+  pending: "start" | "cancel" | "logout" | undefined,
+  selectedProvider: ProviderId | undefined,
+  activeAccountId: string | undefined,
+  loginAccountId: string | undefined,
+): boolean =>
+  pending === "start" &&
+  loginAccountId !== undefined &&
+  (selectedProvider !== "codex" || activeAccountId !== loginAccountId);
+
 /**
  * A successful host login always needs reconciliation, but its returned roster
  * is safe to publish only if the renderer is still in the original Codex scope.
@@ -71,6 +85,18 @@ export const shouldPublishCodexAccountLoginFailure = (
   selectedProvider: ProviderId | undefined,
   cancelled: boolean,
 ): boolean => !cancelled && requestScope === currentScope && selectedProvider === "codex";
+
+/** Accept a browser-session response only for the still-active exact roster. */
+export const codexBrowserSessionStatusForRoster = (
+  result: CodexBrowserSessionStatusesDTO,
+  roster: TokenAccountRosterDTO | undefined,
+): CodexBrowserSessionStatusDTO["status"] | undefined => {
+  if (roster?.provider !== "codex" || result.provider !== "codex") return undefined;
+  if (result.revision !== roster.revision) return undefined;
+  const activeAccountId = roster.accounts[roster.activeIndex]?.id;
+  if (activeAccountId === undefined) return undefined;
+  return result.statuses.find(({ accountId }) => accountId === activeAccountId)?.status;
+};
 
 /** The renderer can submit only the opaque ID from the current Claude account card. */
 export const claudeSwapActivationRequest = (

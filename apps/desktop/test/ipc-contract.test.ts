@@ -22,6 +22,11 @@ import {
   ActivateClaudeSwapAccountRequestDTO,
   CodexAccountLoginRequestDTO,
   DefaultBrowserSessionStatusesDTO,
+  StartCodexBrowserSessionRequestDTO,
+  CancelCodexBrowserSessionRequestDTO,
+  LogoutCodexBrowserSessionRequestDTO,
+  GetCodexBrowserSessionStatusesRequestDTO,
+  CodexBrowserSessionStatusesDTO,
   ListTokenAccountsRequestDTO,
   RenameTokenAccountRequestDTO,
   RemoveTokenAccountRequestDTO,
@@ -35,10 +40,48 @@ import {
 import { DesktopChannels } from "../src/ipc/api.ts";
 
 describe("desktop IPC boundary", () => {
-  it("rejects invalid account and provider input before a handler runs", () => {
+  it("defines metadata-only Codex browser-session contracts", () => {
+    const start = Schema.decodeUnknownSync(StartCodexBrowserSessionRequestDTO);
+    expect(start({ accountId: "account-1", expectedRevision: "a".repeat(64) })).toEqual({
+      accountId: "account-1",
+      expectedRevision: "a".repeat(64),
+    });
+    expect(start({ accountId: "legacy/account", expectedRevision: "a".repeat(64) })).toEqual({
+      accountId: "legacy/account",
+      expectedRevision: "a".repeat(64),
+    });
+    expect(
+      Schema.decodeUnknownSync(CancelCodexBrowserSessionRequestDTO)({ accountId: "a" }),
+    ).toEqual({ accountId: "a" });
+    expect(
+      Schema.decodeUnknownSync(LogoutCodexBrowserSessionRequestDTO)({
+        accountId: "a",
+        expectedRevision: "b".repeat(64),
+      }),
+    ).toEqual({ accountId: "a", expectedRevision: "b".repeat(64) });
+    expect(
+      Schema.decodeUnknownSync(GetCodexBrowserSessionStatusesRequestDTO)({
+        expectedRevision: "c".repeat(64),
+      }),
+    ).toEqual({ expectedRevision: "c".repeat(64) });
+    expect(() =>
+      Schema.decodeUnknownSync(CodexBrowserSessionStatusesDTO)({
+        provider: "openai",
+        revision: "d".repeat(64),
+        statuses: [{ accountId: "a", status: "persisted" }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects invalid provider and unsafe account metadata before a handler runs", () => {
     const decode = Schema.decodeUnknownSync(LoginRequestDTO);
     expect(() => decode({ provider: "not-first-party", accountId: "default" })).toThrow();
-    expect(() => decode({ provider: "t3chat", accountId: "../../escape" })).toThrow();
+    expect(decode({ provider: "t3chat", accountId: "legacy/account" })).toEqual({
+      provider: "t3chat",
+      accountId: "legacy/account",
+    });
+    expect(() => decode({ provider: "t3chat", accountId: "bad\naccount" })).toThrow();
+    expect(() => decode({ provider: "t3chat", accountId: "x".repeat(257) })).toThrow();
   });
 
   it("bounds provider-scoped history and cost queries before a handler runs", () => {

@@ -1,5 +1,10 @@
 import type { LoginRequestDTO, LoginResultDTO } from "@codexbar/contracts";
 import {
+  browserSessionCredentialKey,
+  browserSessionCredentialKeys,
+  browserSessionStorageAccountId,
+} from "@codexbar/platform";
+import {
   browserLoginDescriptor,
   exportableCookieHeader,
   type BrowserCookieValue,
@@ -36,6 +41,18 @@ export interface BrowserLoginHost {
   readonly now: () => Date;
 }
 
+export interface BrowserLoginCredentialCandidate {
+  readonly key: string;
+  readonly value: string;
+  readonly cookieHeaders: Readonly<Record<string, string>>;
+}
+
+export type BrowserLoginCredentialValidator = (
+  request: LoginRequestDTO,
+  candidate: BrowserLoginCredentialCandidate,
+  signal: AbortSignal,
+) => Promise<"persisted">;
+
 interface ActiveLogin {
   readonly request: LoginRequestDTO;
   readonly window: BrowserLoginWindow;
@@ -45,17 +62,27 @@ interface ActiveLogin {
   pendingPersistence: Promise<void> | undefined;
   credentialDirty: boolean;
   cancelled: boolean;
+  readonly validationAbortController: AbortController;
 }
 
 export const browserLoginKey = ({ provider, accountId }: LoginRequestDTO) =>
   `${provider}/${accountId}`;
 export const browserCredentialKey = ({ provider, accountId }: LoginRequestDTO) =>
-  `browser-session/${provider}/${accountId}`;
+  browserSessionCredentialKey(provider, accountId);
+export const browserCredentialKeys = ({ provider, accountId }: LoginRequestDTO) =>
+  browserSessionCredentialKeys(provider, accountId);
 export const browserSessionPartition = ({ provider, accountId }: LoginRequestDTO) =>
-  `persist:codexbar-multi-${provider}-${accountId}`;
+  `persist:codexbar-multi-${provider}-${browserSessionStorageAccountId(accountId)}`;
+export const legacyBrowserSessionPartition = ({ provider, accountId }: LoginRequestDTO) =>
+  browserSessionStorageAccountId(accountId) === accountId
+    ? undefined
+    : `persist:codexbar-multi-${provider}-${accountId}`;
 
 /** The generic renderer bridge owns only one host-selected account per provider. */
 export const requireDefaultBrowserLoginRequest = (request: LoginRequestDTO): LoginRequestDTO => {
+  if (request.provider === "codex") {
+    throw new Error("Codex browser login requires the account-scoped host API");
+  }
   if (request.accountId !== "default")
     throw new Error("Generic browser login is restricted to the default account");
   return request;
@@ -113,6 +140,7 @@ export class BrowserLoginController {
 
   async #drainCancelledLogin(active: ActiveLogin): Promise<void> {
     active.cancelled = true;
+    active.validationAbortController.abort();
     await this.#closeWindow(active);
     await active.pendingPersistence?.catch(() => undefined);
   }
@@ -122,18 +150,19 @@ export class BrowserLoginController {
     session: BrowserLoginSession,
     removeCredential: boolean,
   ): Promise<void> {
-    const operations = [
+    const credentialKeys = browserCredentialKeys(request);
+    const [cleared, ...credentialRemovals] = await Promise.allSettled([
       session.clear(),
-      removeCredential
-        ? this.#host.removeCredential(browserCredentialKey(request))
-        : Promise.resolve(),
-    ] as const;
-    const [cleared, credentialRemoved] = await Promise.allSettled(operations);
+      ...(removeCredential ? credentialKeys.map((key) => this.#host.removeCredential(key)) : []),
+    ]);
     if (cleared.status === "rejected") throw cleared.reason;
-    if (credentialRemoved.status === "rejected") throw credentialRemoved.reason;
+    const failedRemoval = credentialRemovals.find((result) => result.status === "rejected");
+    if (failedRemoval?.status === "rejected") throw failedRemoval.reason;
     if (removeCredential) {
-      const remaining = await this.#host.readCredential(browserCredentialKey(request));
-      if (remaining !== undefined)
+      const remaining = await Promise.all(
+        credentialKeys.map((key) => this.#host.readCredential(key)),
+      );
+      if (remaining.some((value) => value !== undefined))
         throw new Error("Browser-session credential remained available after removal");
     }
   }
@@ -161,7 +190,10 @@ export class BrowserLoginController {
     void cleanup.catch(() => undefined);
   }
 
-  async start(request: LoginRequestDTO): Promise<LoginResultDTO> {
+  async start(
+    request: LoginRequestDTO,
+    validateCredential?: BrowserLoginCredentialValidator,
+  ): Promise<LoginResultDTO> {
     const descriptor = browserLoginDescriptor(request.provider);
     if (descriptor === undefined)
       throw new Error(`Interactive login is not declared for '${request.provider}'`);
@@ -193,12 +225,17 @@ export class BrowserLoginController {
         pendingPersistence: undefined,
         credentialDirty: false,
         cancelled: false,
+        validationAbortController: new AbortController(),
         close: () => {
           if (!windowClosed) {
             windowClosed = true;
             resolveClosed?.();
           }
-          if (!closingForFailure) finish("cancelled");
+          if (closingForFailure) return;
+          if (active.pendingPersistence !== undefined && !settled && !active.cancelled) {
+            this.#scheduleCancelCleanup(key, active);
+          }
+          finish("cancelled");
         },
         waitClosed: () => closed,
       };
@@ -243,11 +280,32 @@ export class BrowserLoginController {
             pendingCookieChange = false;
             const cookieHeaders = await exportedCookieHeaders(session, descriptor);
             if (Object.keys(cookieHeaders).length === 0) continue;
-            await this.#host.persistCredential(
-              browserCredentialKey(request),
-              browserCredentialPayload(request, cookieHeaders, this.#host.now()),
-            );
-            active.credentialDirty = true;
+            const candidate = {
+              key: browserCredentialKey(request),
+              value: browserCredentialPayload(request, cookieHeaders, this.#host.now()),
+              cookieHeaders,
+            } satisfies BrowserLoginCredentialCandidate;
+            const persistedByValidator =
+              validateCredential === undefined
+                ? false
+                : (await validateCredential(
+                    request,
+                    candidate,
+                    active.validationAbortController.signal,
+                  )) === "persisted";
+            if (validateCredential !== undefined && !persistedByValidator) {
+              throw new Error(
+                "Browser-session credential validation did not persist the candidate",
+              );
+            }
+            if (persistedByValidator) active.credentialDirty = true;
+            if (!isCurrent() || settled) return;
+            if (!persistedByValidator) {
+              // Fail closed if a keyring write reports an error after partially
+              // replacing an older credential.
+              active.credentialDirty = true;
+              await this.#host.persistCredential(candidate.key, candidate.value);
+            }
             if (!isCurrent() || settled) return;
             finish("connected");
             if (!window.isDestroyed()) window.close();
@@ -258,7 +316,7 @@ export class BrowserLoginController {
             await failAfterClosing(
               "Could not persist the authenticated browser session",
               cause,
-              true,
+              active.credentialDirty,
             );
           })
           .finally(() => {

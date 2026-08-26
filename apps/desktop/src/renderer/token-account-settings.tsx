@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { TokenAccountRosterDTO } from "@codexbar/contracts";
+import type { CodexBrowserSessionStatusDTO, TokenAccountRosterDTO } from "@codexbar/contracts";
 
 import {
   tokenAccountDetail,
@@ -19,6 +19,20 @@ export interface TokenAccountSettingsCopy {
   readonly cancel: string;
   readonly source: string;
   readonly manual: string;
+  readonly browserSession: string;
+  readonly connected: string;
+  readonly disconnected: string;
+  readonly unavailable: string;
+  readonly refreshSession: string;
+  readonly clearSession: string;
+}
+
+export interface CodexBrowserSessionControls {
+  readonly status: CodexBrowserSessionStatusDTO["status"] | undefined;
+  readonly pending: "start" | "cancel" | "logout" | undefined;
+  readonly onStart: () => void;
+  readonly onCancel: () => void;
+  readonly onLogout: () => void;
 }
 
 interface TokenAccountSettingsBaseProps {
@@ -32,6 +46,7 @@ interface TokenAccountSettingsBaseProps {
   readonly onSelect: (accountId: string) => void;
   readonly onRename: (accountId: string, label: string) => void;
   readonly onRemove: (accountId: string) => void;
+  readonly browserSession?: CodexBrowserSessionControls;
 }
 
 export type TokenAccountSettingsProps = TokenAccountSettingsBaseProps &
@@ -57,8 +72,14 @@ export function TokenAccountSettings(props: TokenAccountSettingsProps) {
     onSelect,
     onRename,
     onRemove,
+    browserSession,
   } = props;
-  const state = tokenAccountSelectionViewState(roster, loading, pending || loginPending, error);
+  const state = tokenAccountSelectionViewState(
+    roster,
+    loading,
+    pending || loginPending || browserSession?.pending !== undefined,
+    error,
+  );
   const statusId = "provider-token-account-status";
   const [draftLabel, setDraftLabel] = useState("");
   const activeLabel = state.active?.label.trim() ?? "";
@@ -139,6 +160,62 @@ export function TokenAccountSettings(props: TokenAccountSettingsProps) {
             {copy.remove}
           </button>
         </form>
+      )}
+      {state.active === undefined || browserSession === undefined ? null : (
+        <div className="settings-browser-session">
+          <div>
+            <strong>{copy.browserSession}</strong>
+            <span
+              className={`browser-session-state browser-session-state-${browserSession.status ?? "loading"}`}
+              role="status"
+            >
+              {browserSession.status === "persisted"
+                ? copy.connected
+                : browserSession.status === "absent"
+                  ? copy.disconnected
+                  : browserSession.status === "unavailable"
+                    ? copy.unavailable
+                    : copy.refreshing}
+            </span>
+          </div>
+          <div className="settings-token-account-actions">
+            {browserSession.pending === "start" ? (
+              <button
+                className="secondary"
+                aria-label={`${copy.cancel}: ${copy.browserSession}`}
+                type="button"
+                onClick={browserSession.onCancel}
+              >
+                {copy.cancel}
+              </button>
+            ) : browserSession.status === "persisted" ? null : (
+              <button
+                className="secondary"
+                aria-label={`${copy.refreshSession}: ${copy.browserSession}`}
+                disabled={
+                  state.disabled ||
+                  browserSession.status === undefined ||
+                  browserSession.status === "unavailable"
+                }
+                type="button"
+                onClick={browserSession.onStart}
+              >
+                {copy.refreshSession}
+              </button>
+            )}
+            {browserSession.status === "persisted" ? (
+              <button
+                className="secondary danger"
+                aria-label={`${copy.clearSession}: ${copy.browserSession}`}
+                disabled={state.disabled}
+                type="button"
+                onClick={browserSession.onLogout}
+              >
+                {copy.clearSession}
+              </button>
+            ) : null}
+          </div>
+        </div>
       )}
       {props.creation === "none" ? null : (
         <div className="settings-token-account-actions">

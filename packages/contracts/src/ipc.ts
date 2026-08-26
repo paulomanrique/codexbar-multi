@@ -231,7 +231,7 @@ export type SpendDashboardDTO = Schema.Schema.Type<typeof SpendDashboardDTO>;
 
 export const LoginRequestDTO = Schema.Struct({
   provider: ProviderId,
-  accountId: Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/))),
+  accountId: TokenAccountId,
 });
 export type LoginRequestDTO = Schema.Schema.Type<typeof LoginRequestDTO>;
 
@@ -241,6 +241,46 @@ export const LoginResultDTO = Schema.Struct({
   status: Schema.Literals(["connected", "cancelled"]),
 });
 export type LoginResultDTO = Schema.Schema.Type<typeof LoginResultDTO>;
+
+export const StartCodexBrowserSessionRequestDTO = Schema.Struct({
+  accountId: TokenAccountId,
+  expectedRevision: TokenAccountRevision,
+});
+export type StartCodexBrowserSessionRequestDTO = Schema.Schema.Type<
+  typeof StartCodexBrowserSessionRequestDTO
+>;
+export const CancelCodexBrowserSessionRequestDTO = Schema.Struct({
+  accountId: TokenAccountId,
+});
+export type CancelCodexBrowserSessionRequestDTO = Schema.Schema.Type<
+  typeof CancelCodexBrowserSessionRequestDTO
+>;
+export const LogoutCodexBrowserSessionRequestDTO = Schema.Struct({
+  accountId: TokenAccountId,
+  expectedRevision: TokenAccountRevision,
+});
+export type LogoutCodexBrowserSessionRequestDTO = Schema.Schema.Type<
+  typeof LogoutCodexBrowserSessionRequestDTO
+>;
+export const GetCodexBrowserSessionStatusesRequestDTO = Schema.Struct({
+  expectedRevision: TokenAccountRevision,
+});
+export type GetCodexBrowserSessionStatusesRequestDTO = Schema.Schema.Type<
+  typeof GetCodexBrowserSessionStatusesRequestDTO
+>;
+export const CodexBrowserSessionStatusDTO = Schema.Struct({
+  accountId: TokenAccountId,
+  status: Schema.Literals(["persisted", "absent", "unavailable"]),
+});
+export type CodexBrowserSessionStatusDTO = Schema.Schema.Type<typeof CodexBrowserSessionStatusDTO>;
+export const CodexBrowserSessionStatusesDTO = Schema.Struct({
+  provider: Schema.Literal("codex"),
+  revision: TokenAccountRevision,
+  statuses: Schema.Array(CodexBrowserSessionStatusDTO).pipe(Schema.check(Schema.isMaxLength(64))),
+});
+export type CodexBrowserSessionStatusesDTO = Schema.Schema.Type<
+  typeof CodexBrowserSessionStatusesDTO
+>;
 
 export const DefaultBrowserSessionStatusStateDTO = Schema.Literals([
   "persisted",

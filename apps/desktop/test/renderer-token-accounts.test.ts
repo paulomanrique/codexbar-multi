@@ -30,6 +30,14 @@ describe("renderer first-party token-account selection", () => {
     expect(source).toContain('localization.upstream("Add Account")');
     expect(source).toContain('localization.upstream("Could not add Codex account")');
     expect(source).toContain('creation === "codex-cli"');
+    expect(source).toContain(".getCodexBrowserSessionStatuses({");
+    expect(source).toContain(".startCodexBrowserSession({ accountId, expectedRevision:");
+    expect(source).toContain(".cancelCodexBrowserSession({ accountId })");
+    expect(source).toContain(".logoutCodexBrowserSession({ accountId, expectedRevision:");
+    expect(source).toContain("codexBrowserSessionStatusForRoster(");
+    expect(mainSource).toContain('sourceMode: "web"');
+    expect(mainSource).toContain('outcome.strategyId !== "codex.web.dashboard"');
+    expect(mainSource).toContain("decodeExactDesktopRecord(");
     expect(mainSource).toContain("PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID.get(");
     expect(mainSource).toContain("providerTokenAccountSettingsCapability(");
     expect(settingsSource).toContain("support?.runtimeSelectionAvailable === true");

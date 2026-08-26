@@ -92,7 +92,7 @@ const rosterRevision = (
   activeIndex: number,
 ): string => sha256Hex(JSON.stringify({ provider, accounts, activeIndex }));
 
-const projectRoster = (
+export const projectTokenAccountRoster = (
   provider: ProviderId,
   config: PersistedCodexBarConfig | undefined,
   selectionAvailable: boolean,
@@ -181,7 +181,7 @@ export const makeTokenAccountRosterService = (
     support: TokenAccountSupport,
   ): Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError> =>
     Effect.try({
-      try: () => projectRoster(provider, config, support.runtimeSelectionAvailable),
+      try: () => projectTokenAccountRoster(provider, config, support.runtimeSelectionAvailable),
       catch: (error) =>
         error instanceof TokenAccountRosterError
           ? error

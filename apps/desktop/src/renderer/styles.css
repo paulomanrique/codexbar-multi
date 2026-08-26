@@ -388,6 +388,36 @@ h2 {
   gap: 8px;
   margin-top: 8px;
 }
+.settings-browser-session {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid #293040;
+  border-radius: 8px;
+  background: #11141b;
+}
+.settings-browser-session > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-browser-session .settings-token-account-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+.browser-session-state {
+  color: #9ca3af;
+  font-size: 11px;
+}
+.browser-session-state-persisted {
+  color: #5eead4;
+}
+.browser-session-state-unavailable {
+  color: #fca5a5;
+}
 .settings-token-account select,
 .settings-token-account-rename input {
   border: 1px solid #293040;

@@ -59,6 +59,11 @@ import {
   RollbackLegacyImportRequestDTO,
   HostStatusDTO,
   DefaultBrowserSessionStatusesDTO,
+  StartCodexBrowserSessionRequestDTO,
+  CancelCodexBrowserSessionRequestDTO,
+  LogoutCodexBrowserSessionRequestDTO,
+  GetCodexBrowserSessionStatusesRequestDTO,
+  CodexBrowserSessionStatusesDTO,
 } from "@codexbar/contracts";
 import {
   makeCredentialBrowserSessions,
@@ -80,6 +85,12 @@ import {
   makeNodePrivateFileStore,
   makeNodeProcessRunner,
   readDefaultBrowserSessionStatuses,
+  readBrowserSessionStatus,
+  browserSessionCleanupIsPending,
+  commitCodexBrowserSessionCredential,
+  enqueueCodexBrowserSessionCleanup,
+  stageValidatedCodexBrowserSessionCredential,
+  stageCodexBrowserSessionLoginFence,
   inspectNodeLegacyImport,
   executeNodeLegacyImport,
   rollbackNodeLegacyImport,
@@ -109,6 +120,7 @@ import {
   SessionQuotaCoordinator,
   makeDefaultCodexBarConfig,
   makeTokenAccountRosterService,
+  projectTokenAccountRoster,
   refreshProviderAndPersist,
   type PersistedCodexBarConfig,
   type ProviderRuntimeService,
@@ -124,9 +136,12 @@ import * as Schema from "effect/Schema";
 import { DesktopChannels } from "../ipc/api.js";
 import {
   cancelBrowserLogin,
+  cancelAccountBrowserLogin,
+  cleanupBrowserSession,
   desktopBrowserSessionCleanupAdapter,
   logoutBrowserSession,
   startBrowserLogin,
+  startAccountBrowserLogin,
 } from "./browser-session.js";
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
@@ -163,6 +178,12 @@ import { activateWindow } from "./single-instance.js";
 import { createHostLifecycle } from "./host-lifecycle.js";
 import { refreshAndReportPersistence, refreshOverviewAndPublish } from "./overview-publication.js";
 import { DesktopCodexAccountLoginController } from "./codex-account-login.js";
+import { DesktopCodexBrowserSessionController } from "./codex-browser-session.js";
+import { decodeExactDesktopRecord } from "./ipc-validation.js";
+import {
+  browserCredentialKey,
+  type BrowserLoginCredentialCandidate,
+} from "./browser-session-controller.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -183,6 +204,7 @@ let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | un
 let legacyImport: DesktopLegacyImportController | undefined;
 let adaptiveRefresh: DesktopAdaptiveRefreshController | undefined;
 let codexAccountLogin: DesktopCodexAccountLoginController | undefined;
+let codexBrowserSession: DesktopCodexBrowserSessionController | undefined;
 let planUtilizationHistory: PlanUtilizationHistoryCoordinator | undefined;
 let claudeOAuthHistoryOwnerCapture: ClaudeOAuthHistoryOwnerCapture | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
@@ -789,6 +811,21 @@ void desktopReady?.then(async () => {
     const decodeDefaultBrowserSessionStatuses = Schema.decodeUnknownPromise(
       DefaultBrowserSessionStatusesDTO,
     );
+    const decodeStartCodexBrowserSession = Schema.decodeUnknownPromise(
+      StartCodexBrowserSessionRequestDTO,
+    );
+    const decodeCancelCodexBrowserSession = Schema.decodeUnknownPromise(
+      CancelCodexBrowserSessionRequestDTO,
+    );
+    const decodeLogoutCodexBrowserSession = Schema.decodeUnknownPromise(
+      LogoutCodexBrowserSessionRequestDTO,
+    );
+    const decodeGetCodexBrowserSessionStatuses = Schema.decodeUnknownPromise(
+      GetCodexBrowserSessionStatusesRequestDTO,
+    );
+    const decodeCodexBrowserSessionStatuses = Schema.decodeUnknownPromise(
+      CodexBrowserSessionStatusesDTO,
+    );
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
     const decodeListTokenAccounts = Schema.decodeUnknownPromise(ListTokenAccountsRequestDTO);
@@ -970,6 +1007,188 @@ void desktopReady?.then(async () => {
       config: configRepository,
       support: PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID,
     });
+    const validateAndPersistCodexBrowserCandidate = async (
+      accountId: string,
+      expectedRevision: string,
+      candidate: BrowserLoginCredentialCandidate,
+      signal: AbortSignal,
+    ): Promise<"persisted"> => {
+      if (
+        candidate.key !== browserCredentialKey({ provider: "codex", accountId }) ||
+        Object.keys(candidate.cookieHeaders).length !== 1 ||
+        candidate.cookieHeaders["chatgpt.com"] === undefined
+      ) {
+        throw new Error("Codex browser credential candidate is invalid.");
+      }
+      const capturedConfig = await Effect.runPromise(configRepository.load);
+      const capturedRoster = projectTokenAccountRoster("codex", capturedConfig, true);
+      if (
+        capturedRoster.revision !== expectedRevision ||
+        capturedRoster.accounts[capturedRoster.activeIndex]?.id !== accountId ||
+        browserSessionCleanupIsPending(capturedConfig, "codex", accountId)
+      ) {
+        throw new Error("Codex account selection changed before browser validation.");
+      }
+      const capturedAccount = await Effect.runPromise(
+        resolveSelectedFirstPartyAccountFromVault(capturedConfig, credentials, "codex"),
+      );
+      if (capturedAccount?.id !== accountId) {
+        throw new Error("Codex browser validation account is unavailable.");
+      }
+      const candidateRuntime = makeFirstPartyProviderRuntime({
+        runtime: "app",
+        providers: FIRST_PARTY_PROVIDERS,
+        settings: makeNodeDiscoveredProviderSettings(),
+        credentials,
+        browserSessions: {
+          cookieHeader: (providerId, domain, selectedAccountId) =>
+            providerId === "codex" && domain === "chatgpt.com" && selectedAccountId === accountId
+              ? Effect.succeed(candidate.cookieHeaders["chatgpt.com"] ?? "")
+              : Effect.fail(new Error("Browser credential candidate is outside its scope.")),
+        },
+        selectedAccounts: {
+          resolve: (providerId) =>
+            Effect.succeed(providerId === "codex" ? capturedAccount : undefined),
+        },
+        local: baseLocal,
+        http: makeFetchHttpTransport(),
+        clock: providerClock,
+      });
+      const outcome = await Effect.runPromise(
+        candidateRuntime.fetch("codex", { sourceMode: "web", includeCredits: true }),
+        { signal },
+      );
+      if (outcome.strategyId !== "codex.web.dashboard" || outcome.source !== "web") {
+        throw new Error("Codex browser session was not validated by the web strategy.");
+      }
+      if (signal.aborted) throw new Error("Codex browser validation was cancelled.");
+
+      try {
+        await desktopConfigMutations.run(async () => {
+          await Effect.runPromise(
+            stageValidatedCodexBrowserSessionCredential(
+              rawConfigRepository,
+              tokenAccountMigrationLock,
+              credentials,
+              accountId,
+              { key: candidate.key, value: candidate.value },
+              (current) =>
+                Effect.gen(function* () {
+                  if (signal.aborted) {
+                    return yield* Effect.fail(new Error("Login was cancelled."));
+                  }
+                  const roster = projectTokenAccountRoster("codex", current, true);
+                  if (
+                    roster.revision !== expectedRevision ||
+                    roster.accounts[roster.activeIndex]?.id !== accountId
+                  ) {
+                    return yield* Effect.fail(new Error("Codex account selection changed."));
+                  }
+                }),
+            ),
+          );
+          // Keep the process-local runtime fenced while the host controller
+          // performs its final roster/cancellation check and commits the marker.
+          desktopConfig = await Effect.runPromise(configRepository.load);
+        });
+      } catch (cause) {
+        desktopConfig = await Effect.runPromise(configRepository.load).catch(() => desktopConfig);
+        throw new Error("Could not commit the validated Codex browser session.", { cause });
+      }
+      return "persisted";
+    };
+    const activeCodexBrowserSession = new DesktopCodexBrowserSessionController({
+      listRoster: () => Effect.runPromise(tokenAccounts.list("codex")),
+      readStatus: (accountId) =>
+        readBrowserSessionStatus(credentials, "codex", accountId, "chatgpt.com"),
+      cleanupIsPending: async (accountId) =>
+        browserSessionCleanupIsPending(
+          await Effect.runPromise(rawConfigRepository.load),
+          "codex",
+          accountId,
+        ),
+      stageLoginFence: (accountId) =>
+        desktopConfigMutations.run(async () => {
+          await Effect.runPromise(
+            stageCodexBrowserSessionLoginFence(
+              rawConfigRepository,
+              tokenAccountMigrationLock,
+              credentials,
+              accountId,
+            ),
+          );
+          desktopConfig = await Effect.runPromise(configRepository.load);
+        }),
+      startBrowserSession: async (accountId, expectedRevision) =>
+        (
+          await startAccountBrowserLogin(
+            { provider: "codex", accountId },
+            (_request, candidate, signal) =>
+              validateAndPersistCodexBrowserCandidate(
+                accountId,
+                expectedRevision,
+                candidate,
+                signal,
+              ),
+          )
+        ).status,
+      commitBrowserSession: (accountId, expectedRevision) =>
+        desktopConfigMutations.run(async () => {
+          await Effect.runPromise(
+            commitCodexBrowserSessionCredential(
+              rawConfigRepository,
+              tokenAccountMigrationLock,
+              accountId,
+              (current) =>
+                Effect.gen(function* () {
+                  const roster = projectTokenAccountRoster("codex", current, true);
+                  if (
+                    roster.revision !== expectedRevision ||
+                    roster.accounts[roster.activeIndex]?.id !== accountId
+                  ) {
+                    return yield* Effect.fail(new Error("Codex account selection changed."));
+                  }
+                  const persisted = yield* credentials.read(
+                    browserCredentialKey({ provider: "codex", accountId }),
+                  );
+                  if (persisted === undefined) {
+                    return yield* Effect.fail(new Error("Codex browser credential is missing."));
+                  }
+                }),
+            ),
+          );
+          desktopConfig = await Effect.runPromise(configRepository.load);
+        }),
+      cancelBrowserSession: (accountId) =>
+        cancelAccountBrowserLogin({ provider: "codex", accountId }),
+      cleanupBrowserSession: (accountId) => cleanupBrowserSession({ provider: "codex", accountId }),
+      enqueueCleanup: (accountId) =>
+        desktopConfigMutations.run(async () => {
+          await Effect.runPromise(
+            enqueueCodexBrowserSessionCleanup(
+              rawConfigRepository,
+              tokenAccountMigrationLock,
+              accountId,
+            ),
+          );
+          desktopConfig = await Effect.runPromise(configRepository.load);
+        }),
+      drainCleanup: () =>
+        desktopConfigMutations.run(async () => {
+          try {
+            await Effect.runPromise(
+              drainPendingBrowserSessionCleanups(
+                rawConfigRepository,
+                tokenAccountMigrationLock,
+                desktopBrowserSessionCleanupAdapter,
+              ),
+            );
+          } finally {
+            desktopConfig = await Effect.runPromise(configRepository.load);
+          }
+        }),
+    });
+    codexBrowserSession = activeCodexBrowserSession;
     const codexLoginRoot = join(userDataPath, "codex-login");
     codexAccountLogin = new DesktopCodexAccountLoginController({
       cleanupStaleHomes: () => Effect.runPromise(cleanupStaleNodeCodexLoginHomes(codexLoginRoot)),
@@ -1009,6 +1228,54 @@ void desktopReady?.then(async () => {
       now: Date.now,
     });
     await codexAccountLogin.initialize();
+    ipcMain.handle(DesktopChannels.startCodexBrowserSession, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodeCodexBrowserSessionStatuses(
+          await activeCodexBrowserSession.start(
+            await decodeExactDesktopRecord(
+              input,
+              ["accountId", "expectedRevision"],
+              decodeStartCodexBrowserSession,
+            ),
+          ),
+        ),
+      ),
+    );
+    ipcMain.handle(DesktopChannels.cancelCodexBrowserSession, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodeCodexBrowserSessionStatuses(
+          await activeCodexBrowserSession.cancel(
+            await decodeExactDesktopRecord(input, ["accountId"], decodeCancelCodexBrowserSession),
+          ),
+        ),
+      ),
+    );
+    ipcMain.handle(DesktopChannels.logoutCodexBrowserSession, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodeCodexBrowserSessionStatuses(
+          await activeCodexBrowserSession.logout(
+            await decodeExactDesktopRecord(
+              input,
+              ["accountId", "expectedRevision"],
+              decodeLogoutCodexBrowserSession,
+            ),
+          ),
+        ),
+      ),
+    );
+    ipcMain.handle(DesktopChannels.getCodexBrowserSessionStatuses, (_event, input: unknown) =>
+      handleDesktopRequest(async () =>
+        decodeCodexBrowserSessionStatuses(
+          await activeCodexBrowserSession.statuses(
+            await decodeExactDesktopRecord(
+              input,
+              ["expectedRevision"],
+              decodeGetCodexBrowserSessionStatuses,
+            ),
+          ),
+        ),
+      ),
+    );
     ipcMain.handle(DesktopChannels.listTokenAccounts, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         const request = await decodeListTokenAccounts(input);
@@ -1312,6 +1579,8 @@ void desktopReady?.then(async () => {
     adaptiveRefresh = undefined;
     codexAccountLogin?.cancel();
     codexAccountLogin = undefined;
+    await codexBrowserSession?.cancelAll().catch(() => undefined);
+    codexBrowserSession = undefined;
     legacyImport?.cancel();
     legacyImport = undefined;
     spendPublisher?.cancel();
@@ -1340,16 +1609,22 @@ app.on("before-quit", (event) => {
   adaptiveRefresh = undefined;
   codexAccountLogin?.cancel();
   codexAccountLogin = undefined;
+  const browserSessionController = codexBrowserSession;
+  codexBrowserSession = undefined;
   legacyImport?.cancel();
   legacyImport = undefined;
   spendPublisher?.cancel();
   spendPublisher = undefined;
   pluginSandbox?.terminate();
   pluginSandbox = undefined;
-  if (persistence === undefined || storageClosing) return;
+  if ((persistence === undefined && browserSessionController === undefined) || storageClosing)
+    return;
   event.preventDefault();
   storageClosing = true;
-  void Effect.runPromise(persistence.close)
+  void Promise.resolve()
+    .then(() => browserSessionController?.cancelAll())
+    .catch((cause: unknown) => console.error("Could not close Codex browser sessions", cause))
+    .then(() => (persistence === undefined ? undefined : Effect.runPromise(persistence.close)))
     .catch((cause: unknown) => console.error("Could not close the usage database", cause))
     .finally(() => app.quit());
 });

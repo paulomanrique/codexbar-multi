@@ -7,7 +7,9 @@ import type { BrowserSessionCleanupAdapter } from "@codexbar/platform";
 import {
   BrowserLoginController,
   browserSessionPartition,
+  legacyBrowserSessionPartition,
   requireDefaultBrowserLoginRequest,
+  type BrowserLoginCredentialValidator,
   type BrowserLoginSession,
   type BrowserLoginWindow,
 } from "./browser-session-controller.js";
@@ -53,11 +55,20 @@ function hardenSession(session: Session): void {
   session.on("will-download", (event) => event.preventDefault());
 }
 
-const sessionFacade = (session: Session): BrowserLoginSession => ({
+const sessionFacade = (
+  session: Session,
+  cleanupSessions: readonly Session[] = [session],
+): BrowserLoginSession => ({
   cookiesFor: (domain) => session.cookies.get({ url: `https://${domain}/` }),
   onCookiesChanged: (listener) => session.cookies.on("changed", listener),
   offCookiesChanged: (listener) => session.cookies.off("changed", listener),
-  clear: () => session.clearStorageData(),
+  clear: async () => {
+    const results = await Promise.allSettled(
+      cleanupSessions.map((candidate) => candidate.clearStorageData()),
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  },
 });
 
 const windowFacade = (window: BrowserWindow): BrowserLoginWindow => ({
@@ -71,11 +82,18 @@ const windowFacade = (window: BrowserWindow): BrowserLoginWindow => ({
 
 const loginController = new BrowserLoginController({
   sessionFor: (request) => {
-    const session = electronSession.fromPartition(browserSessionPartition(request), {
+    const primary = electronSession.fromPartition(browserSessionPartition(request), {
       cache: true,
     });
-    hardenSession(session);
-    return sessionFacade(session);
+    const legacyPartition = legacyBrowserSessionPartition(request);
+    const cleanupSessions = [
+      primary,
+      ...(legacyPartition === undefined
+        ? []
+        : [electronSession.fromPartition(legacyPartition, { cache: true })]),
+    ];
+    for (const candidate of cleanupSessions) hardenSession(candidate);
+    return sessionFacade(primary, cleanupSessions);
   },
   createWindow: (request, descriptor, _session) => {
     const nativeSession = electronSession.fromPartition(browserSessionPartition(request), {
@@ -106,6 +124,16 @@ export const startBrowserLogin = (request: LoginRequestDTO): Promise<LoginResult
 
 export const cancelBrowserLogin = (request: LoginRequestDTO): void =>
   loginController.cancel(requireDefaultBrowserLoginRequest(request));
+
+/** Host-only account-scoped login used by provider-specific authorization flows. */
+export const startAccountBrowserLogin = (
+  request: LoginRequestDTO,
+  validateCredential: BrowserLoginCredentialValidator,
+): Promise<LoginResultDTO> => loginController.start(request, validateCredential);
+
+/** Host-only account-scoped cancellation; never exposed as generic renderer IPC. */
+export const cancelAccountBrowserLogin = (request: LoginRequestDTO): void =>
+  loginController.cancel(request);
 
 export const logoutBrowserSession = (request: LoginRequestDTO): Promise<void> =>
   browserLoginDescriptor(request.provider) === undefined

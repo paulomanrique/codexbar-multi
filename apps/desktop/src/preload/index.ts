@@ -46,6 +46,7 @@ import { makeHostStatusApi } from "./host-status-api.js";
 import { makeDefaultBrowserSessionStatusesApi } from "./default-browser-session-statuses-api.js";
 import { makeOverviewUpdatedApi } from "./overview-updated-api.js";
 import { makeTokenAccountsApi } from "./token-accounts-api.js";
+import { makeCodexBrowserSessionApi } from "./codex-browser-session-api.js";
 
 const decodeOverview = Schema.decodeUnknownPromise(DashboardSnapshotDTO);
 const decodeHistoryQuery = Schema.decodeUnknownPromise(HistoryQueryDTO);
@@ -120,6 +121,7 @@ const api: CodexBarDesktopApi = Object.freeze({
       ),
     ),
   ...makeTokenAccountsApi((channel, input) => ipcRenderer.invoke(channel, input)),
+  ...makeCodexBrowserSessionApi((channel, input) => ipcRenderer.invoke(channel, input)),
   ...makeClaudeSwapApi((channel, input) => ipcRenderer.invoke(channel, input)),
   ...makeProviderSettingsApi((channel, input) => ipcRenderer.invoke(channel, input)),
   ...makeDefaultBrowserSessionStatusesApi((channel, input) => ipcRenderer.invoke(channel, input)),

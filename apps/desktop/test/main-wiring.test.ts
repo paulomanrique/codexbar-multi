@@ -105,6 +105,26 @@ describe("main wiring for visible startup shell", () => {
     expect(source).not.toContain("OverviewUpdatedDTO");
   });
 
+  it("wires Codex browser-session IPC through exact DTOs and crash-safe publication", async () => {
+    const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
+    for (const [channel, keys] of [
+      ["startCodexBrowserSession", '["accountId", "expectedRevision"]'],
+      ["cancelCodexBrowserSession", '["accountId"]'],
+      ["logoutCodexBrowserSession", '["accountId", "expectedRevision"]'],
+      ["getCodexBrowserSessionStatuses", '["expectedRevision"]'],
+    ] as const) {
+      const start = source.indexOf(`DesktopChannels.${channel}`);
+      expect(start).toBeGreaterThan(-1);
+      expect(source.slice(start, start + 800)).toContain("decodeExactDesktopRecord");
+      expect(source.slice(start, start + 800)).toContain(keys);
+    }
+    expect(source).toContain("stageValidatedCodexBrowserSessionCredential(");
+    expect(source).toContain("commitCodexBrowserSessionCredential(");
+    expect(source).toContain('browserCredentialKey({ provider: "codex", accountId })');
+    expect(source).toContain("browserSessionController?.cancelAll()");
+    expect(source).toContain("browserSessionController?.cancelAll())");
+  });
+
   it("enforces startup lifecycle hardening from independent review", async () => {
     const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
 

@@ -43,6 +43,11 @@ import type {
   RollbackLegacyImportRequestDTO,
   HostStatusDTO,
   DefaultBrowserSessionStatusesDTO,
+  StartCodexBrowserSessionRequestDTO,
+  CancelCodexBrowserSessionRequestDTO,
+  LogoutCodexBrowserSessionRequestDTO,
+  GetCodexBrowserSessionStatusesRequestDTO,
+  CodexBrowserSessionStatusesDTO,
 } from "@codexbar/contracts";
 
 export const DesktopChannels = Object.freeze({
@@ -59,6 +64,10 @@ export const DesktopChannels = Object.freeze({
   cancelLogin: "codexbar-multi:cancel-login",
   logout: "codexbar-multi:logout",
   getDefaultBrowserSessionStatuses: "codexbar-multi:get-default-browser-session-statuses",
+  startCodexBrowserSession: "codexbar-multi:start-codex-browser-session",
+  cancelCodexBrowserSession: "codexbar-multi:cancel-codex-browser-session",
+  logoutCodexBrowserSession: "codexbar-multi:logout-codex-browser-session",
+  getCodexBrowserSessionStatuses: "codexbar-multi:get-codex-browser-session-statuses",
   refreshProvider: "codexbar-multi:refresh-provider",
   listTokenAccounts: "codexbar-multi:list-token-accounts",
   selectTokenAccount: "codexbar-multi:select-token-account",
@@ -99,6 +108,18 @@ export interface CodexBarDesktopApi {
   readonly cancelLogin: (request: LoginRequestDTO) => Promise<void>;
   readonly logout: (request: LoginRequestDTO) => Promise<void>;
   readonly getDefaultBrowserSessionStatuses: () => Promise<DefaultBrowserSessionStatusesDTO>;
+  readonly startCodexBrowserSession: (
+    request: StartCodexBrowserSessionRequestDTO,
+  ) => Promise<CodexBrowserSessionStatusesDTO>;
+  readonly cancelCodexBrowserSession: (
+    request: CancelCodexBrowserSessionRequestDTO,
+  ) => Promise<CodexBrowserSessionStatusesDTO>;
+  readonly logoutCodexBrowserSession: (
+    request: LogoutCodexBrowserSessionRequestDTO,
+  ) => Promise<CodexBrowserSessionStatusesDTO>;
+  readonly getCodexBrowserSessionStatuses: (
+    request: GetCodexBrowserSessionStatusesRequestDTO,
+  ) => Promise<CodexBrowserSessionStatusesDTO>;
   readonly refreshProvider: (
     request: RefreshProviderRequestDTO,
   ) => Promise<RefreshProviderResultDTO>;

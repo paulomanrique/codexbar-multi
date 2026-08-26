@@ -40,7 +40,10 @@ import type {
   FirstPartyLocalCapabilities,
   FirstPartySettings,
 } from "./first-party-runtime.ts";
-import { usesAccountScopedBrowserSession } from "./account-scoped-browser-session.ts";
+import {
+  browserSessionCredentialKeys,
+  usesAccountScopedBrowserSession,
+} from "./account-scoped-browser-session.ts";
 import {
   parseGrokAuthJson,
   parseGrokLocalSessionSignal,
@@ -1191,8 +1194,6 @@ export {
   type NodeClaudeOAuthHistoryOwnerOptions,
 } from "./node-claude-credential.ts";
 
-const browserSessionAccountIdPattern = /^[A-Za-z0-9_-]{1,64}$/u;
-
 const invalidStoredBrowserCredential = () =>
   new InfrastructureError("browser session", "Stored browser credential is invalid");
 
@@ -1241,10 +1242,25 @@ const parseStoredBrowserSessionCookieHeader = (
   if (typeof cookieHeader !== "string" || cookieHeader.trim() === "") {
     throw new Error("Stored browser credential is invalid");
   }
+  if (
+    [...cookieHeader].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    })
+  ) {
+    throw new Error("Stored browser credential is invalid");
+  }
   if (providerId === "claude" && normalizedDomain === "claude.ai")
     return parseSingleAllowlistedCookieHeader(cookieHeader, "sessionKey");
   return cookieHeader;
 };
+
+interface BrowserSessionStatusDescriptor {
+  readonly key: string;
+  readonly provider: ProviderId;
+  readonly accountId: string;
+  readonly domain: string;
+}
 
 const defaultBrowserSessionStatusDescriptors = [
   {
@@ -1265,11 +1281,11 @@ const defaultBrowserSessionStatusDescriptors = [
     accountId: "default",
     domain: "grok.com",
   },
-] as const;
+] as const satisfies readonly BrowserSessionStatusDescriptor[];
 
 const readDefaultBrowserSessionStatus = async (
   credentials: CredentialStoreService,
-  descriptor: (typeof defaultBrowserSessionStatusDescriptors)[number],
+  descriptor: BrowserSessionStatusDescriptor,
 ): Promise<DefaultBrowserSessionStatusStateDTO> => {
   try {
     const stored = await Effect.runPromise(credentials.read(descriptor.key));
@@ -1288,6 +1304,33 @@ const readDefaultBrowserSessionStatus = async (
   } catch {
     return "unavailable";
   }
+};
+
+/** Metadata-only status for one exact account-scoped browser credential. */
+export const readBrowserSessionStatus = async (
+  credentials: CredentialStoreService,
+  providerId: ProviderId,
+  accountId: string,
+  domain: string,
+): Promise<DefaultBrowserSessionStatusStateDTO> => {
+  const normalizedDomain = domain.trim().toLowerCase();
+  if (normalizedDomain === "" || normalizedDomain.includes("/")) return "unavailable";
+  for (const key of browserSessionCredentialKeys(providerId, accountId)) {
+    let stored: string | undefined;
+    try {
+      stored = await Effect.runPromise(credentials.read(key));
+    } catch {
+      return "unavailable";
+    }
+    if (stored === undefined) continue;
+    try {
+      parseStoredBrowserSessionCookieHeader(stored, providerId, accountId, normalizedDomain);
+      return "persisted";
+    } catch {
+      return "unavailable";
+    }
+  }
+  return "absent";
 };
 
 /** Host-only status projection for the three renderer-supported default browser sessions. */
@@ -1321,13 +1364,14 @@ export const makeCredentialBrowserSessions = (
       );
     }
     const accountId = selectedAccountId ?? accountIdFor(providerId);
-    if (!browserSessionAccountIdPattern.test(accountId)) {
-      return Effect.fail(
-        new InfrastructureError("browser session", "Browser session account is invalid"),
-      );
-    }
     const normalizedDomain = domain.trim().toLowerCase();
-    return credentials.read(`browser-session/${providerId}/${accountId}`).pipe(
+    return Effect.gen(function* () {
+      for (const key of browserSessionCredentialKeys(providerId, accountId)) {
+        const stored = yield* credentials.read(key);
+        if (stored !== undefined) return stored;
+      }
+      return undefined;
+    }).pipe(
       Effect.flatMap(
         (stored): Effect.Effect<string, InfrastructureError | MissingBrowserCredentialError> => {
           if (stored === undefined) {

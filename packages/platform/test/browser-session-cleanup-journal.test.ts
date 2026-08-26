@@ -3,17 +3,22 @@ import { Effect, Semaphore } from "effect";
 import {
   InfrastructureError,
   type ConfigRepositoryService,
+  type CredentialStoreService,
   type PersistedCodexBarConfig,
 } from "@codexbar/core";
 
 import {
   browserSessionCleanupIsPending,
+  commitCodexBrowserSessionCredential,
   drainPendingBrowserSessionCleanups,
   enqueueCodexBrowserSessionCleanup,
   pendingBrowserSessionCleanupTargets,
+  stageCodexBrowserSessionLoginFence,
+  stageValidatedCodexBrowserSessionCredential,
   type BrowserSessionCleanupAdapter,
 } from "../src/browser-session-cleanup-journal.ts";
 import type { TokenAccountMigrationLock } from "../src/token-account-vault-config.ts";
+import { legacyBrowserSessionCredentialKey } from "../src/account-scoped-browser-session.ts";
 
 const configWithCodexAccounts = (
   accountIds: readonly string[],
@@ -100,7 +105,149 @@ const adapter = (
   cleanup: BrowserSessionCleanupAdapter["cleanup"],
 ): BrowserSessionCleanupAdapter => ({ cleanup });
 
+const memoryCredentials = (
+  initial: Readonly<Record<string, string>> = {},
+  write:
+    | ((values: Map<string, string>, key: string, value: string) => void)
+    | undefined = undefined,
+): CredentialStoreService & { readonly values: Map<string, string> } => {
+  const values = new Map(Object.entries(initial));
+  return {
+    values,
+    read: (key) => Effect.sync(() => values.get(key)),
+    write: (key, value) =>
+      Effect.try({
+        try: () => (write === undefined ? values.set(key, value) : write(values, key, value)),
+        catch: (cause) => new InfrastructureError("write credential", "injected failure", cause),
+      }).pipe(Effect.asVoid),
+    remove: (key) => Effect.sync(() => void values.delete(key)),
+  };
+};
+
 describe("browser-session cleanup journal", () => {
+  it("keeps the publication fence until the account controller commits it", async () => {
+    const repository = memoryRepository(configWithCodexAccounts(["account-a"]));
+    const lock = memoryLock();
+    const credentials = memoryCredentials();
+    const publication = { key: "browser-session/codex/account-a", value: "candidate" };
+    let authorizations = 0;
+
+    await Effect.runPromise(
+      stageCodexBrowserSessionLoginFence(repository, lock, credentials, "account-a"),
+    );
+    await Effect.runPromise(
+      stageValidatedCodexBrowserSessionCredential(
+        repository,
+        lock,
+        credentials,
+        "account-a",
+        publication,
+        () => Effect.sync(() => void (authorizations += 1)),
+      ),
+    );
+
+    expect(credentials.values.get(publication.key)).toBe("candidate");
+    expect(authorizations).toBe(2);
+    expect(browserSessionCleanupIsPending(repository.current, "codex", "account-a")).toBe(true);
+
+    await Effect.runPromise(
+      commitCodexBrowserSessionCredential(repository, lock, "account-a", () => Effect.void),
+    );
+    expect(browserSessionCleanupIsPending(repository.current, "codex", "account-a")).toBe(false);
+    expect(credentials.values.get(publication.key)).toBe("candidate");
+  });
+
+  it("refuses to fence a reconnect over an existing credential", async () => {
+    const repository = memoryRepository(configWithCodexAccounts(["account-a"]));
+    const lock = memoryLock();
+    const key = "browser-session/codex/account-a";
+    const credentials = memoryCredentials({ [key]: "previous" });
+
+    await expect(
+      Effect.runPromise(
+        stageCodexBrowserSessionLoginFence(repository, lock, credentials, "account-a"),
+      ),
+    ).rejects.toMatchObject({ operation: "stage browser-session login" });
+
+    expect(credentials.values.get(key)).toBe("previous");
+    expect(browserSessionCleanupIsPending(repository.current, "codex", "account-a")).toBe(false);
+  });
+
+  it("also refuses to fence over a pre-opaque legacy credential", async () => {
+    const accountId = "legacy/account";
+    const repository = memoryRepository(configWithCodexAccounts([accountId]));
+    const lock = memoryLock();
+    const legacyKey = legacyBrowserSessionCredentialKey("codex", accountId);
+    if (legacyKey === undefined) throw new Error("expected legacy key");
+    const credentials = memoryCredentials({ [legacyKey]: "legacy-session" });
+
+    await expect(
+      Effect.runPromise(
+        stageCodexBrowserSessionLoginFence(repository, lock, credentials, accountId),
+      ),
+    ).rejects.toMatchObject({ operation: "stage browser-session login" });
+    expect(credentials.values.get(legacyKey)).toBe("legacy-session");
+    expect(browserSessionCleanupIsPending(repository.current, "codex", accountId)).toBe(false);
+  });
+
+  it("removes a partially written candidate when the keyring mutates then throws", async () => {
+    const repository = memoryRepository(configWithCodexAccounts(["account-a"]));
+    const lock = memoryLock();
+    const key = "browser-session/codex/account-a";
+    let writes = 0;
+    const credentials = memoryCredentials({}, (values, nextKey, value) => {
+      writes += 1;
+      values.set(nextKey, value);
+      if (writes === 1) throw new Error("keyring interrupted");
+    });
+
+    await Effect.runPromise(
+      stageCodexBrowserSessionLoginFence(repository, lock, credentials, "account-a"),
+    );
+    await expect(
+      Effect.runPromise(
+        stageValidatedCodexBrowserSessionCredential(
+          repository,
+          lock,
+          credentials,
+          "account-a",
+          { key, value: "candidate" },
+          () => Effect.void,
+        ),
+      ),
+    ).rejects.toMatchObject({ operation: "write credential" });
+    expect(credentials.values.get(key)).toBeUndefined();
+    expect(browserSessionCleanupIsPending(repository.current, "codex", "account-a")).toBe(false);
+  });
+
+  it("leaves the durable fence when rollback cannot prove credential ownership", async () => {
+    const repository = memoryRepository(configWithCodexAccounts(["account-a"]));
+    const lock = memoryLock();
+    const key = "browser-session/codex/account-a";
+    const credentials = memoryCredentials({}, (values, nextKey) => {
+      values.set(nextKey, "unknown-concurrent-value");
+      throw new Error("write result unknown");
+    });
+
+    await Effect.runPromise(
+      stageCodexBrowserSessionLoginFence(repository, lock, credentials, "account-a"),
+    );
+    await expect(
+      Effect.runPromise(
+        stageValidatedCodexBrowserSessionCredential(
+          repository,
+          lock,
+          credentials,
+          "account-a",
+          { key, value: "candidate" },
+          () => Effect.void,
+        ),
+      ),
+    ).rejects.toMatchObject({ operation: "rollback browser-session publication" });
+    expect(credentials.values.get(key)).toBe("unknown-concurrent-value");
+    expect(browserSessionCleanupIsPending(repository.current, "codex", "account-a")).toBe(true);
+  });
+
   it("enqueues only an existing Codex account", async () => {
     const repository = memoryRepository(
       configWithCodexAccounts(["codex-account"], { claudeAccountIds: ["claude-account"] }),

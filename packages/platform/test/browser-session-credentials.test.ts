@@ -2,8 +2,17 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { InfrastructureError, type CredentialStoreService } from "@codexbar/core";
 import type { ProviderId } from "@codexbar/contracts";
+import {
+  browserSessionCredentialKey,
+  browserSessionCredentialKeys,
+  legacyBrowserSessionCredentialKey,
+} from "../src/account-scoped-browser-session.ts";
 
-import { makeCredentialBrowserSessions, readDefaultBrowserSessionStatuses } from "../src/node.ts";
+import {
+  makeCredentialBrowserSessions,
+  readBrowserSessionStatus,
+  readDefaultBrowserSessionStatuses,
+} from "../src/node.ts";
 
 const storedBrowserSession = (
   provider: ProviderId,
@@ -68,6 +77,90 @@ describe("browser session credential domain isolation", () => {
 });
 
 describe("browser session credential account routing", () => {
+  it("projects exact selected Codex session status without exposing its credential", async () => {
+    const reads: string[] = [];
+    const credentials = store(
+      {
+        "browser-session/codex/account_selected-1": storedBrowserSession(
+          "codex",
+          "account_selected-1",
+          { "chatgpt.com": "__Secure-next-auth.session-token=selected-secret" },
+        ),
+      },
+      reads,
+    );
+    await expect(
+      readBrowserSessionStatus(credentials, "codex", "account_selected-1", "chatgpt.com"),
+    ).resolves.toBe("persisted");
+    await expect(
+      readBrowserSessionStatus(credentials, "codex", "missing", "chatgpt.com"),
+    ).resolves.toBe("absent");
+    await expect(
+      readBrowserSessionStatus(credentials, "codex", "../default", "chatgpt.com"),
+    ).resolves.toBe("absent");
+    expect(reads).toEqual([
+      "browser-session/codex/account_selected-1",
+      "browser-session/codex/missing",
+      ...browserSessionCredentialKeys("codex", "../default"),
+    ]);
+  });
+
+  it("routes legacy account IDs through an opaque bounded key", async () => {
+    const accountId = "legacy/account:日本語";
+    const key = browserSessionCredentialKey("codex", accountId);
+    const credentials = store({
+      [key]: storedBrowserSession("codex", accountId, {
+        "chatgpt.com": "__Secure-authjs.session-token=secret",
+      }),
+    });
+
+    expect(key).toMatch(/^browser-session\/codex\/opaque-[a-f0-9]{64}$/u);
+    expect(key).not.toContain(accountId);
+    await expect(
+      readBrowserSessionStatus(credentials, "codex", accountId, "chatgpt.com"),
+    ).resolves.toBe("persisted");
+    await expect(
+      Effect.runPromise(
+        makeCredentialBrowserSessions(credentials).cookieHeader("codex", "chatgpt.com", accountId),
+      ),
+    ).resolves.toBe("__Secure-authjs.session-token=secret");
+  });
+
+  it("reads a valid pre-opaque credential until cleanup migrates it away", async () => {
+    const accountId = "legacy/account";
+    const legacyKey = legacyBrowserSessionCredentialKey("codex", accountId);
+    if (legacyKey === undefined) throw new Error("expected legacy key");
+    const credentials = store({
+      [legacyKey]: storedBrowserSession("codex", accountId, {
+        "chatgpt.com": "__Secure-authjs.session-token=legacy-secret",
+      }),
+    });
+
+    await expect(
+      readBrowserSessionStatus(credentials, "codex", accountId, "chatgpt.com"),
+    ).resolves.toBe("persisted");
+    await expect(
+      Effect.runPromise(
+        makeCredentialBrowserSessions(credentials).cookieHeader("codex", "chatgpt.com", accountId),
+      ),
+    ).resolves.toBe("__Secure-authjs.session-token=legacy-secret");
+  });
+
+  it("rejects control characters in a selected browser cookie header", async () => {
+    const sessions = makeCredentialBrowserSessions(
+      store({
+        "browser-session/codex/account_selected": storedBrowserSession(
+          "codex",
+          "account_selected",
+          { "chatgpt.com": "session=valid\nInjected=value" },
+        ),
+      }),
+    );
+    await expect(
+      Effect.runPromise(sessions.cookieHeader("codex", "chatgpt.com", "account_selected")),
+    ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "browser session" });
+  });
+
   it("reads the selected Grok account key", async () => {
     const reads: string[] = [];
     const sessions = makeCredentialBrowserSessions(
@@ -199,7 +292,7 @@ describe("browser session credential account routing", () => {
     ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "browser session" });
   });
 
-  it("rejects an invalid selected account ID before reading the credential store", async () => {
+  it("maps a legacy selected account ID before reading the credential store", async () => {
     const reads: string[] = [];
     let defaultAccountCalls = 0;
     const sessions = makeCredentialBrowserSessions(store({}, reads), () => {
@@ -209,8 +302,8 @@ describe("browser session credential account routing", () => {
 
     await expect(
       Effect.runPromise(sessions.cookieHeader("grok", "grok.com", "../default")),
-    ).rejects.toMatchObject({ _tag: "InfrastructureError", operation: "browser session" });
-    expect(reads).toEqual([]);
+    ).rejects.toMatchObject({ _tag: "MissingBrowserCredentialError" });
+    expect(reads).toEqual(browserSessionCredentialKeys("grok", "../default"));
     expect(defaultAccountCalls).toBe(0);
   });
 

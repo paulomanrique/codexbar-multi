@@ -17,6 +17,7 @@ describe("isolated browser session policy", () => {
       "alibaba",
       "alibabatokenplan",
       "claude",
+      "codex",
       "commandcode",
       "cursor",
       "grok",
@@ -83,6 +84,53 @@ describe("isolated browser session policy", () => {
     expect(isAllowedBrowserLoginNavigation(grok, "https://twitter.com/i/oauth2/authorize")).toBe(
       false,
     );
+  });
+
+  it("keeps Codex browser login on ChatGPT with declared IdP navigation only", () => {
+    const codex = browserLoginDescriptor("codex");
+    if (codex === undefined) throw new Error("missing Codex descriptor");
+    expect(codex.startUrl).toBe("https://chatgpt.com/codex/settings/usage");
+    expect([...codex.allowedOrigins]).toEqual([
+      "https://chatgpt.com",
+      "https://auth.openai.com",
+      "https://accounts.google.com",
+      "https://appleid.apple.com",
+      "https://login.microsoftonline.com",
+    ]);
+    expect(codex.cookieDomains).toEqual(["chatgpt.com"]);
+    expect([...codex.cookieNames]).toEqual(["_account", "oai-did", "cf_clearance"]);
+    expect(codex.cookieNamePrefixes).toEqual([
+      "__Secure-next-auth.session-token",
+      "__Secure-authjs.session-token",
+      "authjs.session-token",
+      "next-auth.session-token",
+    ]);
+    expect([...codex.completionCookieNames]).toEqual(["_account"]);
+    expect(codex.completionCookieNamePrefixes).toEqual([
+      "__Secure-next-auth.session-token",
+      "__Secure-authjs.session-token",
+      "authjs.session-token",
+      "next-auth.session-token",
+    ]);
+    expect(isAllowedBrowserLoginNavigation(codex, "https://chatgpt.com/codex/settings/usage")).toBe(
+      true,
+    );
+    expect(isAllowedBrowserLoginNavigation(codex, "https://auth.openai.com/authorize")).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(codex, "https://accounts.google.com/o/oauth2")).toBe(
+      true,
+    );
+    expect(isAllowedBrowserLoginNavigation(codex, "https://appleid.apple.com/auth")).toBe(true);
+    expect(
+      isAllowedBrowserLoginNavigation(codex, "https://login.microsoftonline.com/common/oauth2"),
+    ).toBe(true);
+    expect(isAllowedBrowserLoginNavigation(codex, "https://chatgpt.com.evil.test")).toBe(false);
+    expect(isAllowedBrowserLoginNavigation(codex, "https://www.chatgpt.com")).toBe(false);
+    expect(isAllowedBrowserLoginNavigation(codex, "http://chatgpt.com/codex/settings/usage")).toBe(
+      false,
+    );
+    expect(
+      isAllowedBrowserLoginNavigation(codex, "https://login.microsoftonline.com.evil.test"),
+    ).toBe(false);
   });
 
   it("keeps Claude browser login on claude.ai with only sessionKey exported", () => {
@@ -165,6 +213,57 @@ describe("isolated browser session policy", () => {
     expect(exportableCookieHeader(grok, [{ name: "tracking", value: "private" }])).toBe(undefined);
   });
 
+  it("exports only Codex ChatGPT cookies and never accepts IdP cookies as completion", () => {
+    const codex = browserLoginDescriptor("codex");
+    if (codex === undefined) throw new Error("missing Codex descriptor");
+    expect(
+      exportableCookieHeader(codex, [
+        { name: "tracking", value: "must-not-leave-partition" },
+        { name: "_account", value: "acct" },
+        { name: "oai-did", value: "did" },
+        { name: "cf_clearance", value: "clearance" },
+        { name: "__Secure-next-auth.session-token", value: "next-secure" },
+        { name: "__Secure-next-auth.session-token.0", value: "next-secure-chunk" },
+        { name: "__Secure-authjs.session-token", value: "authjs-secure" },
+        { name: "authjs.session-token", value: "authjs" },
+        { name: "authjs.session-token.1", value: "authjs-chunk" },
+        { name: "next-auth.session-token", value: "next" },
+        { name: "__Host-GAPS", value: "google-idp-secret" },
+        { name: "ESTSAUTH", value: "microsoft-idp-secret" },
+      ]),
+    ).toBe(
+      "__Secure-authjs.session-token=authjs-secure; __Secure-next-auth.session-token=next-secure; __Secure-next-auth.session-token.0=next-secure-chunk; _account=acct; authjs.session-token=authjs; authjs.session-token.1=authjs-chunk; cf_clearance=clearance; next-auth.session-token=next; oai-did=did",
+    );
+    expect(
+      exportableCookieHeader(codex, [
+        { name: "__Host-GAPS", value: "google-idp-secret" },
+        { name: "ESTSAUTH", value: "microsoft-idp-secret" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("rejects Codex lookalike session-cookie prefixes", () => {
+    const codex = browserLoginDescriptor("codex");
+    if (codex === undefined) throw new Error("missing Codex descriptor");
+    expect(
+      exportableCookieHeader(codex, [
+        { name: "__Secure-next-auth.session-token-evil", value: "bad" },
+        { name: "__Secure-authjs.session-token.evil", value: "bad" },
+        { name: "authjs.session-token_backup", value: "bad" },
+        { name: "next-auth.session-token.evil", value: "bad" },
+      ]),
+    ).toBeUndefined();
+    expect(
+      exportableCookieHeader(codex, [
+        { name: "_account", value: "acct" },
+        { name: "__Secure-next-auth.session-token-evil", value: "bad" },
+        { name: "__Secure-authjs.session-token.evil", value: "bad" },
+        { name: "authjs.session-token_backup", value: "bad" },
+        { name: "next-auth.session-token.evil", value: "bad" },
+      ]),
+    ).toBe("_account=acct");
+  });
+
   it("supports only explicit rotated cookie families", () => {
     const mistral = browserLoginDescriptor("mistral");
     if (mistral === undefined) throw new Error("missing Mistral descriptor");
@@ -189,6 +288,18 @@ describe("isolated browser session policy", () => {
     ).toBeUndefined();
     expect(
       exportableCookieHeader(descriptor, [{ name: "__session", value: "x".repeat(4_097) }]),
+    ).toBeUndefined();
+    const commandCode = browserLoginDescriptor("commandcode");
+    if (commandCode === undefined) throw new Error("missing CommandCode descriptor");
+    expect(
+      exportableCookieHeader(commandCode, [
+        { name: "__Secure-commandcode_session; injected", value: "secret" },
+      ]),
+    ).toBeUndefined();
+    expect(
+      exportableCookieHeader(commandCode, [
+        { name: "__Secure-commandcode_session=injected", value: "secret" },
+      ]),
     ).toBeUndefined();
   });
 

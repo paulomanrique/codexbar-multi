@@ -80,7 +80,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Share the ambient/vault `auth.json` parser, require a durable access+refresh OAuth pair, keep refresh host-private, and re-resolve A→B selection without stale or ambient credentials.
     - [x] Port the pure Codex dashboard authority and an explicit-only selected-account web strategy with exact session-key routing, auth-backed email/account-ID proof, status-before-JSON classification, and no Auto/default-session fallback.
     - [x] Add a durable, account-scoped browser cleanup journal: Codex removal commits the fence before deleting its token, desktop recovery closes the login window, drains in-flight persistence, clears the Electron partition, removes/readback-verifies the exported credential, and only then acknowledges the marker; CLI removal preserves the work for the next desktop startup.
-    - [ ] Add roster-authorized Electron login/export for selected Codex browser sessions; then wire ambient/system-account targeting and the full known-owner roster before browser-profile import/HTML-scrape parity.
+    - [x] Add roster-authorized Electron login/export implementation for the selected Codex account with revision CAS, remote ownership validation, durable fail-closed cleanup, metadata-only status IPC, and React start/cancel/clear controls.
+    - [ ] Complete a native Windows smoke of the selected Codex Electron session: connect, validate through `codex.web.dashboard`, restart with persisted metadata, clear, and verify absent metadata without secrets in logs.
+    - [ ] Wire ambient/system-account web targeting and the full known-owner roster before browser-profile import/HTML-scrape parity.
     - [x] Expose metadata-only Codex account selection in React with host revisions, optimistic rollback, and no renderer credential surface.
     - [x] Add metadata-only Codex account rename with trimmed labels, revision CAS, duplicate-label parity, and no credential mutation.
     - [x] Add Codex account removal with Swift active-row semantics, revision CAS, typed config tombstones, keyring readback verification, and crash recovery.

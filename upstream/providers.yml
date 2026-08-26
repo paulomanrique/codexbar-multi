@@ -27,14 +27,23 @@ providers:
         - packages/platform/test/first-party-runtime-codex-account.test.ts
         - packages/platform/test/first-party-selected-account.test.ts
         - packages/platform/test/browser-session-credentials.test.ts
+        - packages/platform/test/browser-session-cleanup-journal.test.ts
         - packages/platform/test/node-codex-home.test.ts
         - packages/platform/test/node-codex-login.test.ts
         - apps/desktop/test/codex-account-login.test.ts
+        - apps/desktop/test/codex-browser-session.test.ts
+        - apps/desktop/test/browser-session-controller.test.ts
+        - apps/desktop/test/browser-session-policy.test.ts
         - apps/desktop/test/ipc-contract.test.ts
+        - apps/desktop/test/ipc-validation.test.ts
+        - apps/desktop/test/main-wiring.test.ts
+        - apps/desktop/test/preload-codex-browser-session.test.ts
         - apps/desktop/test/preload-token-accounts.test.ts
         - apps/desktop/test/renderer-token-accounts.test.ts
+        - apps/desktop/test/renderer-view-model.test.ts
         - apps/desktop/test/settings-view-model.test.ts
         - apps/desktop/test/token-account-removal.test.ts
+        - apps/desktop/test/token-account-settings.test.tsx
         - packages/core/test/token-accounts.test.ts
         - packages/core/test/config.test.ts
         - packages/platform/test/token-account-vault-config.test.ts
@@ -54,14 +63,28 @@ providers:
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/node-codex-login.ts
         - packages/platform/src/token-account-vault-config.ts
+        - packages/platform/src/browser-session-cleanup-journal.ts
+        - packages/platform/src/node.ts
         - packages/core/src/token-accounts.ts
         - packages/core/src/config.ts
         - packages/contracts/src/config.ts
+        - packages/contracts/src/ipc.ts
+        - apps/desktop/src/main/index.ts
+        - apps/desktop/src/main/browser-session-controller.ts
         - apps/desktop/src/preload/token-accounts-api.ts
+        - apps/desktop/src/preload/codex-browser-session-api.ts
+        - apps/desktop/src/preload/index.ts
         - apps/desktop/src/main/codex-account-login.ts
+        - apps/desktop/src/main/codex-browser-session.ts
+        - apps/desktop/src/main/browser-session-policy.ts
+        - apps/desktop/src/main/browser-session.ts
+        - apps/desktop/src/main/ipc-validation.ts
         - apps/desktop/src/ipc/api.ts
         - apps/desktop/src/main/token-account-removal.ts
         - apps/desktop/src/renderer/index.tsx
+        - apps/desktop/src/renderer/token-account-settings.tsx
+        - apps/desktop/src/renderer/view-model.ts
+        - apps/desktop/src/renderer/styles.css
         - apps/desktop/src/renderer/settings-view-model.ts
       real:
         - packages/providers/src/providers/codex.ts
@@ -74,14 +97,28 @@ providers:
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/node-codex-login.ts
         - packages/platform/src/token-account-vault-config.ts
+        - packages/platform/src/browser-session-cleanup-journal.ts
+        - packages/platform/src/node.ts
         - packages/core/src/token-accounts.ts
         - packages/core/src/config.ts
         - packages/contracts/src/config.ts
+        - packages/contracts/src/ipc.ts
+        - apps/desktop/src/main/index.ts
+        - apps/desktop/src/main/browser-session-controller.ts
         - apps/desktop/src/preload/token-accounts-api.ts
+        - apps/desktop/src/preload/codex-browser-session-api.ts
+        - apps/desktop/src/preload/index.ts
         - apps/desktop/src/main/codex-account-login.ts
+        - apps/desktop/src/main/codex-browser-session.ts
+        - apps/desktop/src/main/browser-session-policy.ts
+        - apps/desktop/src/main/browser-session.ts
+        - apps/desktop/src/main/ipc-validation.ts
         - apps/desktop/src/ipc/api.ts
         - apps/desktop/src/main/token-account-removal.ts
         - apps/desktop/src/renderer/index.tsx
+        - apps/desktop/src/renderer/token-account-settings.tsx
+        - apps/desktop/src/renderer/view-model.ts
+        - apps/desktop/src/renderer/styles.css
         - apps/desktop/src/renderer/settings-view-model.ts
     tsTestGlobs:
       - packages/providers/test/codex.test.ts
@@ -91,14 +128,23 @@ providers:
       - packages/platform/test/first-party-runtime-codex-account.test.ts
       - packages/platform/test/first-party-selected-account.test.ts
       - packages/platform/test/browser-session-credentials.test.ts
+      - packages/platform/test/browser-session-cleanup-journal.test.ts
       - packages/platform/test/node-codex-home.test.ts
       - packages/platform/test/node-codex-login.test.ts
       - apps/desktop/test/codex-account-login.test.ts
+      - apps/desktop/test/codex-browser-session.test.ts
+      - apps/desktop/test/browser-session-controller.test.ts
+      - apps/desktop/test/browser-session-policy.test.ts
       - apps/desktop/test/ipc-contract.test.ts
+      - apps/desktop/test/ipc-validation.test.ts
+      - apps/desktop/test/main-wiring.test.ts
+      - apps/desktop/test/preload-codex-browser-session.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
+      - apps/desktop/test/renderer-view-model.test.ts
       - apps/desktop/test/settings-view-model.test.ts
       - apps/desktop/test/token-account-removal.test.ts
+      - apps/desktop/test/token-account-settings.test.tsx
       - packages/core/test/token-accounts.test.ts
       - packages/core/test/config.test.ts
       - packages/platform/test/token-account-vault-config.test.ts

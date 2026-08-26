@@ -88,6 +88,31 @@ const LOGIN_DESCRIPTORS: Readonly<Partial<Record<ProviderId, BrowserLoginDescrip
     cookieNames: ["sso", "sso-rw"],
     completionCookieNames: ["sso", "sso-rw"],
   }),
+  codex: descriptor({
+    startUrl: "https://chatgpt.com/codex/settings/usage",
+    allowedOrigins: [
+      "https://chatgpt.com",
+      "https://auth.openai.com",
+      "https://accounts.google.com",
+      "https://appleid.apple.com",
+      "https://login.microsoftonline.com",
+    ],
+    cookieDomains: ["chatgpt.com"],
+    cookieNames: ["_account", "oai-did", "cf_clearance"],
+    cookieNamePrefixes: [
+      "__Secure-next-auth.session-token",
+      "__Secure-authjs.session-token",
+      "authjs.session-token",
+      "next-auth.session-token",
+    ],
+    completionCookieNames: ["_account"],
+    completionCookieNamePrefixes: [
+      "__Secure-next-auth.session-token",
+      "__Secure-authjs.session-token",
+      "authjs.session-token",
+      "next-auth.session-token",
+    ],
+  }),
   opencode: descriptor({
     startUrl: "https://opencode.ai",
     allowedOrigins: ["https://opencode.ai"],
@@ -221,8 +246,26 @@ export function isAllowedBrowserLoginNavigation(
   }
 }
 
+const CODEX_SEGMENTED_SESSION_COOKIE_PREFIXES = new Set([
+  "__Secure-next-auth.session-token",
+  "__Secure-authjs.session-token",
+  "authjs.session-token",
+  "next-auth.session-token",
+]);
+
+const matchesSegmentedCodexSessionCookieName = (name: string, prefix: string): boolean => {
+  if (name === prefix) return true;
+  const suffix = name.slice(prefix.length);
+  return /^\.[0-9]+$/u.test(suffix);
+};
+
+const matchesPrefixCookieName = (name: string, prefix: string): boolean =>
+  CODEX_SEGMENTED_SESSION_COOKIE_PREFIXES.has(prefix)
+    ? matchesSegmentedCodexSessionCookieName(name, prefix)
+    : name.startsWith(prefix);
+
 const matchesName = (name: string, exactNames: ReadonlySet<string>, prefixes: readonly string[]) =>
-  exactNames.has(name) || prefixes.some((prefix) => name.startsWith(prefix));
+  exactNames.has(name) || prefixes.some((prefix) => matchesPrefixCookieName(name, prefix));
 
 const containsCookieDelimiterOrControl = (value: string): boolean =>
   [...value].some((character) => {
@@ -244,6 +287,8 @@ export function exportableCookieHeader(
     if (
       cookie.value.length === 0 ||
       cookie.value.length > 4_096 ||
+      cookie.name.includes("=") ||
+      containsCookieDelimiterOrControl(cookie.name) ||
       containsCookieDelimiterOrControl(cookie.value) ||
       !matchesName(cookie.name, descriptor.cookieNames, descriptor.cookieNamePrefixes)
     )
@@ -251,7 +296,9 @@ export function exportableCookieHeader(
     selected.set(cookie.name, cookie.value);
     hasCompletionCookie ||=
       descriptor.completionCookieNames.has(cookie.name) ||
-      descriptor.completionCookieNamePrefixes.some((prefix) => cookie.name.startsWith(prefix));
+      descriptor.completionCookieNamePrefixes.some((prefix) =>
+        matchesPrefixCookieName(cookie.name, prefix),
+      );
   }
   if (!hasCompletionCookie) return undefined;
   const header = [...selected.entries()]

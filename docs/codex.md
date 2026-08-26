@@ -12,22 +12,44 @@ read_when:
 Codex has three automatic usage data paths (OAuth API, web dashboard, CLI RPC) plus a manual CLI PTY diagnostic parser and a local cost-usage scanner.
 The OAuth API is the default app source when credentials are available; web access is optional for dashboard extras.
 
+## CodexBar Multi implementation state
+
+The TypeScript port keeps the Swift implementation below as its behavioral oracle, but its current desktop web path is Electron-based and account-scoped:
+
+- Only the selected host-issued Codex account can start a browser login. The renderer supplies its opaque account ID plus a SHA-256 roster revision; it never receives tokens, cookies, partitions, keyring keys, or generic IPC.
+- The isolated partition starts at `https://chatgpt.com/codex/settings/usage`. Navigation is restricted to exact ChatGPT/OpenAI and declared Google, Apple, and Microsoft identity-provider origins; only `chatgpt.com` is exportable.
+- Export accepts `_account`, `oai-did`, `cf_clearance`, and the exact or numerically segmented Auth.js/NextAuth session-token families. Cookie names and values containing header delimiters or control characters are discarded.
+- Before opening the window, main records a durable, non-secret cleanup fence for the selected account. The allowlisted cookie candidate stays in memory while `codex.web.dashboard` proves the signed-in email and `wham/usage` account ID against the selected vault account.
+- Only after remote proof may main write `browser-session/codex/<storageAccountId>` to the native credential store. Write, readback, rollback, roster CAS, and final fence commit share the cross-process token-account mutation lock. Legacy or Unicode logical IDs use a deterministic opaque storage component instead of entering a partition or credential key.
+- Cancel, window close, provider/account switch, shutdown, ownership drift, and startup recovery drain the journal by destroying the exact partition and removing/readback-verifying the exact credential. Until final commit, the normal Codex runtime treats the account's web strategy as unavailable.
+- Status IPC exposes only `persisted`, `absent`, or `unavailable`. The CLI may consume the encrypted exported credential but never depends on Electron or Swift at runtime.
+
+A native Windows smoke of connect → validated snapshot → restart → clear remains pending. Browser-profile import, ambient/system-account web targeting, complete known-owner injection, and HTML scrape parity are separate unfinished slices.
+
+## Swift oracle behavior (migration reference)
+
+The remaining sections describe upstream Swift behavior and fixtures. They remain intentionally intact for semantic tracking until each corresponding TypeScript parity gate is accepted.
+
 ## Data sources + fallback order
 
 ### App default selection (debug menu disabled)
-1) OAuth API (auth.json credentials).
-2) CLI RPC through `codex app-server`.
-3) If OpenAI web extras are enabled and a matching OpenAI web session is available (Automatic or Manual cookies),
+
+1. OAuth API (auth.json credentials).
+2. CLI RPC through `codex app-server`.
+3. If OpenAI web extras are enabled and a matching OpenAI web session is available (Automatic or Manual cookies),
    dashboard extras load as a separate follow-up refresh and the source label becomes `primary + openai-web`.
 
 Usage source picker:
+
 - Preferences → Providers → Codex → Usage source (Auto/OAuth/CLI).
 
 ### CLI default selection (`--source auto`)
-1) OpenAI web dashboard (when available).
-2) Codex CLI RPC through `codex app-server`.
+
+1. OpenAI web dashboard (when available).
+2. Codex CLI RPC through `codex app-server`.
 
 ### OAuth API (preferred for the app)
+
 - Reads OAuth tokens from `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`).
 - CodexBar never publishes refreshed native tokens into `auth.json`; when native credentials are stale,
   the explicit OAuth path delegates recovery to the Codex CLI, which owns that file. If the CLI is unavailable,
@@ -46,6 +68,7 @@ Usage source picker:
   preview. It does not change fetching, history, notifications, widgets, credits, or other extra limits.
 
 ### Optional external OAuth sources (off by default)
+
 - **External Codex OAuth sources** is a provider setting that must be enabled explicitly before CodexBar reads
   another application's OAuth file. It is off by default because this is a cross-application credential boundary.
 - Without an explicit `$CODEX_HOME`, native Codex auth wins first, followed by legacy `~/.config/codex/auth.json`,
@@ -59,6 +82,7 @@ Usage source picker:
   source `auth.json` or publishes an `account_id` change back to another application's credential file.
 
 ### Advanced profile-home accounts
+
 - Managed Codex accounts remain the default multi-account path.
 - Advanced users can add existing Codex homes to `~/.codexbar/config.json` with
   `providers[].codexProfileHomePaths`.
@@ -72,14 +96,12 @@ Example:
 ```json
 {
   "id": "codex",
-  "codexProfileHomePaths": [
-    "~/.codex-work",
-    "~/.codex-personal"
-  ]
+  "codexProfileHomePaths": ["~/.codex-work", "~/.codex-personal"]
 }
 ```
 
 ### OpenAI web dashboard (optional, off by default)
+
 - Enable it in Preferences -> Providers -> Codex -> OpenAI web extras.
 - It exists for dashboard-only extras such as code review remaining, usage breakdown, and credits history.
 - It is intentionally opt-in because it loads `chatgpt.com` in a hidden WebView and can materially increase battery or network usage.
@@ -91,9 +113,9 @@ Example:
   - Store key: deterministic UUID from the normalized email.
 - WebKit store can hold multiple accounts concurrently.
 - Cookie import (Automatic mode, when WebKit store has no matching session or login required):
-  1) Safari: `~/Library/Cookies/Cookies.binarycookies`
-  2) Chrome/Chromium forks: `~/Library/Application Support/Google/Chrome/*/Cookies`
-  3) Firefox: `~/Library/Application Support/Firefox/Profiles/*/cookies.sqlite`
+  1. Safari: `~/Library/Cookies/Cookies.binarycookies`
+  2. Chrome/Chromium forks: `~/Library/Application Support/Google/Chrome/*/Cookies`
+  3. Firefox: `~/Library/Application Support/Firefox/Profiles/*/cookies.sqlite`
   - Domains loaded: `chatgpt.com`, `openai.com`.
   - No cookie-name filter; we import all matching domain cookies.
 - Cached cookies: Keychain cache `com.steipete.codexbar.cache` (account `cookie.codex`, source + timestamp).
@@ -115,6 +137,7 @@ Example:
   - Login required or Cloudflare interstitial.
 
 ### Codex CLI RPC (automatic CLI source)
+
 - Launches local RPC server: `codex -s read-only -a untrusted app-server`.
 - JSON-RPC over stdin/stdout:
   - `initialize` (client name/version)
@@ -138,6 +161,7 @@ Example:
   `npm install -g --include=optional @openai/codex@latest` before retrying Add Account.
 
 ### Codex CLI PTY diagnostics (`/status`)
+
 - Manual/debug parser only; automatic background refresh and `CodexBarCLI usage --source cli` do not launch bare Codex TUI.
 - Kept for explicit diagnostics/parser coverage because bare `codex` TUI can start interactive auth and open browser tabs.
 - Parses rendered `/status` output:
@@ -147,17 +171,20 @@ Example:
 - Detects update prompts and surfaces a "CLI update needed" error.
 
 ## Account identity resolution (for web matching)
-1) Latest Codex usage snapshot (from RPC, if available).
-2) `~/.codex/auth.json` (JWT claims: email + plan).
-3) OpenAI dashboard signed-in email (cached).
-4) Last imported browser cookie email (cached).
+
+1. Latest Codex usage snapshot (from RPC, if available).
+2. `~/.codex/auth.json` (JWT claims: email + plan).
+3. OpenAI dashboard signed-in email (cached).
+4. Last imported browser cookie email (cached).
 
 ## Credits
+
 - Web dashboard fills credits only when OAuth/CLI do not provide them.
 - CLI RPC: `account/rateLimits/read` → credits balance.
 - CLI PTY diagnostics can still parse `Credits:` from saved/manual `/status` output.
 
 ## Cost usage (local log scan)
+
 - Menu source selection:
   - By default, a selected managed account keeps its own `CODEX_HOME` session history.
   - **Local session cost estimates** is a Codex-only opt-in that instead scans this Mac's ambient `$CODEX_HOME`
@@ -197,6 +224,7 @@ by one Codex account. The normal Codex cost menu and CLI scan continue to includ
 dashboard labels its values as local estimates and keeps currencies separate.
 
 ## Key files
+
 - Web: `Sources/CodexBarCore/OpenAIWeb/*`
 - CLI RPC + diagnostic PTY parser: `Sources/CodexBarCore/UsageFetcher.swift`,
   `Sources/CodexBarCore/Providers/Codex/CodexStatusProbe.swift`

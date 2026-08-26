@@ -20,6 +20,12 @@ const copy: TokenAccountSettingsCopy = {
   cancel: "Cancel",
   source: "Source",
   manual: "Manual",
+  browserSession: "Browser cookies",
+  connected: "Connected",
+  disconnected: "Disconnected",
+  unavailable: "Unavailable",
+  refreshSession: "Refresh Session",
+  clearSession: "Clear",
 };
 
 const roster: TokenAccountRosterDTO = {
@@ -93,5 +99,64 @@ describe("token account settings component", () => {
     expect(markup).toMatch(/<select[^>]*disabled=""/u);
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Apply<\/button>/u);
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Remove<\/button>/u);
+  });
+
+  it("renders only metadata for the active Codex browser session", () => {
+    const markup = renderToStaticMarkup(
+      <TokenAccountSettings
+        {...baseProps}
+        roster={{ ...roster, provider: "codex" }}
+        browserSession={{
+          status: "persisted",
+          pending: undefined,
+          onStart: () => undefined,
+          onCancel: () => undefined,
+          onLogout: () => undefined,
+        }}
+        creation="none"
+      />,
+    );
+
+    expect(markup).toContain("Browser cookies");
+    expect(markup).toContain("Connected");
+    expect(markup).not.toContain("Refresh Session");
+    expect(markup).toContain("Clear");
+    expect(markup).not.toMatch(/cookieHeader|credential|partition|secret/u);
+  });
+
+  it("offers cancellation while connecting and fails closed when status is unavailable", () => {
+    const connecting = renderToStaticMarkup(
+      <TokenAccountSettings
+        {...baseProps}
+        roster={{ ...roster, provider: "codex" }}
+        browserSession={{
+          status: "absent",
+          pending: "start",
+          onStart: () => undefined,
+          onCancel: () => undefined,
+          onLogout: () => undefined,
+        }}
+        creation="none"
+      />,
+    );
+    expect(connecting).toContain(">Cancel<");
+    expect(connecting).not.toContain("Refresh Session");
+
+    const unavailable = renderToStaticMarkup(
+      <TokenAccountSettings
+        {...baseProps}
+        roster={{ ...roster, provider: "codex" }}
+        browserSession={{
+          status: "unavailable",
+          pending: undefined,
+          onStart: () => undefined,
+          onCancel: () => undefined,
+          onLogout: () => undefined,
+        }}
+        creation="none"
+      />,
+    );
+    expect(unavailable).toContain("Unavailable");
+    expect(unavailable).toMatch(/<button[^>]*disabled=""[^>]*>Refresh Session<\/button>/u);
   });
 });

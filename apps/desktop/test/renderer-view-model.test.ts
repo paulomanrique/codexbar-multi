@@ -14,9 +14,11 @@ import {
   historySince,
   implementationPresentation,
   shouldAutoCancelCodexAccountLogin,
+  shouldAutoCancelCodexBrowserSession,
   shouldPublishCodexAccountLoginFailure,
   claudeSwapActivationRequest,
   safeDateFromTimestamp,
+  codexBrowserSessionStatusForRoster,
 } from "../src/renderer/view-model.ts";
 
 const deferred = <Value>(): {
@@ -47,6 +49,14 @@ describe("desktop renderer view model", () => {
     expect(shouldAutoCancelCodexAccountLogin(true, "openai", true)).toBe(false);
   });
 
+  it("cancels a Codex browser login when either provider or active account changes", () => {
+    expect(shouldAutoCancelCodexBrowserSession("start", "codex", "a", "a")).toBe(false);
+    expect(shouldAutoCancelCodexBrowserSession("start", "codex", "b", "a")).toBe(true);
+    expect(shouldAutoCancelCodexBrowserSession("start", "openai", "a", "a")).toBe(true);
+    expect(shouldAutoCancelCodexBrowserSession("cancel", "openai", "a", "a")).toBe(false);
+    expect(shouldAutoCancelCodexBrowserSession(undefined, "codex", "a", "a")).toBe(false);
+  });
+
   it("reconciles every successful Codex login without publishing a stale roster", () => {
     expect(codexAccountLoginSuccessDisposition(4, 4, "codex")).toEqual({
       publishRoster: true,
@@ -67,6 +77,40 @@ describe("desktop renderer view model", () => {
     expect(shouldPublishCodexAccountLoginFailure(4, 5, "codex", false)).toBe(false);
     expect(shouldPublishCodexAccountLoginFailure(4, 4, "openai", false)).toBe(false);
     expect(shouldPublishCodexAccountLoginFailure(4, 4, "codex", true)).toBe(false);
+  });
+
+  it("accepts Codex browser metadata only for the exact active roster revision", () => {
+    const roster = {
+      provider: "codex" as const,
+      accounts: [
+        { id: "account-a", label: "A", addedAt: 1 },
+        { id: "account-b", label: "B", addedAt: 2 },
+      ],
+      activeIndex: 1,
+      selectionAvailable: true,
+      revision: "a".repeat(64),
+    };
+    const result = {
+      provider: "codex" as const,
+      revision: "a".repeat(64),
+      statuses: [
+        { accountId: "account-a", status: "absent" as const },
+        { accountId: "account-b", status: "persisted" as const },
+      ],
+    };
+    expect(codexBrowserSessionStatusForRoster(result, roster)).toBe("persisted");
+    expect(
+      codexBrowserSessionStatusForRoster({ ...result, revision: "b".repeat(64) }, roster),
+    ).toBeUndefined();
+    expect(
+      codexBrowserSessionStatusForRoster(result, { ...roster, provider: "openai" }),
+    ).toBeUndefined();
+    expect(
+      codexBrowserSessionStatusForRoster(
+        { ...result, statuses: [{ accountId: "account-a", status: "persisted" }] },
+        roster,
+      ),
+    ).toBeUndefined();
   });
 
   it("forwards only an eligible opaque Claude account ID", () => {

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { LoginRequestDTO } from "@codexbar/contracts";
+import { browserSessionStorageAccountId } from "@codexbar/platform";
 import {
   BrowserLoginController,
   browserCredentialKey,
+  browserCredentialKeys,
   browserSessionPartition,
+  legacyBrowserSessionPartition,
   requireDefaultBrowserLoginRequest,
   type BrowserLoginHost,
   type BrowserLoginSession,
@@ -18,6 +21,7 @@ import type {
 const request: LoginRequestDTO = { provider: "t3chat", accountId: "primary" };
 const claudeDefaultRequest: LoginRequestDTO = { provider: "claude", accountId: "default" };
 const grokDefaultRequest: LoginRequestDTO = { provider: "grok", accountId: "default" };
+const codexAccountRequest: LoginRequestDTO = { provider: "codex", accountId: "account-a" };
 
 class FakeSession implements BrowserLoginSession {
   readonly cookies = new Map<string, readonly BrowserCookieValue[]>();
@@ -114,7 +118,7 @@ const makeHost = () => {
     },
     now: () => new Date("2026-08-20T12:34:56.000Z"),
   };
-  return { host, session, window, writes, removes };
+  return { host, session, window, writes, removes, credentials };
 };
 
 describe("browser login controller", () => {
@@ -134,6 +138,108 @@ describe("browser login controller", () => {
     expect(() => requireDefaultBrowserLoginRequest(request)).toThrow(
       "restricted to the default account",
     );
+    expect(() =>
+      requireDefaultBrowserLoginRequest({ provider: "codex", accountId: "default" }),
+    ).toThrow("account-scoped host API");
+    const opaqueId = browserSessionStorageAccountId("../escape");
+    expect(browserSessionPartition({ provider: "codex", accountId: "../escape" })).toBe(
+      `persist:codexbar-multi-codex-${opaqueId}`,
+    );
+    expect(browserCredentialKey({ provider: "codex", accountId: "../escape" })).toBe(
+      `browser-session/codex/${opaqueId}`,
+    );
+    expect(legacyBrowserSessionPartition({ provider: "codex", accountId: "../escape" })).toBe(
+      "persist:codexbar-multi-codex-../escape",
+    );
+  });
+
+  it("validates a Codex candidate before its host-owned atomic persistence", async () => {
+    const { host, session, writes } = makeHost();
+    session.cookies.set("chatgpt.com", [
+      { name: "tracking", value: "must-not-leave" },
+      { name: "_account", value: "account-proof" },
+      { name: "__Secure-authjs.session-token.0", value: "secret-session" },
+    ]);
+    const controller = new BrowserLoginController(host);
+    const calls: string[] = [];
+    const result = controller.start(codexAccountRequest, async (_request, candidate) => {
+      calls.push("validate");
+      expect(writes).toHaveLength(0);
+      expect(candidate.cookieHeaders).toEqual({
+        "chatgpt.com": "__Secure-authjs.session-token.0=secret-session; _account=account-proof",
+      });
+      expect(candidate.value).not.toContain("must-not-leave");
+      await host.persistCredential(candidate.key, candidate.value);
+      calls.push("persist");
+      return "persisted";
+    });
+    await flush();
+    session.changed();
+
+    await expect(result).resolves.toEqual({ ...codexAccountRequest, status: "connected" });
+    expect(calls).toEqual(["validate", "persist"]);
+    expect(writes).toHaveLength(1);
+  });
+
+  it("aborts candidate validation on cancel and never persists afterwards", async () => {
+    const { host, session, writes } = makeHost();
+    session.cookies.set("chatgpt.com", [{ name: "_account", value: "account-proof" }]);
+    let release: (() => void) | undefined;
+    let validationSignal: AbortSignal | undefined;
+    const controller = new BrowserLoginController(host);
+    const result = controller.start(codexAccountRequest, async (_request, _candidate, signal) => {
+      validationSignal = signal;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return "persisted";
+    });
+    await flush();
+    session.changed();
+    await flush();
+
+    controller.cancel(codexAccountRequest);
+    await flush();
+    expect(validationSignal?.aborted).toBe(true);
+    release?.();
+    await expect(result).resolves.toEqual({ ...codexAccountRequest, status: "cancelled" });
+    await flush();
+    expect(writes).toHaveLength(0);
+    expect(session.clearCalls).toBe(1);
+  });
+
+  it("treats closing the login window as cancellation and removes a validator-owned late write", async () => {
+    const { host, session, window, writes, removes } = makeHost();
+    session.cookies.set("chatgpt.com", [{ name: "_account", value: "account-proof" }]);
+    let releaseValidation: (() => void) | undefined;
+    let markCredentialWritten: (() => void) | undefined;
+    const credentialWritten = new Promise<void>((resolve) => {
+      markCredentialWritten = resolve;
+    });
+    let validationSignal: AbortSignal | undefined;
+    const controller = new BrowserLoginController(host);
+    const result = controller.start(codexAccountRequest, async (_request, candidate, signal) => {
+      validationSignal = signal;
+      await host.persistCredential(candidate.key, candidate.value);
+      markCredentialWritten?.();
+      await new Promise<void>((resolve) => {
+        releaseValidation = resolve;
+      });
+      return "persisted";
+    });
+    await flush();
+    session.changed();
+    await credentialWritten;
+
+    window.finishClose();
+    await expect(result).resolves.toEqual({ ...codexAccountRequest, status: "cancelled" });
+    expect(validationSignal?.aborted).toBe(true);
+    releaseValidation?.();
+    for (let index = 0; index < 20 && removes.length === 0; index += 1) await flush();
+
+    expect(writes).toHaveLength(1);
+    expect(removes).toEqual([browserCredentialKey(codexAccountRequest)]);
+    expect(session.clearCalls).toBe(1);
   });
 
   it("persists only allowlisted completion cookies and never exposes them in the result", async () => {
@@ -240,6 +346,19 @@ describe("browser login controller", () => {
     await expect(pending).resolves.toEqual({ ...request, status: "cancelled" });
     expect(session.clearCalls).toBe(1);
     expect(removes).toEqual([browserCredentialKey(request)]);
+  });
+
+  it("removes both opaque and pre-opaque credential keys for a legacy account ID", async () => {
+    const legacyRequest: LoginRequestDTO = { provider: "codex", accountId: "legacy/account" };
+    const { host, removes, credentials } = makeHost();
+    for (const key of browserCredentialKeys(legacyRequest)) credentials.set(key, "stored");
+    const controller = new BrowserLoginController(host);
+
+    await controller.logout(legacyRequest);
+
+    expect(removes).toEqual(browserCredentialKeys(legacyRequest));
+    for (const key of browserCredentialKeys(legacyRequest))
+      expect(credentials.has(key)).toBe(false);
   });
 
   it("logs out Grok default by clearing its partition and credential", async () => {
