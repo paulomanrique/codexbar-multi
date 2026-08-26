@@ -60,28 +60,7 @@ const headerName = (line: string): string | undefined => {
   return match?.[1]?.toLowerCase();
 };
 
-const curlHeaderNames = (raw: string): readonly string[] => {
-  const names: string[] = [];
-  for (const pattern of [
-    /-H\s*'([^']*)'/giu,
-    /-H\s*"([^"]*)"/giu,
-    /-H\s+([^'"\s][^\s]*)/giu,
-    /--header\s*'([^']*)'/giu,
-    /--header\s*"([^"]*)"/giu,
-    /--header\s+([^'"\s][^\s]*)/giu,
-  ]) {
-    for (const match of raw.matchAll(pattern)) {
-      const name = headerName(match[1] ?? "");
-      if (name) names.push(name);
-    }
-  }
-  return names;
-};
-
 const isCurlInput = (raw: string): boolean => /\bcurl\b/iu.test(raw);
-
-const hasUnknownCurlHeader = (raw: string): boolean =>
-  curlHeaderNames(raw).some((name) => !allowedHeaderNames.has(name));
 
 const hasUnknownBareHeaderLine = (raw: string): boolean =>
   raw
@@ -90,7 +69,6 @@ const hasUnknownBareHeaderLine = (raw: string): boolean =>
     .some((name) => name !== undefined && !allowedHeaderNames.has(name));
 
 const isControlledMultiline = (raw: string): boolean => {
-  if (isCurlInput(raw) && hasUnknownCurlHeader(raw)) return false;
   if (!hasLineBreaks(raw)) return true;
   if (hasLoneCarriageReturn(raw)) return false;
   if (isCurlInput(raw)) return !hasUnknownBareHeaderLine(raw);

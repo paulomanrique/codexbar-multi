@@ -19,6 +19,10 @@ describe("MiniMax cookie credential normalization", () => {
       `curl https://platform.minimaxi.com -H "Cookie: session=abc"`,
       { cookieHeader: "session=abc" },
     ],
+    [
+      `curl https://platform.minimaxi.com -H 'accept: */*' -H 'Cookie: session=abc' -H 'sec-fetch-site: same-origin'`,
+      { cookieHeader: "session=abc" },
+    ],
     [`curl https://platform.minimaxi.com -H Cookie:session=abc`, { cookieHeader: "session=abc" }],
     [`curl https://platform.minimaxi.com --cookie 'session=abc'`, { cookieHeader: "session=abc" }],
     [`curl https://platform.minimaxi.com --cookie "session=abc"`, { cookieHeader: "session=abc" }],
@@ -69,7 +73,6 @@ describe("MiniMax cookie credential normalization", () => {
     "Cookie: session=abc\nInjected: yes",
     "Cookie: session=abc\nX-Other: yes",
     "curl https://platform.minimaxi.com \\\nInjected: yes\n-H 'Cookie: session=abc'",
-    "curl https://platform.minimaxi.com -H 'Cookie: session=abc' -H 'Injected: yes'",
     "curl https://platform.minimaxi.com -H 'Cookie: session=abc\r\nInjected: yes'",
     "session=abc\0",
     `session=${"a".repeat(1024 * 1024)}`,

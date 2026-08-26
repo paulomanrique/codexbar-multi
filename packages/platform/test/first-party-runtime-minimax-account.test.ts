@@ -172,4 +172,43 @@ describe("first-party runtime selected MiniMax accounts", () => {
     expect(failure.message).not.toContain(bearerToken);
     expect(failure.message).not.toContain(groupId);
   });
+
+  it("uses www only for an allowed remains fallback and derives its Origin from that host", async () => {
+    const requests: HttpRequest[] = [];
+    const outcome = await Effect.runPromise(
+      makeRuntime({ cookie }, requests, (request) =>
+        Effect.succeed(
+          request.url.startsWith("https://platform.minimax.io/")
+            ? response(request, {}, 404)
+            : response(request, remains),
+        ),
+      ).fetch("minimax", { sourceMode: "web", includeCredits: false }),
+    );
+    expect(outcome.strategyId).toBe("minimax.web");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.headers?.Origin).toBe("https://platform.minimax.io");
+    expect(requests[1]).toMatchObject({
+      url: "https://www.minimax.io/v1/api/openplatform/coding_plan/remains",
+      headers: {
+        Origin: "https://www.minimax.io",
+        Referer: "https://platform.minimax.io/user-center/payment/coding-plan",
+      },
+    });
+  });
+
+  it.each([
+    [401, "authentication-expired"],
+    [500, "provider-unavailable"],
+  ] as const)("keeps HTTP %i terminal without probing www", async (status, kind) => {
+    const requests: HttpRequest[] = [];
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        makeRuntime({ cookie }, requests, (request) =>
+          Effect.succeed(response(request, {}, status)),
+        ).fetch("minimax", { sourceMode: "web", includeCredits: false }),
+      ),
+    );
+    expect(failure).toMatchObject({ kind });
+    expect(requests).toHaveLength(1);
+  });
 });

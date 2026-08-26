@@ -270,4 +270,42 @@ describe("Swift-derived complex cloud provider wave B", () => {
       false,
     );
   });
+
+  it("tries the legacy MiniMax API endpoint after 404 but keeps HTTP 500 terminal", async () => {
+    const fallbackRequests: Request[] = [];
+    await minimax.fetchUsage(
+      context(
+        (request) =>
+          request.url.pathname === "/v1/token_plan/remains"
+            ? response({}, 404)
+            : response({
+                model_remains: [
+                  {
+                    model_name: "general",
+                    current_interval_total_count: 100,
+                    current_interval_usage_count: 25,
+                  },
+                ],
+              }),
+        { MINIMAX_CODING_API_KEY: "sk-cp-fixture" },
+        fallbackRequests,
+      ),
+    );
+    expect(fallbackRequests.map((request) => request.url.pathname)).toEqual([
+      "/v1/token_plan/remains",
+      "/v1/api/openplatform/coding_plan/remains",
+    ]);
+
+    const terminalRequests: Request[] = [];
+    await expect(
+      minimax.fetchUsage(
+        context(
+          () => response({}, 500),
+          { MINIMAX_CODING_API_KEY: "sk-cp-fixture" },
+          terminalRequests,
+        ),
+      ),
+    ).rejects.toThrow("provider-unavailable: MiniMax API returned HTTP 500");
+    expect(terminalRequests).toHaveLength(1);
+  });
 });
