@@ -322,6 +322,18 @@ export const RemoveTokenAccountRequestDTO = Schema.Struct({
 });
 export type RemoveTokenAccountRequestDTO = Schema.Schema.Type<typeof RemoveTokenAccountRequestDTO>;
 
+/** Host-owned Codex CLI login; renderer cannot choose executable, path, ID, or credential. */
+export const CodexAccountLoginRequestDTO = Schema.Struct({
+  provider: Schema.Literal("codex"),
+  token: Schema.optional(Schema.Never),
+  secret: Schema.optional(Schema.Never),
+  credentialJson: Schema.optional(Schema.Never),
+  command: Schema.optional(Schema.Never),
+  path: Schema.optional(Schema.Never),
+  accountId: Schema.optional(Schema.Never),
+});
+export type CodexAccountLoginRequestDTO = Schema.Schema.Type<typeof CodexAccountLoginRequestDTO>;
+
 /** Explicit, provider-scoped refresh request. The renderer cannot supply endpoints, headers, or secrets. */
 export const RefreshProviderRequestDTO = Schema.Struct({
   provider: ProviderId,
@@ -565,6 +577,14 @@ export const IPCRequest = Schema.Union([
   Schema.Struct({ type: Schema.Literal("start-login"), request: LoginRequestDTO }),
   Schema.Struct({ type: Schema.Literal("cancel-login"), request: LoginRequestDTO }),
   Schema.Struct({ type: Schema.Literal("logout"), request: LoginRequestDTO }),
+  Schema.Struct({
+    type: Schema.Literal("start-codex-account-login"),
+    request: CodexAccountLoginRequestDTO,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("cancel-codex-account-login"),
+    request: CodexAccountLoginRequestDTO,
+  }),
   Schema.Struct({ type: Schema.Literal("get-default-browser-session-statuses") }),
   Schema.Struct({ type: Schema.Literal("inspect-legacy-import") }),
   Schema.Struct({
@@ -581,6 +601,7 @@ export type IPCRequest = Schema.Schema.Type<typeof IPCRequest>;
 export const IPCResponse = Schema.Union([
   Schema.Struct({ type: Schema.Literal("usage"), payload: ProviderPayload }),
   Schema.Struct({ type: Schema.Literal("refresh-provider"), payload: RefreshProviderResultDTO }),
+  Schema.Struct({ type: Schema.Literal("codex-account-login"), payload: TokenAccountRosterDTO }),
   Schema.Struct({ type: Schema.Literal("dashboard"), payload: DashboardSnapshotDTO }),
   Schema.Struct({ type: Schema.Literal("history"), payload: HistoryQueryResultDTO }),
   Schema.Struct({ type: Schema.Literal("history-export"), payload: HistoryExportDTO }),

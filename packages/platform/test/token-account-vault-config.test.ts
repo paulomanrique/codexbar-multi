@@ -113,6 +113,7 @@ const memoryCredentials = (
   options: {
     readonly failRead?: boolean;
     readonly failWrite?: boolean;
+    readonly persistThenFailWrite?: boolean;
     readonly failRemove?: boolean;
     readonly retainAfterRemove?: boolean;
     readonly corruptReadback?: boolean;
@@ -142,13 +143,17 @@ const memoryCredentials = (
             return values.get(key);
           }),
     write: (key, value) =>
-      options.failWrite
-        ? Effect.fail(new InfrastructureError("write", "write failed"))
-        : Effect.sync(() => {
-            writes.push({ key, value });
-            values.set(key, value);
-            writeHappened = true;
-          }),
+      Effect.suspend(() => {
+        if (options.failWrite === true) {
+          return Effect.fail(new InfrastructureError("write", "write failed"));
+        }
+        writes.push({ key, value });
+        values.set(key, value);
+        writeHappened = true;
+        return options.persistThenFailWrite === true
+          ? Effect.fail(new InfrastructureError("write", "ambiguous write failure"))
+          : Effect.void;
+      }),
     remove: (key) =>
       options.failRemove
         ? Effect.fail(new InfrastructureError("remove", "remove failed"))
@@ -784,6 +789,130 @@ describe("token-account vault config repository", () => {
     expect(recovered?.providers[0]?.tokenAccounts?.accounts).toEqual([
       { id: "codex-account", label: "Personal", addedAt: 1 },
     ]);
+  });
+
+  it("recovers when the native store persists a credential before reporting write failure", async () => {
+    const repository = memoryRepository(v2CodexConfig());
+    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentials = memoryCredentials({}, { persistThenFailWrite: true });
+
+    await expect(
+      Effect.runPromise(
+        addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
+          accountId: "codex-account",
+          label: "Personal",
+          credentialJson,
+          addedAt: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "write token account credential" });
+    expect(repository.current?.providers[0]?.pendingTokenAccountAddition).toBeDefined();
+
+    const recovered = await Effect.runPromise(
+      makeTokenAccountVaultConfigRepository(repository, credentials, memoryLock()).load,
+    );
+    expect(recovered?.providers[0]?.pendingTokenAccountAddition).toBeUndefined();
+    expect(recovered?.providers[0]?.tokenAccounts?.accounts).toEqual([
+      { id: "codex-account", label: "Personal", addedAt: 1 },
+    ]);
+  });
+
+  it("fails closed and retains staged metadata when recovery finds a divergent credential", async () => {
+    const credentialJson = JSON.stringify({ tokens: { access_token: "expected" } });
+    const key = tokenAccountVaultKey("codex", "codex-account");
+    const staged: PersistedCodexBarConfig = {
+      ...v2CodexConfig(),
+      providers: [
+        {
+          id: "codex",
+          enabled: true,
+          extensions: {},
+          pendingTokenAccountAddition: {
+            version: 1,
+            account: { id: "codex-account", label: "Personal", addedAt: 1 },
+            credentialSha256: sha256Hex(credentialJson),
+            makeActive: true,
+          },
+        },
+      ],
+    };
+    const repository = memoryRepository(staged);
+
+    await expect(
+      Effect.runPromise(
+        makeTokenAccountVaultConfigRepository(
+          repository,
+          memoryCredentials({ [key]: JSON.stringify({ tokens: { access_token: "other" } }) }),
+          memoryLock(),
+        ).load,
+      ),
+    ).rejects.toMatchObject({ operation: "verify pending token account credential" });
+    expect(repository.current?.providers[0]?.pendingTokenAccountAddition).toBeDefined();
+    expect(repository.saves).toEqual([]);
+  });
+
+  it("retains staged metadata when the native credential store is unavailable", async () => {
+    const credentialJson = JSON.stringify({ tokens: { access_token: "expected" } });
+    const staged: PersistedCodexBarConfig = {
+      ...v2CodexConfig(),
+      providers: [
+        {
+          id: "codex",
+          enabled: true,
+          extensions: {},
+          pendingTokenAccountAddition: {
+            version: 1,
+            account: { id: "codex-account", label: "Personal", addedAt: 1 },
+            credentialSha256: sha256Hex(credentialJson),
+            makeActive: true,
+          },
+        },
+      ],
+    };
+    const repository = memoryRepository(staged);
+
+    await expect(
+      Effect.runPromise(
+        makeTokenAccountVaultConfigRepository(
+          repository,
+          memoryCredentials({}, { failRead: true }),
+          memoryLock(),
+        ).load,
+      ),
+    ).rejects.toMatchObject({ operation: "read pending token account credential" });
+    expect(repository.current?.providers[0]?.pendingTokenAccountAddition).toBeDefined();
+    expect(repository.saves).toEqual([]);
+  });
+
+  it("rejects a provider carrying addition and deletion recovery markers together", async () => {
+    const credentialJson = JSON.stringify({ tokens: { access_token: "expected" } });
+    const invalid: PersistedCodexBarConfig = {
+      ...v2CodexConfig(),
+      providers: [
+        {
+          id: "codex",
+          enabled: true,
+          extensions: {},
+          pendingTokenAccountAddition: {
+            version: 1,
+            account: { id: "codex-account", label: "Personal", addedAt: 1 },
+            credentialSha256: sha256Hex(credentialJson),
+            makeActive: true,
+          },
+          pendingTokenAccountDeletion: { version: 1, accountId: "old-account" },
+        },
+      ],
+    };
+
+    await expect(
+      Effect.runPromise(
+        makeTokenAccountVaultConfigRepository(
+          memoryRepository(invalid),
+          memoryCredentials(),
+          memoryLock(),
+        ).load,
+      ),
+    ).rejects.toMatchObject({ operation: "validate token accounts" });
   });
 
   it("stages metadata removal before deleting and verifying the native credential", async () => {

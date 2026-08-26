@@ -8,8 +8,15 @@ describe("token account preload bridge", () => {
     const calls: Array<{ readonly channel: string; readonly input: unknown }> = [];
     const api = makeTokenAccountsApi(async (channel, input) => {
       calls.push({ channel, input });
+      const provider =
+        typeof input === "object" &&
+        input !== null &&
+        "provider" in input &&
+        input.provider === "codex"
+          ? "codex"
+          : "claude";
       return {
-        provider: "claude",
+        provider,
         accounts: [{ id: "account-1", label: "Main", addedAt: 1 }],
         activeIndex: 0,
         selectionAvailable: true,
@@ -74,6 +81,18 @@ describe("token account preload bridge", () => {
         expectedRevision: "a".repeat(64),
       },
     });
+    await expect(api.startCodexAccountLogin({ provider: "codex" })).resolves.toMatchObject({
+      provider: "codex",
+    });
+    expect(calls[3]).toEqual({
+      channel: DesktopChannels.startCodexAccountLogin,
+      input: { provider: "codex" },
+    });
+    await expect(api.cancelCodexAccountLogin({ provider: "codex" })).resolves.toBeUndefined();
+    expect(calls[4]).toEqual({
+      channel: DesktopChannels.cancelCodexAccountLogin,
+      input: { provider: "codex" },
+    });
 
     await expect(api.listTokenAccounts({ provider: "fixture-plugin" as never })).rejects.toThrow();
     await expect(
@@ -92,7 +111,19 @@ describe("token account preload bridge", () => {
         token: "must-not-cross-preload",
       } as never),
     ).rejects.toThrow();
-    expect(calls).toHaveLength(3);
+    await expect(
+      api.startCodexAccountLogin({
+        provider: "codex",
+        credentialJson: "must-not-cross-preload",
+      } as never),
+    ).rejects.toThrow();
+    await expect(
+      api.cancelCodexAccountLogin({
+        provider: "codex",
+        command: "/usr/bin/codex",
+      } as never),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(5);
   });
 
   it("rejects token-bearing responses before returning to the renderer", async () => {
@@ -105,5 +136,46 @@ describe("token account preload bridge", () => {
     }));
 
     await expect(api.listTokenAccounts({ provider: "claude" })).rejects.toThrow();
+  });
+
+  it("keeps Codex login host-owned across start and cancel", async () => {
+    const calls: Array<{ readonly channel: string; readonly input: unknown }> = [];
+    const api = makeTokenAccountsApi(async (channel, input) => {
+      calls.push({ channel, input });
+      return channel === DesktopChannels.cancelCodexAccountLogin
+        ? undefined
+        : {
+            provider: "codex",
+            accounts: [{ id: "host-id", label: "person@example.test", addedAt: 1 }],
+            activeIndex: 0,
+            selectionAvailable: true,
+            revision: "d".repeat(64),
+          };
+    });
+
+    await expect(api.startCodexAccountLogin({ provider: "codex" })).resolves.toMatchObject({
+      provider: "codex",
+    });
+    await expect(api.cancelCodexAccountLogin({ provider: "codex" })).resolves.toBeUndefined();
+    expect(calls).toEqual([
+      {
+        channel: DesktopChannels.startCodexAccountLogin,
+        input: { provider: "codex" },
+      },
+      {
+        channel: DesktopChannels.cancelCodexAccountLogin,
+        input: { provider: "codex" },
+      },
+    ]);
+    await expect(
+      api.startCodexAccountLogin({
+        provider: "codex",
+        command: "C:\\malicious.exe",
+      } as never),
+    ).rejects.toThrow();
+    await expect(
+      api.startCodexAccountLogin({ provider: "codex", token: "secret" } as never),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(2);
   });
 });

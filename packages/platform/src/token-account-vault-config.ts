@@ -112,9 +112,9 @@ const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureEr
         new Error("A provider cannot add and delete token accounts in the same recovery state."),
       );
     }
-    if (pendingAddition !== undefined && !firstPartyProviderIds.has(provider.id)) {
+    if (pendingAddition !== undefined && provider.id !== "codex") {
       return invalidMetadataError(
-        new Error("Plugin token-account addition recovery is not supported."),
+        new Error("Only Codex token-account addition recovery is supported."),
       );
     }
     if (

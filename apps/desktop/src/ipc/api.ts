@@ -28,6 +28,7 @@ import type {
   RemoveTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountRosterDTO,
+  CodexAccountLoginRequestDTO,
   ActivateClaudeSwapAccountRequestDTO,
   ActivateClaudeSwapAccountResultDTO,
   ProviderSettingsDTO,
@@ -63,6 +64,8 @@ export const DesktopChannels = Object.freeze({
   selectTokenAccount: "codexbar-multi:select-token-account",
   renameTokenAccount: "codexbar-multi:rename-token-account",
   removeTokenAccount: "codexbar-multi:remove-token-account",
+  startCodexAccountLogin: "codexbar-multi:start-codex-account-login",
+  cancelCodexAccountLogin: "codexbar-multi:cancel-codex-account-login",
   activateClaudeSwapAccount: "codexbar-multi:activate-claude-swap-account",
   getProviderSettings: "codexbar-multi:get-provider-settings",
   updateProviderSettings: "codexbar-multi:update-provider-settings",
@@ -111,6 +114,11 @@ export interface CodexBarDesktopApi {
   readonly removeTokenAccount: (
     request: RemoveTokenAccountRequestDTO,
   ) => Promise<TokenAccountRosterDTO>;
+  /** Runs `codex login` in the host and returns only the metadata roster. */
+  readonly startCodexAccountLogin: (
+    request: CodexAccountLoginRequestDTO,
+  ) => Promise<TokenAccountRosterDTO>;
+  readonly cancelCodexAccountLogin: (request: CodexAccountLoginRequestDTO) => Promise<void>;
   /** Activates only a host-listed Claude Swap account ID. */
   readonly activateClaudeSwapAccount: (
     request: ActivateClaudeSwapAccountRequestDTO,

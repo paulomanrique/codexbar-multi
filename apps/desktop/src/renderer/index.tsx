@@ -454,8 +454,11 @@ function TokenAccountSettings({
   roster,
   loading,
   pending,
+  loginPending,
   error,
   copy,
+  onAdd,
+  onCancelAdd,
   onSelect,
   onRename,
   onRemove,
@@ -463,6 +466,7 @@ function TokenAccountSettings({
   readonly roster: TokenAccountRosterDTO | undefined;
   readonly loading: boolean;
   readonly pending: boolean;
+  readonly loginPending: boolean;
   readonly error: string | undefined;
   readonly copy: {
     readonly title: string;
@@ -472,12 +476,16 @@ function TokenAccountSettings({
     readonly apply: string;
     readonly refreshing: string;
     readonly remove: string;
+    readonly add: string;
+    readonly cancel: string;
   };
+  readonly onAdd: () => void;
+  readonly onCancelAdd: () => void;
   readonly onSelect: (accountId: string) => void;
   readonly onRename: (accountId: string, label: string) => void;
   readonly onRemove: (accountId: string) => void;
 }) {
-  const state = tokenAccountSelectionViewState(roster, loading, pending, error);
+  const state = tokenAccountSelectionViewState(roster, loading, pending || loginPending, error);
   const statusId = "codex-token-account-status";
   const [draftLabel, setDraftLabel] = useState("");
   const activeLabel = state.active?.label.trim() ?? "";
@@ -554,6 +562,17 @@ function TokenAccountSettings({
           </button>
         </form>
       )}
+      <div className="settings-token-account-actions">
+        {loginPending ? (
+          <button className="secondary" type="button" onClick={onCancelAdd}>
+            {copy.cancel}
+          </button>
+        ) : (
+          <button className="secondary" disabled={state.disabled} type="button" onClick={onAdd}>
+            {copy.add}
+          </button>
+        )}
+      </div>
       {state.status === "loading" || state.status === "pending" ? (
         <p className="muted" id={statusId}>
           {copy.refreshing}
@@ -732,7 +751,9 @@ function App() {
   const [tokenAccountRoster, setTokenAccountRoster] = useState<TokenAccountRosterDTO>();
   const [tokenAccountLoading, setTokenAccountLoading] = useState(false);
   const [tokenAccountPending, setTokenAccountPending] = useState(false);
+  const [codexAccountLoginPending, setCodexAccountLoginPending] = useState(false);
   const [tokenAccountError, setTokenAccountError] = useState<string>();
+  const codexAccountLoginCancelled = useRef(false);
   const tokenAccountScope = useRef(0);
   const [savingSessionQuotaNotificationSettings, setSavingSessionQuotaNotificationSettings] =
     useState(false);
@@ -1071,6 +1092,36 @@ function App() {
         if (tokenAccountScope.current !== scope) return;
         setTokenAccountPending(false);
       });
+  };
+  const startCodexAccountLogin = (): void => {
+    if (selectedProviderFirstPartyId !== "codex" || codexAccountLoginPending) return;
+    const scope = tokenAccountScope.current;
+    codexAccountLoginCancelled.current = false;
+    setCodexAccountLoginPending(true);
+    setTokenAccountError(undefined);
+    void window.codexbar
+      .startCodexAccountLogin({ provider: "codex" })
+      .then((roster) => {
+        if (tokenAccountScope.current !== scope) return;
+        setTokenAccountRoster(roster);
+        void loadOverview()
+          .then(() => setActivityVersion((version) => version + 1))
+          .catch(() => setError(localization.upstream("Unavailable")));
+      })
+      .catch(() => {
+        if (tokenAccountScope.current !== scope || codexAccountLoginCancelled.current) return;
+        setTokenAccountError(localization.upstream("Could not add Codex account"));
+      })
+      .finally(() => {
+        setCodexAccountLoginPending(false);
+      });
+  };
+  const cancelCodexAccountLogin = (): void => {
+    if (!codexAccountLoginPending) return;
+    codexAccountLoginCancelled.current = true;
+    void window.codexbar
+      .cancelCodexAccountLogin({ provider: "codex" })
+      .catch(() => setTokenAccountError(localization.upstream("Unavailable")));
   };
   const updateSessionQuotaNotificationSettings = (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
@@ -1460,11 +1511,16 @@ function App() {
                   apply: localization.upstream("apply"),
                   refreshing: copy.refreshing,
                   remove: localization.upstream("Remove"),
+                  add: localization.upstream("Add Account"),
+                  cancel: localization.upstream("Cancel"),
                 }}
                 error={tokenAccountError}
+                loginPending={codexAccountLoginPending}
                 loading={tokenAccountLoading}
                 pending={tokenAccountPending}
                 roster={tokenAccountRoster}
+                onAdd={startCodexAccountLogin}
+                onCancelAdd={cancelCodexAccountLogin}
                 onRename={renameTokenAccount}
                 onRemove={removeTokenAccount}
                 onSelect={selectTokenAccount}

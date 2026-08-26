@@ -383,6 +383,11 @@ h2 {
   gap: 4px;
   color: #d8dde8;
 }
+.settings-token-account-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 .settings-token-account select,
 .settings-token-account-rename input {
   border: 1px solid #293040;

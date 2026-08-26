@@ -20,6 +20,7 @@ import {
   RemovePluginRequestDTO,
   RefreshProviderRequestDTO,
   ActivateClaudeSwapAccountRequestDTO,
+  CodexAccountLoginRequestDTO,
   DefaultBrowserSessionStatusesDTO,
   ListTokenAccountsRequestDTO,
   RenameTokenAccountRequestDTO,
@@ -156,6 +157,7 @@ describe("desktop IPC boundary", () => {
     const decodeRename = Schema.decodeUnknownSync(RenameTokenAccountRequestDTO);
     const decodeRemove = Schema.decodeUnknownSync(RemoveTokenAccountRequestDTO);
     const decodeSelect = Schema.decodeUnknownSync(SelectTokenAccountRequestDTO);
+    const decodeCodexLogin = Schema.decodeUnknownSync(CodexAccountLoginRequestDTO);
     const decodeAccount = Schema.decodeUnknownSync(TokenAccountMetadataDTO);
     const decodeRoster = Schema.decodeUnknownSync(TokenAccountRosterDTO);
     expect(decodeList({ provider: "claude" })).toEqual({ provider: "claude" });
@@ -232,6 +234,18 @@ describe("desktop IPC boundary", () => {
         expectedRevision: "b".repeat(64),
       }),
     ).toThrow();
+    expect(decodeCodexLogin({ provider: "codex" })).toEqual({ provider: "codex" });
+    for (const forbidden of [
+      { token: "secret" },
+      { secret: "secret" },
+      { credentialJson: "secret-auth-json" },
+      { command: "/usr/bin/codex" },
+      { path: "/tmp/auth.json" },
+      { accountId: "renderer-chosen-id" },
+    ]) {
+      expect(() => decodeCodexLogin({ provider: "codex", ...forbidden })).toThrow();
+    }
+    expect(() => decodeCodexLogin({ provider: "claude" })).toThrow();
     expect(decodeAccount({ id: "account-1", label: "", addedAt: 1.25 })).toEqual({
       id: "account-1",
       label: "",
@@ -264,6 +278,22 @@ describe("desktop IPC boundary", () => {
         revision: "b".repeat(64),
       }),
     ).toThrow();
+  });
+
+  it("lets the renderer request Codex login without choosing credentials or execution", () => {
+    const decode = Schema.decodeUnknownSync(CodexAccountLoginRequestDTO);
+    expect(decode({ provider: "codex" })).toEqual({ provider: "codex" });
+    for (const forbidden of [
+      { token: "secret" },
+      { secret: "secret" },
+      { credentialJson: "secret" },
+      { command: "malicious.exe" },
+      { path: "../escape" },
+      { accountId: "renderer-owned" },
+    ]) {
+      expect(() => decode({ provider: "codex", ...forbidden })).toThrow();
+    }
+    expect(() => decode({ provider: "claude" })).toThrow();
   });
 
   it("allows only a bounded first-party provider settings projection", () => {
@@ -331,6 +361,10 @@ describe("desktop IPC boundary", () => {
     expect(DesktopChannels.selectTokenAccount).toBe("codexbar-multi:select-token-account");
     expect(DesktopChannels.renameTokenAccount).toBe("codexbar-multi:rename-token-account");
     expect(DesktopChannels.removeTokenAccount).toBe("codexbar-multi:remove-token-account");
+    expect(DesktopChannels.startCodexAccountLogin).toBe("codexbar-multi:start-codex-account-login");
+    expect(DesktopChannels.cancelCodexAccountLogin).toBe(
+      "codexbar-multi:cancel-codex-account-login",
+    );
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
   });

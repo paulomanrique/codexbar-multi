@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -7,6 +7,7 @@ import { InfrastructureError, type ProcessRunnerService, type ProcessSpec } from
 import {
   cleanupStaleNodeCodexLoginHomes,
   nodeCodexLoginBaseEnvironment,
+  resolveNodeCodexLoginExecutable,
   runNodeCodexLogin,
 } from "../src/node-codex-login.ts";
 
@@ -48,6 +49,20 @@ describe("Node Codex account login", () => {
     ).toEqual({ PATH: "/bin", HOME: "/home/person" });
   });
 
+  it("resolves an explicit bounded executable path before login", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+    const executable = join(root, "codex");
+    await writeFile(executable, "#!/bin/sh\nexit 0\n");
+    await chmod(executable, 0o700);
+
+    await expect(resolveNodeCodexLoginExecutable({ CODEX_CLI_PATH: executable })).resolves.toBe(
+      executable,
+    );
+    await expect(
+      resolveNodeCodexLoginExecutable({ CODEX_CLI_PATH: "relative/codex" }),
+    ).resolves.toBeUndefined();
+  });
+
   it("reads a successful isolated login and removes the transient home", async () => {
     const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
     const idToken = jwt({
@@ -63,6 +78,7 @@ describe("Node Codex account login", () => {
     const result = await Effect.runPromise(
       runNodeCodexLogin({
         rootDirectory: root,
+        command: process.execPath,
         createId: () => "operation-1",
         environment: {
           PATH: "/bin",
@@ -106,6 +122,7 @@ describe("Node Codex account login", () => {
       Effect.runPromise(
         runNodeCodexLogin({
           rootDirectory: root,
+          command: process.execPath,
           createId: () => "operation-2",
           restrictDirectory: async () => undefined,
           processRunner: successfulRunner(
@@ -115,6 +132,110 @@ describe("Node Codex account login", () => {
       ),
     ).rejects.toMatchObject({ operation: "run Codex login" });
 
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rejects an oversized auth file and still removes the transient home", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+
+    await expect(
+      Effect.runPromise(
+        runNodeCodexLogin({
+          rootDirectory: root,
+          command: process.execPath,
+          createId: () => "operation-oversized",
+          restrictDirectory: async () => undefined,
+          processRunner: successfulRunner("x".repeat(1024 * 1024 + 1)),
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "run Codex login" });
+
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a symlinked auth file without reading its target",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+      const target = join(root, "outside-auth.json");
+      await writeFile(target, JSON.stringify({ tokens: { access_token: "outside-secret" } }));
+      const processRunner: ProcessRunnerService = {
+        run: (spec) =>
+          Effect.tryPromise({
+            try: async () => {
+              const home = spec.env?.CODEX_HOME;
+              if (home === undefined) throw new Error("missing CODEX_HOME");
+              await symlink(target, join(home, "auth.json"));
+              return {
+                exitCode: 0,
+                signal: undefined,
+                stdout: new Uint8Array(),
+                stderr: new Uint8Array(),
+              };
+            },
+            catch: (error) => new InfrastructureError("run process", "failed", error),
+          }),
+      };
+
+      await expect(
+        Effect.runPromise(
+          runNodeCodexLogin({
+            rootDirectory: root,
+            command: process.execPath,
+            createId: () => "operation-symlink",
+            restrictDirectory: async () => undefined,
+            processRunner,
+          }),
+        ),
+      ).rejects.toMatchObject({ operation: "run Codex login" });
+
+      expect(await readdir(root)).toEqual(["outside-auth.json"]);
+    },
+  );
+
+  it("cleans up after a non-zero process exit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+    const processRunner: ProcessRunnerService = {
+      run: () =>
+        Effect.succeed({
+          exitCode: 1,
+          signal: undefined,
+          stdout: new Uint8Array(),
+          stderr: new Uint8Array(Buffer.from("provider output must stay private")),
+        }),
+    };
+
+    await expect(
+      Effect.runPromise(
+        runNodeCodexLogin({
+          rootDirectory: root,
+          command: process.execPath,
+          createId: () => "operation-failed",
+          restrictDirectory: async () => undefined,
+          processRunner,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      operation: "run Codex login",
+      message: expect.not.stringContaining("provider output"),
+    });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rejects caller-controlled operation paths before creating a home", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+
+    await expect(
+      Effect.runPromise(
+        runNodeCodexLogin({
+          rootDirectory: root,
+          command: process.execPath,
+          createId: () => "../escape",
+          restrictDirectory: async () => undefined,
+          processRunner: successfulRunner("{}"),
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "create Codex login home" });
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -131,6 +252,7 @@ describe("Node Codex account login", () => {
     const login = Effect.runPromise(
       runNodeCodexLogin({
         rootDirectory: root,
+        command: process.execPath,
         createId: () => "operation-cancelled",
         restrictDirectory: async () => undefined,
         processRunner,
@@ -150,9 +272,27 @@ describe("Node Codex account login", () => {
     await mkdir(join(root, "stale-a"));
     await mkdir(join(root, "stale-b"));
     await writeFile(join(root, "unpublished-auth"), "secret");
+    await mkdir(join(root, "not an operation"));
 
     await Effect.runPromise(cleanupStaleNodeCodexLoginHomes(root));
 
-    expect(await readdir(root)).toEqual([]);
+    expect((await readdir(root)).sort()).toEqual(["not an operation", "unpublished-auth"]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses to clean through a symlinked login root",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+      const target = join(parent, "target");
+      const root = join(parent, "codex-login");
+      await mkdir(target);
+      await mkdir(join(target, "operation-1"));
+      await symlink(target, root);
+
+      await expect(Effect.runPromise(cleanupStaleNodeCodexLoginHomes(root))).rejects.toMatchObject({
+        operation: "clean up stale Codex login homes",
+      });
+      expect(await readdir(target)).toEqual(["operation-1"]);
+    },
+  );
 });

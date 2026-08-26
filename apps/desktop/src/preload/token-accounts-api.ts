@@ -1,10 +1,12 @@
 import {
+  CodexAccountLoginRequestDTO,
   ListTokenAccountsRequestDTO,
   RenameTokenAccountRequestDTO,
   RemoveTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountRosterDTO,
   type ListTokenAccountsRequestDTO as ListTokenAccountsRequest,
+  type CodexAccountLoginRequestDTO as CodexAccountLoginRequest,
   type RenameTokenAccountRequestDTO as RenameTokenAccountRequest,
   type RemoveTokenAccountRequestDTO as RemoveTokenAccountRequest,
   type SelectTokenAccountRequestDTO as SelectTokenAccountRequest,
@@ -16,6 +18,7 @@ import { DesktopChannels } from "../ipc/api.js";
 import type { DesktopInvoke } from "./provider-settings-api.js";
 
 const decodeListTokenAccountsRequest = Schema.decodeUnknownPromise(ListTokenAccountsRequestDTO);
+const decodeCodexAccountLoginRequest = Schema.decodeUnknownPromise(CodexAccountLoginRequestDTO);
 const decodeRenameTokenAccountRequest = Schema.decodeUnknownPromise(RenameTokenAccountRequestDTO);
 const decodeRemoveTokenAccountRequest = Schema.decodeUnknownPromise(RemoveTokenAccountRequestDTO);
 const decodeSelectTokenAccountRequest = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
@@ -52,4 +55,19 @@ export const makeTokenAccountsApi = (invoke: DesktopInvoke) =>
           await decodeRemoveTokenAccountRequest(request),
         ),
       ),
+    startCodexAccountLogin: async (
+      request: CodexAccountLoginRequest,
+    ): Promise<TokenAccountRoster> =>
+      decodeTokenAccountRoster(
+        await invoke(
+          DesktopChannels.startCodexAccountLogin,
+          await decodeCodexAccountLoginRequest(request),
+        ),
+      ),
+    cancelCodexAccountLogin: async (request: CodexAccountLoginRequest): Promise<void> => {
+      await invoke(
+        DesktopChannels.cancelCodexAccountLogin,
+        await decodeCodexAccountLoginRequest(request),
+      );
+    },
   });

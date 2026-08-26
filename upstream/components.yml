@@ -187,6 +187,7 @@ components:
       - packages/platform/src/node-codex-login.ts
       - apps/desktop/src/ipc/api.ts
       - apps/desktop/src/main/index.ts
+      - apps/desktop/src/main/codex-account-login.ts
       - apps/desktop/src/main/token-account-removal.ts
       - apps/desktop/src/preload/token-accounts-api.ts
       - apps/desktop/src/renderer/index.tsx
@@ -202,6 +203,7 @@ components:
       - packages/providers/test/token-account-support.test.ts
       - packages/platform/test/token-account-vault-config.test.ts
       - packages/platform/test/node-codex-login.test.ts
+      - apps/desktop/test/codex-account-login.test.ts
       - apps/desktop/test/ipc-contract.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts

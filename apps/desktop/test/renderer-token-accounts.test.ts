@@ -18,6 +18,10 @@ describe("renderer Codex token-account selection", () => {
     expect(source).toContain('localization.upstream("apply")');
     expect(source).toContain('localization.upstream("Remove")');
     expect(source).toContain("<TokenAccountSettings");
+    expect(source).toContain('.startCodexAccountLogin({ provider: "codex" })');
+    expect(source).toContain('.cancelCodexAccountLogin({ provider: "codex" })');
+    expect(source).toContain('localization.upstream("Add Account")');
+    expect(source).toContain('localization.upstream("Could not add Codex account")');
     expect(source).not.toContain("CODEX_ACCESS_TOKEN");
     expect(source).not.toContain("refresh_token");
     expect(source).not.toContain("ipcRenderer");

@@ -40,6 +40,7 @@ import {
   RemoveTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountRosterDTO,
+  CodexAccountLoginRequestDTO,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
   UpdateProviderSettingsRequestDTO,
@@ -70,6 +71,8 @@ import {
   makeNodeConfigRepository,
   makeNodeTokenAccountMigrationLock,
   makeTokenAccountVaultConfigRepository,
+  addCodexTokenAccountCredentialToVault,
+  cleanupStaleNodeCodexLoginHomes,
   makeSystemClock,
   makeNodeSqliteWorkerPersistence,
   claudeSwapProcessEnvironment,
@@ -80,6 +83,8 @@ import {
   executeNodeLegacyImport,
   rollbackNodeLegacyImport,
   resolveNodeClaudeOAuthHistoryOwner,
+  resolveNodeCodexLoginExecutable,
+  runNodeCodexLogin,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
 import {
@@ -149,6 +154,7 @@ import { loadTrayIcon } from "./tray-icon.js";
 import { activateWindow } from "./single-instance.js";
 import { createHostLifecycle } from "./host-lifecycle.js";
 import { refreshAndReportPersistence, refreshOverviewAndPublish } from "./overview-publication.js";
+import { DesktopCodexAccountLoginController } from "./codex-account-login.js";
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Electron otherwise derives this directory from the executable name, which
@@ -168,6 +174,7 @@ let claudeSwap: DesktopClaudeSwapController | undefined;
 let grokLocalTokenScanner: ReturnType<typeof makeNodeGrokLocalTokenScanner> | undefined;
 let legacyImport: DesktopLegacyImportController | undefined;
 let adaptiveRefresh: DesktopAdaptiveRefreshController | undefined;
+let codexAccountLogin: DesktopCodexAccountLoginController | undefined;
 let planUtilizationHistory: PlanUtilizationHistoryCoordinator | undefined;
 let claudeOAuthHistoryOwnerCapture: ClaudeOAuthHistoryOwnerCapture | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
@@ -757,6 +764,7 @@ void desktopReady?.then(async () => {
     const decodeRemoveTokenAccount = Schema.decodeUnknownPromise(RemoveTokenAccountRequestDTO);
     const decodeSelectTokenAccount = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
     const decodeTokenAccountRoster = Schema.decodeUnknownPromise(TokenAccountRosterDTO);
+    const decodeCodexAccountLogin = Schema.decodeUnknownPromise(CodexAccountLoginRequestDTO);
     const decodeActivateClaudeSwapAccount = Schema.decodeUnknownPromise(
       ActivateClaudeSwapAccountRequestDTO,
     );
@@ -930,6 +938,38 @@ void desktopReady?.then(async () => {
       config: configRepository,
       support: PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID,
     });
+    const codexLoginRoot = join(userDataPath, "codex-login");
+    codexAccountLogin = new DesktopCodexAccountLoginController({
+      cleanupStaleHomes: () => Effect.runPromise(cleanupStaleNodeCodexLoginHomes(codexLoginRoot)),
+      login: async (signal) => {
+        const command = await resolveNodeCodexLoginExecutable(process.env);
+        if (command === undefined) throw new Error("Codex login is unavailable");
+        return Effect.runPromise(
+          runNodeCodexLogin({
+            rootDirectory: codexLoginRoot,
+            processRunner,
+            environment: process.env,
+            command,
+          }),
+          { signal },
+        );
+      },
+      publish: (request) =>
+        desktopConfigMutations.run(async () => {
+          desktopConfig = await Effect.runPromise(
+            addCodexTokenAccountCredentialToVault(
+              rawConfigRepository,
+              credentials,
+              tokenAccountMigrationLock,
+              request,
+            ),
+          );
+        }),
+      list: () => Effect.runPromise(tokenAccounts.list("codex")),
+      createAccountId: randomUUID,
+      now: Date.now,
+    });
+    await codexAccountLogin.initialize();
     ipcMain.handle(DesktopChannels.listTokenAccounts, (_event, input: unknown) =>
       handleDesktopRequest(async () => {
         const request = await decodeListTokenAccounts(input);
@@ -1004,6 +1044,32 @@ void desktopReady?.then(async () => {
           ),
         );
         return decodeTokenAccountRoster(roster);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.startCodexAccountLogin, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeCodexAccountLogin(input);
+        const roster = await codexAccountLogin?.start();
+        if (roster === undefined) throw new Error("Codex account login is not ready");
+        await Effect.runPromise(
+          refreshProviderAndPersist(activeProviderRuntime(), "codex", {
+            sourceMode: "auto",
+            includeCredits: true,
+          }).pipe(
+            Effect.provideService(Clock, providerClock),
+            Effect.provideService(HistoryRepository, activePersistence().history),
+            Effect.provideService(CostUsageRepository, activePersistence().costs),
+            Effect.orElseSucceed(() => undefined),
+          ),
+        );
+        return decodeTokenAccountRoster(roster);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.cancelCodexAccountLogin, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        await decodeCodexAccountLogin(input);
+        codexAccountLogin?.cancel();
+        return decodeVoid(undefined);
       }),
     );
     ipcMain.handle(DesktopChannels.activateClaudeSwapAccount, (_event, input: unknown) =>
@@ -1193,6 +1259,8 @@ void desktopReady?.then(async () => {
     }
     adaptiveRefresh?.stop();
     adaptiveRefresh = undefined;
+    codexAccountLogin?.cancel();
+    codexAccountLogin = undefined;
     legacyImport?.cancel();
     legacyImport = undefined;
     spendPublisher?.cancel();
@@ -1219,6 +1287,8 @@ app.on("before-quit", (event) => {
   tray = undefined;
   adaptiveRefresh?.stop();
   adaptiveRefresh = undefined;
+  codexAccountLogin?.cancel();
+  codexAccountLogin = undefined;
   legacyImport?.cancel();
   legacyImport = undefined;
   spendPublisher?.cancel();
