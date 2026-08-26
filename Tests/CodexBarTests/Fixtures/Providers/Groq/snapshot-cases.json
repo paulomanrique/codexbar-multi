@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "id": "integer-rates-with-cache",
+      "requestRatePerSecond": 2,
+      "inputTokenRatePerSecond": 100,
+      "outputTokenRatePerSecond": 50,
+      "promptCacheHitRatePerSecond": 3
+    },
+    {
+      "id": "fractional-rates-with-cache",
+      "requestRatePerSecond": 0.041666666666666664,
+      "inputTokenRatePerSecond": 0.16666666666666666,
+      "outputTokenRatePerSecond": 0,
+      "promptCacheHitRatePerSecond": 0.008333333333333333
+    },
+    {
+      "id": "zero-cache-omits-tertiary",
+      "requestRatePerSecond": 0,
+      "inputTokenRatePerSecond": 0,
+      "outputTokenRatePerSecond": 0,
+      "promptCacheHitRatePerSecond": 0
+    }
+  ]
+}

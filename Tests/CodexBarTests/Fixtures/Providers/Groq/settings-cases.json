@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "defaults-without-settings",
+      "environment": {}
+    },
+    {
+      "id": "cleans-quoted-api-key",
+      "environment": { "GROQ_API_KEY": "  'fixture-key'  " }
+    },
+    {
+      "id": "bare-host-override",
+      "environment": { "GROQ_API_URL": "  groq.example.test/v1/  " }
+    },
+    {
+      "id": "https-override",
+      "environment": { "GROQ_API_URL": "'https://groq.example.test/custom'" }
+    },
+    {
+      "id": "empty-values-use-defaults",
+      "environment": { "GROQ_API_KEY": "  ", "GROQ_API_URL": " '' " }
+    },
+    {
+      "id": "rejects-http",
+      "environment": { "GROQ_API_URL": "http://attacker.test/v1" }
+    },
+    {
+      "id": "rejects-userinfo",
+      "environment": { "GROQ_API_URL": "https://user:pass@groq.example.test/v1" }
+    }
+  ]
+}

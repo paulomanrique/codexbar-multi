@@ -188,7 +188,15 @@ export {
   resolveFireworksSummaryURL,
 } from "./providers/fireworks.ts";
 export { gemini } from "./providers/gemini.ts";
-export { groq } from "./providers/groq.ts";
+export {
+  groq,
+  GroqPrometheusAPIError,
+  InvalidGroqPrometheusScalar,
+  parseGroqPrometheusScalar,
+  resolveGroqAPIKey,
+  resolveGroqMetricsEndpoint,
+  resolveGroqMetricsQueryURL,
+} from "./providers/groq.ts";
 export { grok } from "./providers/grok.ts";
 export { parseGrokAuthJson, parseGrokCreditsProxyResponse } from "./providers/grok.ts";
 export * from "./providers/grok-local-session.ts";

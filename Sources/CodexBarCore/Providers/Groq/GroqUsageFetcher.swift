@@ -182,18 +182,24 @@ public struct GroqUsageFetcher: Sendable {
         try self.parseScalar(data: data)
     }
 
+    public static func _resolveQueryURLForTesting(
+        query: String,
+        environment: [String: String]) throws -> URL
+    {
+        try GroqSettingsReader.validateEndpointOverrides(environment: environment)
+        let baseURL = GroqSettingsReader.apiURL(environment: environment)
+            .appendingPathComponent("metrics")
+            .appendingPathComponent("prometheus")
+        return try self.queryURL(query: query, baseURL: baseURL)
+    }
+
     private static func queryScalar(
         query: String,
         apiKey: String,
         baseURL: URL,
         transport: any ProviderHTTPTransport) async throws -> Double
     {
-        guard var components = URLComponents(
-            url: baseURL.appendingPathComponent("api/v1/query"),
-            resolvingAgainstBaseURL: false)
-        else { throw GroqUsageError.invalidURL }
-        components.queryItems = [URLQueryItem(name: "query", value: query)]
-        guard let url = components.url else { throw GroqUsageError.invalidURL }
+        let url = try self.queryURL(query: query, baseURL: baseURL)
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -209,6 +215,16 @@ public struct GroqUsageFetcher: Sendable {
             throw GroqUsageError.apiError("HTTP \(response.statusCode): \(summary)")
         }
         return try self.parseScalar(data: response.data)
+    }
+
+    private static func queryURL(query: String, baseURL: URL) throws -> URL {
+        guard var components = URLComponents(
+            url: baseURL.appendingPathComponent("api/v1/query"),
+            resolvingAgainstBaseURL: false)
+        else { throw GroqUsageError.invalidURL }
+        components.queryItems = [URLQueryItem(name: "query", value: query)]
+        guard let url = components.url else { throw GroqUsageError.invalidURL }
+        return url
     }
 
     private static func parseScalar(data: Data) throws -> Double {

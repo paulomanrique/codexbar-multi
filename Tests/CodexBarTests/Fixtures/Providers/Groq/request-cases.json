@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "id": "requests-rate-default-endpoint",
+      "query": "sum(model_project_id_status_code:requests:rate5m)",
+      "environment": {}
+    },
+    {
+      "id": "tokens-in-default-endpoint",
+      "query": "sum(model_project_id:tokens_in:rate5m)",
+      "environment": {}
+    },
+    {
+      "id": "tokens-out-default-endpoint",
+      "query": "sum(model_project_id:tokens_out:rate5m)",
+      "environment": {}
+    },
+    {
+      "id": "cache-hits-custom-endpoint",
+      "query": "sum(model_project_id:prompt_cache_hits:rate5m)",
+      "environment": { "GROQ_API_URL": "groq.example.test/custom/" }
+    },
+    {
+      "id": "rejects-insecure-endpoint",
+      "query": "sum(model_project_id:tokens_in:rate5m)",
+      "environment": { "GROQ_API_URL": "http://attacker.test/v1" }
+    }
+  ]
+}

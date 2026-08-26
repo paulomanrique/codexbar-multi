@@ -14,6 +14,10 @@ private enum OracleCase: String {
     case fireworksSummary = "fireworks-summary"
     case fireworksSettings = "fireworks-settings"
     case fireworksRequest = "fireworks-request"
+    case groqScalar = "groq-scalar"
+    case groqSettings = "groq-settings"
+    case groqRequest = "groq-request"
+    case groqSnapshot = "groq-snapshot"
 
     var fixture: String {
         switch self {
@@ -31,6 +35,14 @@ private enum OracleCase: String {
             "Tests/CodexBarTests/Fixtures/Providers/Fireworks/settings-cases.json"
         case .fireworksRequest:
             "Tests/CodexBarTests/Fixtures/Providers/Fireworks/request-cases.json"
+        case .groqScalar:
+            "Tests/CodexBarTests/Fixtures/Providers/Groq/scalar-cases.json"
+        case .groqSettings:
+            "Tests/CodexBarTests/Fixtures/Providers/Groq/settings-cases.json"
+        case .groqRequest:
+            "Tests/CodexBarTests/Fixtures/Providers/Groq/request-cases.json"
+        case .groqSnapshot:
+            "Tests/CodexBarTests/Fixtures/Providers/Groq/snapshot-cases.json"
         }
     }
 }
@@ -44,7 +56,7 @@ private enum OracleError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidInvocation:
-            "usage: CodexBarOracle <snapshot-serialization|qwencloud-flat-subscription|moonshot-balance|moonshot-settings|fireworks-summary|fireworks-settings|fireworks-request>"
+            "usage: CodexBarOracle <snapshot-serialization|qwencloud-flat-subscription|moonshot-balance|moonshot-settings|fireworks-summary|fireworks-settings|fireworks-request|groq-scalar|groq-settings|groq-request|groq-snapshot>"
         case .unsafeFixturePath:
             "oracle fixture path is unsafe"
         case .fixtureTooLarge:
@@ -134,6 +146,86 @@ private struct FireworksRequestResult: Encodable {
 
 private struct FireworksRequestResults: Encodable {
     let cases: [FireworksRequestResult]
+}
+
+private struct GroqScalarFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let payload: JSONValue
+    }
+
+    let cases: [Case]
+}
+
+private struct GroqScalarResult: Encodable {
+    let id: String
+    let value: Double?
+    let error: String?
+}
+
+private struct GroqScalarResults: Encodable {
+    let cases: [GroqScalarResult]
+}
+
+private struct GroqSettingsFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let environment: [String: String]
+    }
+
+    let cases: [Case]
+}
+
+private struct GroqSettingsResult: Encodable {
+    let id: String
+    let resolvedMarker: String?
+    let apiURL: String?
+    let error: String?
+}
+
+private struct GroqSettingsResults: Encodable {
+    let cases: [GroqSettingsResult]
+}
+
+private struct GroqRequestFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let query: String
+        let environment: [String: String]
+    }
+
+    let cases: [Case]
+}
+
+private struct GroqRequestResult: Encodable {
+    let id: String
+    let url: String?
+    let error: String?
+}
+
+private struct GroqRequestResults: Encodable {
+    let cases: [GroqRequestResult]
+}
+
+private struct GroqSnapshotFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let requestRatePerSecond: Double
+        let inputTokenRatePerSecond: Double
+        let outputTokenRatePerSecond: Double
+        let promptCacheHitRatePerSecond: Double
+    }
+
+    let cases: [Case]
+}
+
+private struct GroqSnapshotResult: Encodable {
+    let id: String
+    let snapshot: UsageSnapshot
+}
+
+private struct GroqSnapshotResults: Encodable {
+    let cases: [GroqSnapshotResult]
 }
 
 private enum JSONValue: Codable {
@@ -312,6 +404,82 @@ private func run(case oracleCase: OracleCase, root: URL) throws -> Data {
             }
         }
         return try encodeJSON(FireworksRequestResults(cases: results))
+    case .groqScalar:
+        let fixture = try JSONDecoder().decode(
+            GroqScalarFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let results = fixture.cases.map { entry in
+            do {
+                let value = try GroqUsageFetcher._parseScalarForTesting(encodeJSON(entry.payload))
+                return GroqScalarResult(id: entry.id, value: value, error: nil)
+            } catch GroqUsageError.apiError {
+                return GroqScalarResult(id: entry.id, value: nil, error: "api-error")
+            } catch GroqUsageError.parseFailed {
+                return GroqScalarResult(id: entry.id, value: nil, error: "parse-failure")
+            } catch {
+                return GroqScalarResult(id: entry.id, value: nil, error: "unexpected-error")
+            }
+        }
+        return try encodeJSON(GroqScalarResults(cases: results))
+    case .groqSettings:
+        let fixture = try JSONDecoder().decode(
+            GroqSettingsFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let results = fixture.cases.map { entry in
+            do {
+                try GroqSettingsReader.validateEndpointOverrides(environment: entry.environment)
+                return GroqSettingsResult(
+                    id: entry.id,
+                    resolvedMarker: GroqSettingsReader.apiKey(environment: entry.environment),
+                    apiURL: GroqSettingsReader.apiURL(environment: entry.environment).absoluteString,
+                    error: nil)
+            } catch GroqSettingsError.invalidEndpointOverride {
+                return GroqSettingsResult(
+                    id: entry.id,
+                    resolvedMarker: nil,
+                    apiURL: nil,
+                    error: "invalid-endpoint")
+            } catch {
+                return GroqSettingsResult(
+                    id: entry.id,
+                    resolvedMarker: nil,
+                    apiURL: nil,
+                    error: "unexpected-error")
+            }
+        }
+        return try encodeJSON(GroqSettingsResults(cases: results))
+    case .groqRequest:
+        let fixture = try JSONDecoder().decode(
+            GroqRequestFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let results = fixture.cases.map { entry in
+            do {
+                let url = try GroqUsageFetcher._resolveQueryURLForTesting(
+                    query: entry.query,
+                    environment: entry.environment)
+                return GroqRequestResult(id: entry.id, url: url.absoluteString, error: nil)
+            } catch GroqSettingsError.invalidEndpointOverride {
+                return GroqRequestResult(id: entry.id, url: nil, error: "invalid-endpoint")
+            } catch {
+                return GroqRequestResult(id: entry.id, url: nil, error: "unexpected-error")
+            }
+        }
+        return try encodeJSON(GroqRequestResults(cases: results))
+    case .groqSnapshot:
+        let fixture = try JSONDecoder().decode(
+            GroqSnapshotFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let updatedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        return try encodeJSON(GroqSnapshotResults(cases: fixture.cases.map { entry in
+            GroqSnapshotResult(
+                id: entry.id,
+                snapshot: GroqUsageSnapshot(
+                    requestRatePerSecond: entry.requestRatePerSecond,
+                    inputTokenRatePerSecond: entry.inputTokenRatePerSecond,
+                    outputTokenRatePerSecond: entry.outputTokenRatePerSecond,
+                    promptCacheHitRatePerSecond: entry.promptCacheHitRatePerSecond,
+                    updatedAt: updatedAt).toUsageSnapshot())
+        }))
     }
 }
 

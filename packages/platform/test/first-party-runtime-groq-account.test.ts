@@ -10,7 +10,7 @@ const response = (request: HttpRequest) => ({
   status: 200,
   headers: { "content-type": "application/json" },
   body: new TextEncoder().encode(
-    JSON.stringify({ data: { result: [{ value: [1_777_000_000, "1"] }] } }),
+    JSON.stringify({ status: "success", data: { result: [{ value: [1_777_000_000, "1"] }] } }),
   ),
   url: request.url,
 });

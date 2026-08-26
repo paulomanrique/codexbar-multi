@@ -316,6 +316,12 @@ describe("Swift-derived HTTP provider parity wave two", () => {
     expect(
       requests.every(({ url }) => url.pathname === "/v1/metrics/prometheus/api/v1/query"),
     ).toBe(true);
+    expect(requests.map(({ url }) => url.href)).toEqual([
+      "https://api.groq.com/v1/metrics/prometheus/api/v1/query?query=sum(model_project_id_status_code:requests:rate5m)",
+      "https://api.groq.com/v1/metrics/prometheus/api/v1/query?query=sum(model_project_id:tokens_in:rate5m)",
+      "https://api.groq.com/v1/metrics/prometheus/api/v1/query?query=sum(model_project_id:tokens_out:rate5m)",
+      "https://api.groq.com/v1/metrics/prometheus/api/v1/query?query=sum(model_project_id:prompt_cache_hits:rate5m)",
+    ]);
     expect(
       requests.every(
         ({ options }) =>
@@ -334,7 +340,7 @@ describe("Swift-derived HTTP provider parity wave two", () => {
   it("matches Groq API key cleanup and canonical endpoint override", async () => {
     const requests: Request[] = [];
     await groq.fetchUsage(
-      context(() => json({ data: { result: [] } }), {
+      context(() => json({ status: "success", data: { result: [] } }), {
         settings: {
           GROQ_API_KEY: "  'fixture-key'  ",
           GROQ_API_URL: "groq.example.test/v1/",
@@ -369,7 +375,10 @@ describe("Swift-derived HTTP provider parity wave two", () => {
               : query?.includes("tokens_out")
                 ? 0
                 : 0.5 / 60;
-          return json({ data: { result: [{ value: [now.getTime() / 1_000, value] }] } });
+          return json({
+            status: "success",
+            data: { result: [{ value: [now.getTime() / 1_000, value] }] },
+          });
         },
         { settings: { GROQ_API_KEY: "fixture-key" } },
       ),
@@ -391,13 +400,57 @@ describe("Swift-derived HTTP provider parity wave two", () => {
     const requests: Request[] = [];
     await expect(
       groq.fetchUsage(
-        context(() => json({ data: { result: [] } }), {
+        context(() => json({ status: "success", data: { result: [] } }), {
           settings: { GROQ_API_KEY: "fixture-key", GROQ_API_URL: endpoint },
           requests,
         }),
       ),
     ).rejects.toThrow("api-failure: Groq endpoint override GROQ_API_URL");
     expect(requests).toHaveLength(0);
+  });
+
+  it.each([
+    [401, "authentication-expired", "Groq metrics access denied: denied"],
+    [403, "permission-denied", "Groq metrics access denied: denied"],
+    [429, "api-failure", "Groq metrics API error: HTTP 429: denied"],
+    [500, "api-failure", "Groq metrics API error: HTTP 500: denied"],
+  ])("matches Groq metrics HTTP failure classification for %s", async (status, kind, message) => {
+    await expect(
+      groq.fetchUsage(
+        context(() => ({ status, bodyText: " denied " }), {
+          settings: { GROQ_API_KEY: "fixture-key" },
+        }),
+      ),
+    ).rejects.toThrow(`${kind}: ${message}`);
+  });
+
+  it("matches Groq Prometheus error payloads as API failures", async () => {
+    await expect(
+      groq.fetchUsage(
+        context(() => json({ status: "error", error: "query failed" }), {
+          settings: { GROQ_API_KEY: "fixture-key" },
+        }),
+      ),
+    ).rejects.toThrow("api-failure: Groq metrics API error: query failed");
+  });
+
+  it.each([
+    [{ data: { result: [] } }, "status is missing"],
+    [{ status: "success", data: { result: {} } }, "result must be an array"],
+    [{ status: "success", data: { result: [null] } }, "result series must be an object"],
+    [{ status: "success", data: { result: [{ value: true }] } }, "value must be an array"],
+    [
+      { status: "success", data: { result: [{ value: [now.getTime() / 1_000, {}] }] } },
+      "value must contain strings or numbers",
+    ],
+  ])("matches Groq Prometheus malformed payload parse failure %#", async (payload, message) => {
+    await expect(
+      groq.fetchUsage(
+        context(() => json(payload), {
+          settings: { GROQ_API_KEY: "fixture-key" },
+        }),
+      ),
+    ).rejects.toThrow(`parse-failure: Groq metrics parse error: ${message}`);
   });
 
   it("matches Moonshot region routing, balance formatting and required response fields", async () => {

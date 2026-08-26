@@ -1604,16 +1604,19 @@ providers:
   - id: groq
     swiftGlobs:
       - Sources/CodexBar/Providers/Groq/**/*.swift
+      - Sources/CodexBarCore/Providers/Groq/**/*.swift
+      - Sources/CodexBarOracle/main.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Groq*Tests.swift
         - TestsLinux/*Groq*Tests.swift
       tsGlobs:
         - packages/providers/test/http-parity-wave-two.test.ts
+        - packages/providers/test/groq-api-parity.test.ts
         - packages/platform/test/first-party-runtime-groq-account.test.ts
+        - packages/testkit/test/testkit.test.ts
     fixtures:
-      - packages/providers/test/http-parity-wave-two.test.ts
-      - packages/platform/test/first-party-runtime-groq-account.test.ts
+      - Tests/CodexBarTests/Fixtures/Providers/Groq/*.json
     tsPaths:
       expected:
         - packages/providers/src/providers/groq.ts
@@ -1623,7 +1626,9 @@ providers:
         - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/http-parity-wave-two.test.ts
+      - packages/providers/test/groq-api-parity.test.ts
       - packages/platform/test/first-party-runtime-groq-account.test.ts
+      - packages/testkit/test/testkit.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

@@ -22,6 +22,10 @@ export const OFFLINE_SWIFT_ORACLE_CASES = [
   "fireworks-summary",
   "fireworks-settings",
   "fireworks-request",
+  "groq-scalar",
+  "groq-settings",
+  "groq-request",
+  "groq-snapshot",
 ] as const;
 export type OfflineSwiftOracleCase = (typeof OFFLINE_SWIFT_ORACLE_CASES)[number];
 

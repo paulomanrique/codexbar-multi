@@ -1,0 +1,71 @@
+{
+  "cases": [
+    {
+      "id": "mixed-number-and-string-values",
+      "payload": {
+        "status": "success",
+        "data": {
+          "result": [
+            { "value": [1710000000, "2.5"] },
+            { "value": [1710000000, 1.5] }
+          ]
+        }
+      }
+    },
+    {
+      "id": "uses-last-value-element",
+      "payload": {
+        "status": "success",
+        "data": {
+          "result": [
+            { "value": [1710000000, "999", "3.25"] }
+          ]
+        }
+      }
+    },
+    {
+      "id": "missing-data-is-zero",
+      "payload": { "status": "success" }
+    },
+    {
+      "id": "null-and-unparseable-series-are-ignored",
+      "payload": {
+        "status": "success",
+        "data": {
+          "result": [
+            { "value": null },
+            { "value": [1710000000, "not-a-number"] },
+            {}
+          ]
+        }
+      }
+    },
+    {
+      "id": "provider-error-status",
+      "payload": { "status": "error", "error": "fixture query failed" }
+    },
+    {
+      "id": "provider-error-without-message",
+      "payload": { "status": "error" }
+    },
+    {
+      "id": "missing-required-status",
+      "payload": { "data": { "result": [] } }
+    },
+    {
+      "id": "missing-required-result",
+      "payload": { "status": "success", "data": {} }
+    },
+    {
+      "id": "wrong-result-shape",
+      "payload": { "status": "success", "data": { "result": {} } }
+    },
+    {
+      "id": "wrong-value-shape",
+      "payload": {
+        "status": "success",
+        "data": { "result": [{ "value": "2.5" }] }
+      }
+    }
+  ]
+}

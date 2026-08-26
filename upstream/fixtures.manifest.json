@@ -65,13 +65,45 @@
       "tsTest": "packages/testkit/test/testkit.test.ts",
       "providers": ["fireworks"],
       "status": "parity"
+    },
+    {
+      "id": "groq-scalar",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Groq/scalar-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["groq"],
+      "status": "parity"
+    },
+    {
+      "id": "groq-settings",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Groq/settings-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["groq"],
+      "status": "parity"
+    },
+    {
+      "id": "groq-request",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Groq/request-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["groq"],
+      "status": "parity"
+    },
+    {
+      "id": "groq-snapshot",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Groq/snapshot-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["groq"],
+      "status": "parity"
     }
   ],
   "entries": [
     {
       "id": "provider-response-fixtures",
       "pathGlobs": ["Tests/CodexBarTests/Fixtures/Providers/**/*"],
-      "observedCount": 21,
+      "observedCount": 25,
       "testGlobs": [
         "Tests/CodexBarTests/*Provider*Tests.swift",
         "Tests/CodexBarTests/ProviderQuotaFixtureContractTests.swift"

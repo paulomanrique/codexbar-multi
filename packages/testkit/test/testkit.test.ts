@@ -8,16 +8,23 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vite-plus/test";
 import {
   fireworks,
+  groq,
+  GroqPrometheusAPIError,
   InvalidFireworksAccountSlug,
   InvalidFireworksSummary,
+  InvalidGroqPrometheusScalar,
   mapFirstPartyProviderSnapshot,
   mapProviderSnapshot,
   moonshot,
   parseFireworksSummary,
+  parseGroqPrometheusScalar,
   qwencloud,
   resolveFireworksAccountSlug,
   resolveFireworksAPIKey,
   resolveFireworksSummaryURL,
+  resolveGroqAPIKey,
+  resolveGroqMetricsEndpoint,
+  resolveGroqMetricsQueryURL,
   resolveMoonshotAPIKey,
   resolveMoonshotRegion,
 } from "@codexbar/providers";
@@ -305,6 +312,146 @@ async function fireworksRequestResults() {
         throw error;
       }
     }),
+  };
+}
+
+async function groqScalarResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Groq/scalar-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly { readonly id: string; readonly payload: unknown }[];
+  };
+  return {
+    cases: fixture.cases.map((entry) => {
+      try {
+        return { id: entry.id, value: parseGroqPrometheusScalar(entry.payload) };
+      } catch (error) {
+        if (error instanceof GroqPrometheusAPIError) {
+          return { id: entry.id, error: "api-error" };
+        }
+        if (error instanceof InvalidGroqPrometheusScalar) {
+          return { id: entry.id, error: "parse-failure" };
+        }
+        throw error;
+      }
+    }),
+  };
+}
+
+const groqContextForSettings = (environment: Readonly<Record<string, string>>): ProviderContext =>
+  providerContext(() => providerResponse({}), environment);
+
+async function groqSettingsResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Groq/settings-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly {
+      readonly id: string;
+      readonly environment: Readonly<Record<string, string>>;
+    }[];
+  };
+  return {
+    cases: fixture.cases.map((entry) => {
+      const context = groqContextForSettings(entry.environment);
+      const endpoint = resolveGroqMetricsEndpoint(context);
+      if (endpoint === undefined) return { id: entry.id, error: "invalid-endpoint" };
+      const resolvedMarker = resolveGroqAPIKey(context);
+      return {
+        id: entry.id,
+        ...(resolvedMarker === undefined ? {} : { resolvedMarker }),
+        apiURL: endpoint.href,
+      };
+    }),
+  };
+}
+
+async function groqRequestResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Groq/request-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly {
+      readonly id: string;
+      readonly query: string;
+      readonly environment: Readonly<Record<string, string>>;
+    }[];
+  };
+  return {
+    cases: fixture.cases.map((entry) => {
+      const endpoint = resolveGroqMetricsEndpoint(groqContextForSettings(entry.environment));
+      return endpoint === undefined
+        ? { id: entry.id, error: "invalid-endpoint" }
+        : { id: entry.id, url: resolveGroqMetricsQueryURL(endpoint, entry.query) };
+    }),
+  };
+}
+
+async function groqSnapshotResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Groq/snapshot-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly {
+      readonly id: string;
+      readonly requestRatePerSecond: number;
+      readonly inputTokenRatePerSecond: number;
+      readonly outputTokenRatePerSecond: number;
+      readonly promptCacheHitRatePerSecond: number;
+    }[];
+  };
+  const now = new Date("2023-11-14T22:13:20Z");
+  return {
+    cases: await Promise.all(
+      fixture.cases.map(async (entry) => {
+        const snapshot = await groq.fetchUsage(
+          providerContext(
+            (request) => {
+              const query = request.url.searchParams.get("query") ?? "";
+              const value = query.includes("requests")
+                ? entry.requestRatePerSecond
+                : query.includes("tokens_in")
+                  ? entry.inputTokenRatePerSecond
+                  : query.includes("tokens_out")
+                    ? entry.outputTokenRatePerSecond
+                    : entry.promptCacheHitRatePerSecond;
+              return providerResponse({
+                status: "success",
+                data: { result: [{ value: [now.getTime() / 1_000, value] }] },
+              });
+            },
+            { GROQ_API_KEY: "fixture-key" },
+          ),
+        );
+        return {
+          id: entry.id,
+          snapshot: normalizeUsageSnapshotJson(
+            mapFirstPartyProviderSnapshot(snapshot, groq.descriptor, now),
+          ),
+        };
+      }),
+    ),
   };
 }
 
@@ -683,6 +830,10 @@ describe("parity testkit", () => {
         ["fireworks-summary", await fireworksSummaryResults()],
         ["fireworks-settings", await fireworksSettingsResults()],
         ["fireworks-request", await fireworksRequestResults()],
+        ["groq-scalar", await groqScalarResults()],
+        ["groq-settings", await groqSettingsResults()],
+        ["groq-request", await groqRequestResults()],
+        ["groq-snapshot", await groqSnapshotResults()],
       ] as const) {
         const result = await compareWithBuiltOracle(oracleCase, typescript);
         expect(result.comparison.equal).toBe(true);
