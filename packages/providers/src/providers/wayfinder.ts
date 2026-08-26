@@ -1,10 +1,11 @@
 import type {
   FirstPartyProvider,
+  ProviderContext,
   ProviderDefinition,
   ProviderDescriptor,
   ProviderStrategy,
 } from "../types.ts";
-import { get, json, number, object, status, string } from "./_http.ts";
+import { get, json, object, status } from "./_http.ts";
 
 const defaultBaseURL = "http://127.0.0.1:8088";
 const clean = (value: string | undefined): string | undefined => {
@@ -42,14 +43,96 @@ const endpoint = (base: URL, path: string): URL => {
   url.search = "";
   return url;
 };
-const integer = (value: unknown, fallback = 0): number => {
-  const result = number(value);
-  return result === undefined ? fallback : Math.trunc(result);
-};
 const plural = (value: number, singular: string, pluralValue: string): string =>
   `${value} ${value === 1 ? singular : pluralValue}`;
 const percentage = (value: number): string =>
   value === Math.round(value) ? String(Math.round(value)) : value.toFixed(1);
+
+const isAbortError = (error: unknown): boolean =>
+  (error instanceof DOMException && error.name === "AbortError") ||
+  (error instanceof Error && error.name === "AbortError");
+
+const jsonNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const requiredObject = (ctx: ProviderContext, endpointName: string, value: unknown) => {
+  const result = object(value);
+  if (result === undefined)
+    throw ctx.fail.parseFailure(`Wayfinder ${endpointName} response must be an object.`);
+  return result;
+};
+
+const requiredString = (
+  ctx: ProviderContext,
+  endpointName: string,
+  value: unknown,
+  field: string,
+): string => {
+  if (typeof value !== "string")
+    throw ctx.fail.parseFailure(`Wayfinder ${endpointName}.${field} must be a string.`);
+  return value;
+};
+
+const requiredBoolean = (
+  ctx: ProviderContext,
+  endpointName: string,
+  value: unknown,
+  field: string,
+): boolean => {
+  if (typeof value !== "boolean")
+    throw ctx.fail.parseFailure(`Wayfinder ${endpointName}.${field} must be a boolean.`);
+  return value;
+};
+
+const requiredNumber = (
+  ctx: ProviderContext,
+  endpointName: string,
+  value: unknown,
+  field: string,
+): number => {
+  const result = jsonNumber(value);
+  if (result === undefined)
+    throw ctx.fail.parseFailure(`Wayfinder ${endpointName}.${field} must be a number.`);
+  return result;
+};
+
+const requiredInteger = (
+  ctx: ProviderContext,
+  endpointName: string,
+  value: unknown,
+  field: string,
+): number => {
+  const result = requiredNumber(ctx, endpointName, value, field);
+  if (!Number.isInteger(result))
+    throw ctx.fail.parseFailure(`Wayfinder ${endpointName}.${field} must be an integer.`);
+  return result;
+};
+
+const requiredStringArray = (
+  ctx: ProviderContext,
+  endpointName: string,
+  value: unknown,
+  field: string,
+): readonly string[] => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value))
+    throw ctx.fail.parseFailure(`Wayfinder ${endpointName}.${field} must be an array.`);
+  return value.map((item, index) => {
+    if (typeof item !== "string")
+      throw ctx.fail.parseFailure(`Wayfinder ${endpointName}.${field}[${index}] must be a string.`);
+    return item;
+  });
+};
+
+const modelCount = (ctx: ProviderContext, models: readonly unknown[]): number => {
+  models.forEach((item, index) => {
+    const model = object(item);
+    if (model === undefined)
+      throw ctx.fail.parseFailure(`Wayfinder /router/models.models[${index}] must be an object.`);
+    requiredString(ctx, "/router/models", model.name, `models[${index}].name`);
+  });
+  return models.length;
+};
 
 const metric = (text: string): number | undefined => {
   let sum: number | undefined;
@@ -94,42 +177,49 @@ const definition: ProviderDefinition = {
         timeoutSeconds: 5,
       });
       status(ctx, "Wayfinder", response);
-      return object(json(ctx, "Wayfinder", response));
+      return requiredObject(
+        ctx,
+        path.startsWith("/") ? path : `/${path}`,
+        json(ctx, "Wayfinder", response),
+      );
     };
     const health = await requestJSON("healthz");
     const models = await requestJSON("router/models");
     const savings = await requestJSON("v1/savings", ["period", "30d"]);
-    if (!health || !models || !savings)
-      throw ctx.fail.parseFailure("Wayfinder gateway response must be an object.");
-    const routeMap = object(savings.by_route);
-    if (!routeMap || !Array.isArray(models.models))
-      throw ctx.fail.parseFailure("Wayfinder savings or models response was incomplete.");
+    const routeMap = requiredObject(ctx, "/v1/savings", savings.by_route);
+    if (!Array.isArray(models.models))
+      throw ctx.fail.parseFailure("Wayfinder /router/models.models must be an array.");
     const routes = Object.entries(routeMap)
       .map(([name, value]) => {
-        const route = object(value);
+        const route = requiredObject(ctx, "/v1/savings", value);
         return {
           name,
-          requests: integer(route?.requests),
-          saved: number(route?.saved) ?? 0,
-          tokens: integer(route?.tokens),
+          requests: requiredInteger(
+            ctx,
+            "/v1/savings",
+            route.requests,
+            `by_route.${name}.requests`,
+          ),
+          saved: requiredNumber(ctx, "/v1/savings", route.saved, `by_route.${name}.saved`),
+          tokens: requiredInteger(ctx, "/v1/savings", route.tokens, `by_route.${name}.tokens`),
         };
       })
       .sort((left, right) => right.requests - left.requests || left.name.localeCompare(right.name));
-    const requests = integer(savings.requests);
-    const saved = number(savings.saved) ?? 0;
-    const savedPct = number(savings.saved_pct) ?? 0;
-    const priced = savings.priced === true;
-    const offline = health.offline === true;
-    const dryRun = models.dry_run === true;
-    const gatewayStatus = string(health.status) ?? "unknown";
-    const missingKeys = Array.isArray(health.missing_keys)
-      ? health.missing_keys.map(string).filter((item): item is string => Boolean(item))
-      : [];
+    const requests = requiredInteger(ctx, "/v1/savings", savings.requests, "requests");
+    const saved = requiredNumber(ctx, "/v1/savings", savings.saved, "saved");
+    const savedPct = requiredNumber(ctx, "/v1/savings", savings.saved_pct, "saved_pct");
+    const priced = requiredBoolean(ctx, "/v1/savings", savings.priced, "priced");
+    const offline = requiredBoolean(ctx, "/healthz", health.offline, "offline");
+    const dryRun = requiredBoolean(ctx, "/router/models", models.dry_run, "dry_run");
+    const gatewayStatus = requiredString(ctx, "/healthz", health.status, "status");
+    const missingKeys = requiredStringArray(ctx, "/healthz", health.missing_keys, "missing_keys");
+    const modelsCount = modelCount(ctx, models.models);
     let metrics: string | undefined;
     try {
       const response = await get(ctx, endpoint(base, "metrics").href, { timeoutSeconds: 5 });
       if (response.status >= 200 && response.status < 300) metrics = response.bodyText;
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
       // Metrics are deliberately best-effort in the Swift implementation.
     }
     const avgMs = metrics ? metric(metrics) : undefined;
@@ -142,7 +232,7 @@ const definition: ProviderDefinition = {
             ? "Degraded"
             : `Degraded — ${plural(missingKeys.length, "key", "keys")} missing`
           : "Local gateway";
-    const modelLabel = plural(models.models.length, "model", "models");
+    const modelLabel = plural(modelsCount, "model", "models");
     const gatewaySummary = `${gatewayStatus} · ${modelLabel}${offline ? " · offline" : ""}${dryRun ? " · dry run" : ""}`;
     const routed =
       requests > 0

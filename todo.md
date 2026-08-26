@@ -70,7 +70,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected Factory Cookie/Bearer isolation with Swift-compatible manual credential parsing.
     - [x] Add selected Qoder cookie isolation with strict international/China host routing.
     - [x] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
-    - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules.
+    - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules and bounded HTML-first usage parsing.
+    - [x] Add bounded MiniMax HTML/`__NEXT_DATA__` parser coverage for coding-plan fallback work.
   - [ ] Add account CRUD/UI and full Codex selected-home/web semantics.
     - [x] Add fail-closed selected Codex `auth.json`/PAT credential mapping with ambient credential suppression and no refresh-token exposure.
     - [x] Share exact `CODEX_HOME` resolution between Codex credential discovery and local cost roots.
@@ -150,7 +151,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 
 - [x] Port the complete 14-provider simple HTTP wave with dedicated TypeScript tests.
 - [ ] Finish Swift-oracle/native parity gates for the simple HTTP wave.
-- [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial; MiniMax selected-account isolation is complete).
+- [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial; MiniMax selected-account isolation and HTML-first parsing are complete).
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.

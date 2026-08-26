@@ -23,6 +23,13 @@ const response = (request: HttpRequest, body: unknown, status = 200): HttpRespon
   url: request.url,
 });
 
+const htmlResponse = (request: HttpRequest, body: string, status = 200): HttpResponse => ({
+  status,
+  headers: { "content-type": "text/html; charset=utf-8" },
+  body: new TextEncoder().encode(body),
+  url: request.url,
+});
+
 const remains = {
   model_remains: [
     {
@@ -46,7 +53,11 @@ const makeRuntime = (
   },
   requests: HttpRequest[],
   execute: (request: HttpRequest) => Effect.Effect<HttpResponse, InfrastructureError> = (request) =>
-    Effect.succeed(response(request, remains)),
+    Effect.succeed(
+      request.url.includes("/user-center/payment/coding-plan?")
+        ? htmlResponse(request, "<html><body>Coding Plan</body></html>")
+        : response(request, remains),
+    ),
 ) =>
   makeFirstPartyProviderRuntime({
     providers: [minimax],
@@ -109,8 +120,20 @@ describe("first-party runtime selected MiniMax accounts", () => {
           source: "web",
           snapshot: { identity: { providerId: "minimax" } },
         });
-        expect(requests).toHaveLength(1);
-        const request = requests[0]!;
+        expect(requests).toHaveLength(2);
+        expect(requests[0]).toMatchObject({
+          method: "GET",
+          url: "https://platform.minimax.io/user-center/payment/coding-plan?cycle_type=3",
+          headers: {
+            Cookie: expected.Cookie,
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": userAgent,
+            "Accept-Language": "en-US,en;q=0.9",
+            Origin: "https://platform.minimax.io",
+            Referer: "https://platform.minimax.io/user-center/payment/coding-plan",
+          },
+        });
+        const request = requests[1]!;
         expect(request).toMatchObject({
           method: "GET",
           url: expected.group
@@ -151,6 +174,41 @@ describe("first-party runtime selected MiniMax accounts", () => {
     },
   );
 
+  it("uses a bounded __NEXT_DATA__ coding-plan snapshot without probing remains", async () => {
+    const requests: HttpRequest[] = [];
+    const nextData = {
+      props: {
+        pageProps: {
+          data: {
+            currentSubscribeTitle: "Coding Plan Pro",
+            modelRemains: [
+              {
+                modelName: "general",
+                currentIntervalTotalCount: 100,
+                currentIntervalUsageCount: 25,
+              },
+            ],
+          },
+        },
+      },
+    };
+    const outcome = await Effect.runPromise(
+      makeRuntime({ cookie }, requests, (request) =>
+        Effect.succeed(
+          htmlResponse(
+            request,
+            `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script>`,
+          ),
+        ),
+      ).fetch("minimax", { sourceMode: "web", includeCredits: false }),
+    );
+    expect(requests).toHaveLength(1);
+    expect(outcome.snapshot).toMatchObject({
+      primary: { usedPercent: 75 },
+      identity: { providerId: "minimax", loginMethod: "Coding Plan Pro" },
+    });
+  });
+
   it("redacts cookie, bearer and group ID from transport failures", async () => {
     const requests: HttpRequest[] = [];
     const failure = await Effect.runPromise(
@@ -178,16 +236,18 @@ describe("first-party runtime selected MiniMax accounts", () => {
     const outcome = await Effect.runPromise(
       makeRuntime({ cookie }, requests, (request) =>
         Effect.succeed(
-          request.url.startsWith("https://platform.minimax.io/")
-            ? response(request, {}, 404)
-            : response(request, remains),
+          request.url.includes("/user-center/payment/coding-plan?")
+            ? htmlResponse(request, "<html><body>Coding Plan</body></html>")
+            : request.url.startsWith("https://platform.minimax.io/")
+              ? response(request, {}, 404)
+              : response(request, remains),
         ),
       ).fetch("minimax", { sourceMode: "web", includeCredits: false }),
     );
     expect(outcome.strategyId).toBe("minimax.web");
-    expect(requests).toHaveLength(2);
-    expect(requests[0]?.headers?.Origin).toBe("https://platform.minimax.io");
-    expect(requests[1]).toMatchObject({
+    expect(requests).toHaveLength(3);
+    expect(requests[1]?.headers?.Origin).toBe("https://platform.minimax.io");
+    expect(requests[2]).toMatchObject({
       url: "https://www.minimax.io/v1/api/openplatform/coding_plan/remains",
       headers: {
         Origin: "https://www.minimax.io",

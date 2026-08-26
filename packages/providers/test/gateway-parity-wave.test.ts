@@ -480,4 +480,154 @@ describe("Swift-derived LiteLLM, ZenMux, and Wayfinder parity", () => {
       "api-failure: WAYFINDER_GATEWAY_URL must be HTTPS, or HTTP only for a loopback gateway.",
     );
   });
+
+  it("keeps Wayfinder metrics best-effort for non-cancellation failures", async () => {
+    const snapshot = await wayfinder.fetchUsage(
+      context((request) => {
+        if (request.url.pathname === "/healthz") return response({ status: "ok", offline: false });
+        if (request.url.pathname === "/router/models")
+          return response({ dry_run: true, models: [{ name: "local" }] });
+        if (request.url.pathname === "/v1/savings")
+          return response({
+            priced: false,
+            requests: 1,
+            tokens: 10,
+            realized: 1,
+            baseline: 2,
+            saved: 1,
+            saved_pct: 50,
+            by_route: { local: { requests: 1, saved: 1, tokens: 10 } },
+          });
+        if (request.url.pathname === "/metrics") throw new Error("metrics down");
+        throw new Error(`Unexpected request ${request.url}`);
+      }, {}),
+    );
+    const [usage] = snapshot.details as Array<{ readonly rows: unknown }>;
+    expect(usage?.rows).toEqual([
+      { label: "Gateway", value: "ok · 1 model · dry run" },
+      { label: "Routed", value: "local: 1" },
+      { label: "Saved", value: "50% vs highest-cost route" },
+    ]);
+  });
+
+  it("preserves Wayfinder cancellation from optional metrics", async () => {
+    const aborted = new Error("cancelled");
+    aborted.name = "AbortError";
+    const requests: Request[] = [];
+    await expect(
+      wayfinder.fetchUsage(
+        context(
+          (request) => {
+            if (request.url.pathname === "/healthz")
+              return response({ status: "ok", offline: false });
+            if (request.url.pathname === "/router/models")
+              return response({ dry_run: false, models: [{ name: "local" }] });
+            if (request.url.pathname === "/v1/savings")
+              return response({
+                priced: false,
+                requests: 0,
+                tokens: 0,
+                realized: 0,
+                baseline: 0,
+                saved: 0,
+                saved_pct: 0,
+                by_route: {},
+              });
+            if (request.url.pathname === "/metrics") throw aborted;
+            throw new Error(`Unexpected request ${request.url}`);
+          },
+          {},
+          requests,
+        ),
+      ),
+    ).rejects.toBe(aborted);
+    expect(requests.map((request) => request.url.pathname)).toEqual([
+      "/healthz",
+      "/router/models",
+      "/v1/savings",
+      "/metrics",
+    ]);
+  });
+
+  it.each([
+    {
+      endpoint: "/healthz",
+      body: { offline: false },
+      expected: "Wayfinder /healthz.status must be a string.",
+    },
+    {
+      endpoint: "/healthz",
+      body: { status: "ok", offline: "false" },
+      expected: "Wayfinder /healthz.offline must be a boolean.",
+    },
+    {
+      endpoint: "/healthz",
+      body: { status: "degraded", offline: false, missing_keys: [1] },
+      expected: "Wayfinder /healthz.missing_keys[0] must be a string.",
+    },
+    {
+      endpoint: "/router/models",
+      body: { dry_run: false, models: [{}] },
+      expected: "Wayfinder /router/models.models[0].name must be a string.",
+    },
+    {
+      endpoint: "/v1/savings",
+      body: {
+        priced: true,
+        requests: 1,
+        tokens: 10,
+        realized: 1,
+        baseline: 2,
+        saved: 1,
+        by_route: { local: { requests: 1, saved: 1, tokens: 10 } },
+      },
+      expected: "Wayfinder /v1/savings.saved_pct must be a number.",
+    },
+    {
+      endpoint: "/v1/savings",
+      body: {
+        priced: true,
+        requests: 1,
+        tokens: 10,
+        realized: 1,
+        baseline: 2,
+        saved: 1,
+        saved_pct: 50,
+        by_route: { local: { requests: "1", saved: 1, tokens: 10 } },
+      },
+      expected: "Wayfinder /v1/savings.by_route.local.requests must be a number.",
+    },
+  ])("rejects malformed Wayfinder $endpoint: $expected", async ({ endpoint, body, expected }) => {
+    await expect(
+      wayfinder.fetchUsage(
+        context((request) => {
+          if (request.url.pathname === "/healthz")
+            return response(endpoint === "/healthz" ? body : { status: "ok", offline: false });
+          if (request.url.pathname === "/router/models")
+            return response(
+              endpoint === "/router/models"
+                ? body
+                : { dry_run: false, models: [{ name: "local" }] },
+            );
+          if (request.url.pathname === "/v1/savings")
+            return response(
+              endpoint === "/v1/savings"
+                ? body
+                : {
+                    priced: true,
+                    requests: 1,
+                    tokens: 10,
+                    realized: 1,
+                    baseline: 2,
+                    saved: 1,
+                    saved_pct: 50,
+                    by_route: { local: { requests: 1, saved: 1, tokens: 10 } },
+                  },
+            );
+          if (request.url.pathname === "/metrics") return { status: 404, bodyText: "" };
+          throw new Error(`Unexpected request ${request.url}`);
+        }, {}),
+      ),
+    ).rejects.toThrow(`parse-failure: ${expected}`);
+  });
 });

@@ -7,6 +7,11 @@ import type {
 } from "../types.ts";
 import { number, object, status, string } from "./_http.ts";
 import { normalizeMiniMaxCookieCredential } from "./minimax-credential.ts";
+import {
+  looksMiniMaxHTMLSignedOut,
+  parseMiniMaxHTML,
+  type MiniMaxHTMLTextFallback,
+} from "./minimax-html.ts";
 
 type Region = "global" | "cn";
 type Service = {
@@ -358,8 +363,62 @@ const webHeaders = (
   };
 };
 
-const webUsage = async (ctx: ProviderContext) => {
-  const credential = await webCredential(ctx);
+const webPageHeaders = (
+  selectedRegion: Region,
+  credential: Awaited<ReturnType<typeof webCredential>>,
+) => {
+  const origin = `https://${platformHost(selectedRegion)}`;
+  return {
+    Cookie: credential.cookieHeader,
+    ...(credential.authorizationToken
+      ? { Authorization: `Bearer ${credential.authorizationToken}` }
+      : {}),
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": miniMaxUserAgent,
+    Origin: origin,
+    Referer: `${origin}/user-center/payment/coding-plan`,
+  };
+};
+
+const textFallbackSnapshot = (ctx: ProviderContext, fallback: MiniMaxHTMLTextFallback) => {
+  const usedPercent = fallback.used_percent ?? 0;
+  const resetsAt =
+    fallback.resets_at_epoch_ms === undefined
+      ? undefined
+      : ctx.date.unixMillis(fallback.resets_at_epoch_ms);
+  const prompts = fallback.available_prompts;
+  const windowMinutes = fallback.window_minutes;
+  return {
+    primary: {
+      usedPercent,
+      ...(windowMinutes === undefined ? {} : { windowMinutes }),
+      ...(resetsAt === undefined ? {} : { resetsAt }),
+      ...(prompts === undefined
+        ? {}
+        : {
+            resetDescription: `${ctx.format.number(prompts)} prompts${
+              windowMinutes === undefined ? "" : ` / ${ctx.format.number(windowMinutes / 60)} hours`
+            }`,
+          }),
+    },
+    details: [],
+    identity: fallback.plan_name ? { loginMethod: fallback.plan_name } : {},
+  };
+};
+
+const responseContentType = (headers: Readonly<Record<string, string>> | undefined): string => {
+  if (!headers) return "";
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === "content-type") return value.toLowerCase();
+  }
+  return "";
+};
+
+const fetchWebRemains = async (
+  ctx: ProviderContext,
+  credential: Awaited<ReturnType<typeof webCredential>>,
+) => {
   const query = new URLSearchParams();
   if (credential.groupId) query.set("GroupId", credential.groupId);
   const suffix = query.size > 0 ? `?${query}` : "";
@@ -386,6 +445,54 @@ const webUsage = async (ctx: ProviderContext) => {
     }
   }
   throw terminalError ?? ctx.fail.apiFailure("MiniMax coding-plan endpoints did not succeed.");
+};
+
+const withFallbackPlan = (
+  snapshotValue: Record<string, unknown>,
+  fallback: MiniMaxHTMLTextFallback,
+): Record<string, unknown> => {
+  if (!fallback.plan_name) return snapshotValue;
+  const identity = object(snapshotValue.identity) ?? {};
+  if (string(identity.loginMethod)) return snapshotValue;
+  return { ...snapshotValue, identity: { ...identity, loginMethod: fallback.plan_name } };
+};
+
+const webUsage = async (ctx: ProviderContext) => {
+  const credential = await webCredential(ctx);
+  const pageURL = `https://${platformHost(credential.region)}/user-center/payment/coding-plan?cycle_type=3`;
+  const pageResponse = await ctx.http.get(pageURL, {
+    headers: webPageHeaders(credential.region, credential),
+  });
+  if (pageResponse.status === 401 || pageResponse.status === 403) {
+    throw ctx.fail.authenticationExpired("MiniMax coding-plan session expired.");
+  }
+  status(ctx, "MiniMax", pageResponse);
+
+  if (responseContentType(pageResponse.headers).includes("application/json")) {
+    let parsedJSON: unknown;
+    try {
+      parsedJSON = JSON.parse(pageResponse.bodyText);
+    } catch {
+      throw ctx.fail.parseFailure("MiniMax coding-plan response was not valid JSON.");
+    }
+    const root = object(parsedJSON);
+    if (!root) throw ctx.fail.parseFailure("MiniMax response must be an object.");
+    return snapshot(ctx, root);
+  }
+  if (looksMiniMaxHTMLSignedOut(pageResponse.bodyText)) {
+    throw ctx.fail.authenticationExpired("MiniMax coding-plan session expired.");
+  }
+  const parsed = parseMiniMaxHTML(pageResponse.bodyText, { now: ctx.date.now() });
+  if (parsed?.source === "next-data") return snapshot(ctx, parsed.payload);
+  if (parsed?.source === "text") {
+    try {
+      return withFallbackPlan(await fetchWebRemains(ctx, credential), parsed.fallback);
+    } catch (error) {
+      if (isAbort(error) || isAuthenticationFailure(error)) throw error;
+      return textFallbackSnapshot(ctx, parsed.fallback);
+    }
+  }
+  return fetchWebRemains(ctx, credential);
 };
 
 const definition: ProviderDefinition = {
