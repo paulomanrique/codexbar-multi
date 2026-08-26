@@ -43,6 +43,35 @@ export const safeDateFromTimestamp = (timestamp: number): Date | undefined => {
 export const firstPartyProviderId = (id: string): ProviderId | undefined =>
   (PROVIDER_IDS as readonly string[]).includes(id) ? (id as ProviderId) : undefined;
 
+/** Leaving Codex is a cancellation boundary for its host-owned interactive login. */
+export const shouldAutoCancelCodexAccountLogin = (
+  pending: boolean,
+  selectedProvider: ProviderId | undefined,
+  cancellationRequested: boolean,
+): boolean => pending && selectedProvider !== "codex" && !cancellationRequested;
+
+/**
+ * A successful host login always needs reconciliation, but its returned roster
+ * is safe to publish only if the renderer is still in the original Codex scope.
+ */
+export const codexAccountLoginSuccessDisposition = (
+  requestScope: number,
+  currentScope: number,
+  selectedProvider: ProviderId | undefined,
+) =>
+  ({
+    publishRoster: requestScope === currentScope && selectedProvider === "codex",
+    reconcile: true,
+  }) as const;
+
+/** Cancellation/failure copy must never leak into a provider selected later. */
+export const shouldPublishCodexAccountLoginFailure = (
+  requestScope: number,
+  currentScope: number,
+  selectedProvider: ProviderId | undefined,
+  cancelled: boolean,
+): boolean => !cancelled && requestScope === currentScope && selectedProvider === "codex";
+
 /** The renderer can submit only the opaque ID from the current Claude account card. */
 export const claudeSwapActivationRequest = (
   provider: Pick<DashboardProviderDTO, "id">,

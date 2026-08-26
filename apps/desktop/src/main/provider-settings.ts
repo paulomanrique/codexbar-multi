@@ -14,7 +14,31 @@ import type { PersistedCodexBarConfig } from "@codexbar/core";
 export interface ProviderSettingsCapability {
   readonly id: ProviderId;
   readonly availableSources: readonly ProviderSourceMode[];
+  readonly tokenAccounts?: {
+    readonly selection: true;
+    readonly creation: "none" | "codex-cli";
+    readonly selectionSetsCookieSource?: "manual";
+  };
 }
+
+export const providerTokenAccountSettingsCapability = (
+  provider: ProviderId,
+  support:
+    | {
+        readonly runtimeSelectionAvailable: boolean;
+        readonly requiresManualCookieSource: boolean;
+      }
+    | undefined,
+): ProviderSettingsCapability["tokenAccounts"] =>
+  support?.runtimeSelectionAvailable === true
+    ? {
+        selection: true,
+        creation: provider === "codex" ? "codex-cli" : "none",
+        ...(support.requiresManualCookieSource
+          ? { selectionSetsCookieSource: "manual" as const }
+          : {}),
+      }
+    : undefined;
 
 export const providerSettingsSourcesForKind = (
   kind: "api" | "web" | "cli" | "local" | "oauth",
@@ -47,7 +71,7 @@ export const providerSettingsProjection = (
   capabilities: readonly ProviderSettingsCapability[],
 ): readonly ProviderSettingsDTO[] => {
   const configured = new Map(config.providers.map((provider) => [provider.id, provider]));
-  return capabilities.map(({ id: provider, availableSources }) => {
+  return capabilities.map(({ id: provider, availableSources, tokenAccounts }) => {
     const entry = configured.get(provider);
     const source = entry?.source;
     return {
@@ -55,6 +79,7 @@ export const providerSettingsProjection = (
       enabled: entry?.enabled ?? provider === "codex",
       source: source !== undefined && availableSources.includes(source) ? source : "auto",
       availableSources: [...availableSources],
+      ...(tokenAccounts === undefined ? {} : { tokenAccounts }),
     };
   });
 };

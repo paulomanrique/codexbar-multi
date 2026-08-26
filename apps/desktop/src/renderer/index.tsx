@@ -5,6 +5,7 @@ import type {
   DashboardProviderDTO,
   DashboardSnapshotDTO,
   HistoryQueryResultDTO,
+  ProviderId,
   ProviderSettingsDTO,
   ProviderSettingsListDTO,
   SessionQuotaNotificationSettingsDTO,
@@ -25,6 +26,7 @@ import { createLocalization } from "./localization.ts";
 import {
   type BrowserLoginPresentationStatus,
   browserLoginActionState,
+  codexAccountLoginSuccessDisposition,
   makeBrowserLoginMutationGate,
   makeDefaultBrowserSessionStatusLoader,
   makeOverviewLoader,
@@ -35,6 +37,8 @@ import {
   historySince,
   implementationPresentation,
   safeDateFromTimestamp,
+  shouldAutoCancelCodexAccountLogin,
+  shouldPublishCodexAccountLoginFailure,
 } from "./view-model.ts";
 import {
   isAvailableProviderSource,
@@ -42,11 +46,9 @@ import {
   optimisticRemoveTokenAccountRoster,
   optimisticTokenAccountRoster,
   sessionQuotaNotificationSettingsViewState,
-  tokenAccountDetail,
-  tokenAccountLabel,
-  tokenAccountSelectionViewState,
 } from "./settings-view-model.ts";
 import { SpendDashboard } from "./spend-dashboard.tsx";
+import { TokenAccountSettings } from "./token-account-settings.tsx";
 import "./styles.css";
 
 type DashboardTab = "usage" | "history" | "costs" | "spend" | "settings";
@@ -450,148 +452,6 @@ function SettingsPanel({
   );
 }
 
-function TokenAccountSettings({
-  roster,
-  loading,
-  pending,
-  loginPending,
-  error,
-  copy,
-  onAdd,
-  onCancelAdd,
-  onSelect,
-  onRename,
-  onRemove,
-}: {
-  readonly roster: TokenAccountRosterDTO | undefined;
-  readonly loading: boolean;
-  readonly pending: boolean;
-  readonly loginPending: boolean;
-  readonly error: string | undefined;
-  readonly copy: {
-    readonly title: string;
-    readonly account: string;
-    readonly label: string;
-    readonly empty: string;
-    readonly apply: string;
-    readonly refreshing: string;
-    readonly remove: string;
-    readonly add: string;
-    readonly cancel: string;
-  };
-  readonly onAdd: () => void;
-  readonly onCancelAdd: () => void;
-  readonly onSelect: (accountId: string) => void;
-  readonly onRename: (accountId: string, label: string) => void;
-  readonly onRemove: (accountId: string) => void;
-}) {
-  const state = tokenAccountSelectionViewState(roster, loading, pending || loginPending, error);
-  const statusId = "codex-token-account-status";
-  const [draftLabel, setDraftLabel] = useState("");
-  const activeLabel = state.active?.label.trim() ?? "";
-  const trimmedDraftLabel = draftLabel.trim();
-  const renameDisabled =
-    state.disabled ||
-    state.active === undefined ||
-    trimmedDraftLabel.length === 0 ||
-    trimmedDraftLabel.length > 256 ||
-    trimmedDraftLabel === activeLabel;
-  useEffect(() => {
-    setDraftLabel(activeLabel);
-  }, [activeLabel, state.activeId]);
-  return (
-    <section className="settings-token-accounts" aria-labelledby="codex-token-account-heading">
-      <h3 id="codex-token-account-heading">{copy.title}</h3>
-      {roster !== undefined && roster.accounts.length > 0 ? (
-        <label className="settings-token-account">
-          <span>{copy.account}</span>
-          <select
-            aria-describedby={state.status === "ready" ? undefined : statusId}
-            aria-label={copy.account}
-            disabled={state.disabled}
-            value={state.activeId}
-            onChange={(event) => {
-              if (event.target.value === state.activeId) return;
-              onSelect(event.target.value);
-            }}
-          >
-            {roster.accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {tokenAccountLabel(account, copy.account)}
-              </option>
-            ))}
-          </select>
-          {tokenAccountDetail(state.active) === undefined ? null : (
-            <small className="token-account-detail">{tokenAccountDetail(state.active)}</small>
-          )}
-        </label>
-      ) : null}
-      {state.active === undefined ? null : (
-        <form
-          className="settings-token-account-rename"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (renameDisabled || state.active === undefined) return;
-            onRename(state.active.id, trimmedDraftLabel);
-          }}
-        >
-          <label>
-            <span>{copy.label}</span>
-            <input
-              aria-describedby={state.status === "ready" ? undefined : statusId}
-              aria-label={copy.label}
-              autoComplete="off"
-              disabled={state.disabled}
-              maxLength={256}
-              value={draftLabel}
-              onChange={(event) => setDraftLabel(event.target.value)}
-            />
-          </label>
-          <button className="secondary" disabled={renameDisabled} type="submit">
-            {copy.apply}
-          </button>
-          <button
-            className="secondary danger"
-            disabled={state.disabled}
-            type="button"
-            onClick={() => {
-              if (state.active !== undefined) onRemove(state.active.id);
-            }}
-          >
-            {copy.remove}
-          </button>
-        </form>
-      )}
-      <div className="settings-token-account-actions">
-        {loginPending ? (
-          <button className="secondary" type="button" onClick={onCancelAdd}>
-            {copy.cancel}
-          </button>
-        ) : (
-          <button className="secondary" disabled={state.disabled} type="button" onClick={onAdd}>
-            {copy.add}
-          </button>
-        )}
-      </div>
-      {state.status === "loading" || state.status === "pending" ? (
-        <p className="muted" id={statusId}>
-          {copy.refreshing}
-        </p>
-      ) : null}
-      {state.status === "empty" ? (
-        <p className="muted" id={statusId}>
-          {copy.empty}
-        </p>
-      ) : null}
-      {state.status === "error" ? (
-        <p className="error" id={statusId} role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
 function SessionQuotaNotificationSettings({
   settings,
   pending,
@@ -754,6 +614,8 @@ function App() {
   const [codexAccountLoginPending, setCodexAccountLoginPending] = useState(false);
   const [tokenAccountError, setTokenAccountError] = useState<string>();
   const codexAccountLoginCancelled = useRef(false);
+  const codexAccountLoginAutoCancelRequested = useRef(false);
+  const selectedProviderFirstPartyIdRef = useRef<ProviderId | undefined>(undefined);
   const tokenAccountScope = useRef(0);
   const [savingSessionQuotaNotificationSettings, setSavingSessionQuotaNotificationSettings] =
     useState(false);
@@ -812,9 +674,14 @@ function App() {
   );
   const selectedProviderFirstPartyId =
     selectedProvider === undefined ? undefined : firstPartyProviderId(selectedProvider.id);
+  selectedProviderFirstPartyIdRef.current = selectedProviderFirstPartyId;
   const selectedProviderSettings = providerSettings?.providers.find(
     (settings) => settings.provider === selectedProviderFirstPartyId,
   );
+  const selectedTokenAccountProvider =
+    selectedProviderSettings?.tokenAccounts === undefined
+      ? undefined
+      : selectedProviderFirstPartyId;
   const filteredProviders =
     snapshot?.providers.filter((provider) => {
       const query = providerSearch.trim().toLocaleLowerCase(localization.locale);
@@ -888,12 +755,12 @@ function App() {
     setTokenAccountRoster(undefined);
     setTokenAccountError(undefined);
     setTokenAccountPending(false);
-    if (selectedProviderFirstPartyId !== "codex") {
+    if (selectedTokenAccountProvider === undefined) {
       setTokenAccountLoading(false);
       return;
     }
     setTokenAccountLoading(true);
-    void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+    void window.codexbar.listTokenAccounts({ provider: selectedTokenAccountProvider }).then(
       (roster) => {
         if (tokenAccountScope.current !== scope) return;
         setTokenAccountRoster(roster);
@@ -905,7 +772,21 @@ function App() {
         setTokenAccountLoading(false);
       },
     );
-  }, [activityVersion, localization, selectedProviderFirstPartyId]);
+  }, [activityVersion, localization, selectedTokenAccountProvider]);
+  useEffect(() => {
+    if (
+      !shouldAutoCancelCodexAccountLogin(
+        codexAccountLoginPending,
+        selectedProviderFirstPartyId,
+        codexAccountLoginAutoCancelRequested.current,
+      )
+    ) {
+      return;
+    }
+    codexAccountLoginCancelled.current = true;
+    codexAccountLoginAutoCancelRequested.current = true;
+    void window.codexbar.cancelCodexAccountLogin({ provider: "codex" }).catch(() => undefined);
+  }, [codexAccountLoginPending, selectedProviderFirstPartyId]);
   useEffect(() => {
     if (selectedProviderFirstPartyId === undefined) {
       setHistory(undefined);
@@ -975,7 +856,8 @@ function App() {
   };
   const selectTokenAccount = (accountId: string): void => {
     const previous = tokenAccountRoster;
-    if (selectedProviderFirstPartyId !== "codex" || previous === undefined) return;
+    const provider = selectedTokenAccountProvider;
+    if (provider === undefined || previous?.provider !== provider) return;
     const optimistic = optimisticTokenAccountRoster(previous, accountId);
     if (optimistic === undefined || optimistic.activeIndex === previous.activeIndex) return;
     const scope = tokenAccountScope.current;
@@ -983,7 +865,7 @@ function App() {
     setTokenAccountPending(true);
     setTokenAccountError(undefined);
     const selection = window.codexbar.selectTokenAccount({
-      provider: "codex",
+      provider,
       accountId,
       expectedRevision: previous.revision,
     });
@@ -1000,7 +882,7 @@ function App() {
           if (tokenAccountScope.current !== scope) return;
           setTokenAccountRoster(previous);
           setTokenAccountError(localization.upstream("Unavailable"));
-          void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+          void window.codexbar.listTokenAccounts({ provider }).then(
             (roster) => {
               if (tokenAccountScope.current === scope) setTokenAccountRoster(roster);
             },
@@ -1015,7 +897,8 @@ function App() {
   };
   const renameTokenAccount = (accountId: string, label: string): void => {
     const previous = tokenAccountRoster;
-    if (selectedProviderFirstPartyId !== "codex" || previous === undefined) return;
+    const provider = selectedTokenAccountProvider;
+    if (provider === undefined || previous?.provider !== provider) return;
     const optimistic = optimisticRenameTokenAccountRoster(previous, accountId, label);
     if (optimistic === undefined) return;
     const scope = tokenAccountScope.current;
@@ -1023,7 +906,7 @@ function App() {
     setTokenAccountPending(true);
     setTokenAccountError(undefined);
     const rename = window.codexbar.renameTokenAccount({
-      provider: "codex",
+      provider,
       accountId,
       label: label.trim(),
       expectedRevision: previous.revision,
@@ -1038,7 +921,7 @@ function App() {
           if (tokenAccountScope.current !== scope) return;
           setTokenAccountRoster(previous);
           setTokenAccountError(localization.upstream("Unavailable"));
-          void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+          void window.codexbar.listTokenAccounts({ provider }).then(
             (roster) => {
               if (tokenAccountScope.current === scope) setTokenAccountRoster(roster);
             },
@@ -1053,7 +936,8 @@ function App() {
   };
   const removeTokenAccount = (accountId: string): void => {
     const previous = tokenAccountRoster;
-    if (selectedProviderFirstPartyId !== "codex" || previous === undefined) return;
+    const provider = selectedTokenAccountProvider;
+    if (provider === undefined || previous?.provider !== provider) return;
     const optimistic = optimisticRemoveTokenAccountRoster(previous, accountId);
     if (optimistic === undefined) return;
     const scope = tokenAccountScope.current;
@@ -1061,7 +945,7 @@ function App() {
     setTokenAccountPending(true);
     setTokenAccountError(undefined);
     const removal = window.codexbar.removeTokenAccount({
-      provider: "codex",
+      provider,
       accountId,
       expectedRevision: previous.revision,
     });
@@ -1080,7 +964,7 @@ function App() {
           // cleanup fails. Hide stale controls until a host relist succeeds.
           setTokenAccountRoster(undefined);
           setTokenAccountError(localization.upstream("Unavailable"));
-          void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+          void window.codexbar.listTokenAccounts({ provider }).then(
             (roster) => {
               if (tokenAccountScope.current === scope) setTokenAccountRoster(roster);
             },
@@ -1094,22 +978,43 @@ function App() {
       });
   };
   const startCodexAccountLogin = (): void => {
-    if (selectedProviderFirstPartyId !== "codex" || codexAccountLoginPending) return;
+    if (
+      selectedProviderSettings?.tokenAccounts?.creation !== "codex-cli" ||
+      codexAccountLoginPending
+    )
+      return;
     const scope = tokenAccountScope.current;
     codexAccountLoginCancelled.current = false;
+    codexAccountLoginAutoCancelRequested.current = false;
     setCodexAccountLoginPending(true);
     setTokenAccountError(undefined);
     void window.codexbar
       .startCodexAccountLogin({ provider: "codex" })
       .then((roster) => {
-        if (tokenAccountScope.current !== scope) return;
-        setTokenAccountRoster(roster);
-        void loadOverview()
-          .then(() => setActivityVersion((version) => version + 1))
-          .catch(() => setError(localization.upstream("Unavailable")));
+        const disposition = codexAccountLoginSuccessDisposition(
+          scope,
+          tokenAccountScope.current,
+          selectedProviderFirstPartyIdRef.current,
+        );
+        if (disposition.publishRoster) setTokenAccountRoster(roster);
+        // Reconcile even after Codex -> other -> Codex. The intermediate
+        // relist may have raced the host's durable credential publication.
+        if (disposition.reconcile) {
+          void loadOverview()
+            .then(() => setActivityVersion((version) => version + 1))
+            .catch(() => setError(localization.upstream("Unavailable")));
+        }
       })
       .catch(() => {
-        if (tokenAccountScope.current !== scope || codexAccountLoginCancelled.current) return;
+        if (
+          !shouldPublishCodexAccountLoginFailure(
+            scope,
+            tokenAccountScope.current,
+            selectedProviderFirstPartyIdRef.current,
+            codexAccountLoginCancelled.current,
+          )
+        )
+          return;
         setTokenAccountError(localization.upstream("Could not add Codex account"));
       })
       .finally(() => {
@@ -1118,10 +1023,16 @@ function App() {
   };
   const cancelCodexAccountLogin = (): void => {
     if (!codexAccountLoginPending) return;
+    const scope = tokenAccountScope.current;
     codexAccountLoginCancelled.current = true;
-    void window.codexbar
-      .cancelCodexAccountLogin({ provider: "codex" })
-      .catch(() => setTokenAccountError(localization.upstream("Unavailable")));
+    void window.codexbar.cancelCodexAccountLogin({ provider: "codex" }).catch(() => {
+      if (
+        scope === tokenAccountScope.current &&
+        selectedProviderFirstPartyIdRef.current === "codex"
+      ) {
+        setTokenAccountError(localization.upstream("Unavailable"));
+      }
+    });
   };
   const updateSessionQuotaNotificationSettings = (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
@@ -1501,7 +1412,7 @@ function App() {
             pending={savingProviderId === selectedProvider.id}
             onUpdate={updateProviderSettings}
           >
-            {selectedProviderFirstPartyId === "codex" ? (
+            {selectedProviderSettings?.tokenAccounts === undefined ? null : (
               <TokenAccountSettings
                 copy={{
                   title: copy.savedAccounts,
@@ -1513,19 +1424,35 @@ function App() {
                   remove: localization.upstream("Remove"),
                   add: localization.upstream("Add Account"),
                   cancel: localization.upstream("Cancel"),
+                  source: copy.source,
+                  manual: localization.upstream("Manual"),
                 }}
                 error={tokenAccountError}
-                loginPending={codexAccountLoginPending}
+                loginPending={
+                  selectedProviderSettings.tokenAccounts.creation === "codex-cli" &&
+                  codexAccountLoginPending
+                }
                 loading={tokenAccountLoading}
                 pending={tokenAccountPending}
                 roster={tokenAccountRoster}
-                onAdd={startCodexAccountLogin}
-                onCancelAdd={cancelCodexAccountLogin}
+                {...(selectedProviderSettings.tokenAccounts.selectionSetsCookieSource === undefined
+                  ? {}
+                  : {
+                      selectionSetsCookieSource:
+                        selectedProviderSettings.tokenAccounts.selectionSetsCookieSource,
+                    })}
+                {...(selectedProviderSettings.tokenAccounts.creation === "codex-cli"
+                  ? {
+                      creation: "codex-cli" as const,
+                      onAdd: startCodexAccountLogin,
+                      onCancelAdd: cancelCodexAccountLogin,
+                    }
+                  : { creation: "none" as const })}
                 onRename={renameTokenAccount}
                 onRemove={removeTokenAccount}
                 onSelect={selectTokenAccount}
               />
-            ) : null}
+            )}
           </SettingsPanel>
         )}
       </section>

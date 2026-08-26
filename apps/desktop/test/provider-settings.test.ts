@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { PersistedCodexBarConfig } from "@codexbar/core";
+import { PROVIDER_TOKEN_ACCOUNT_SUPPORT } from "@codexbar/providers";
 
 import {
   DesktopConfigMutations,
@@ -7,13 +8,22 @@ import {
   providerSettingsProjection,
   providerSettingsSourcesForKind,
   providerSettingsSourcesForStrategies,
+  providerTokenAccountSettingsCapability,
   updateFirstPartyProviderSettings,
   updateSupportedFirstPartyProviderSettings,
 } from "../src/main/provider-settings.ts";
 
 const capabilities = [
-  { id: "codex", availableSources: ["auto", "api"] },
-  { id: "openai", availableSources: ["auto", "api"] },
+  {
+    id: "codex",
+    availableSources: ["auto", "api"],
+    tokenAccounts: { selection: true, creation: "codex-cli" },
+  },
+  {
+    id: "openai",
+    availableSources: ["auto", "api"],
+    tokenAccounts: { selection: true, creation: "none" },
+  },
   { id: "t3chat", availableSources: ["auto", "web"] },
   { id: "amp", availableSources: ["auto", "cli"] },
 ] as const;
@@ -39,14 +49,76 @@ const config: PersistedCodexBarConfig = {
 };
 
 describe("desktop provider settings", () => {
+  it("projects explicit metadata-selection and host creation capabilities", () => {
+    expect(
+      providerTokenAccountSettingsCapability("codex", {
+        runtimeSelectionAvailable: true,
+        requiresManualCookieSource: false,
+      }),
+    ).toEqual({ selection: true, creation: "codex-cli" });
+    expect(
+      providerTokenAccountSettingsCapability("claude", {
+        runtimeSelectionAvailable: true,
+        requiresManualCookieSource: true,
+      }),
+    ).toEqual({
+      selection: true,
+      creation: "none",
+      selectionSetsCookieSource: "manual",
+    });
+    expect(
+      providerTokenAccountSettingsCapability("cursor", {
+        runtimeSelectionAvailable: false,
+        requiresManualCookieSource: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("maps the complete runtime support inventory without inferring from fetch sources", () => {
+    const capabilities = PROVIDER_TOKEN_ACCOUNT_SUPPORT.flatMap((support) => {
+      const capability = providerTokenAccountSettingsCapability(support.provider, support);
+      return capability === undefined ? [] : [{ provider: support.provider, ...capability }];
+    });
+    expect(capabilities).toHaveLength(30);
+    expect(capabilities.filter((capability) => capability.creation === "codex-cli")).toEqual([
+      { provider: "codex", selection: true, creation: "codex-cli" },
+    ]);
+    expect(
+      capabilities
+        .filter((capability) => capability.selectionSetsCookieSource === "manual")
+        .map((capability) => capability.provider),
+    ).toEqual([
+      "abacus",
+      "augment",
+      "claude",
+      "cursor",
+      "factory",
+      "manus",
+      "minimax",
+      "mistral",
+      "ollama",
+      "opencode",
+      "opencodego",
+      "qoder",
+      "stepfun",
+    ]);
+  });
+
   it("projects only first-party enablement and source fields", () => {
     expect(providerSettingsProjection(config, capabilities.slice(0, 2))).toEqual([
-      { provider: "codex", enabled: true, source: "auto", availableSources: ["auto", "api"] },
+      {
+        provider: "codex",
+        enabled: true,
+        source: "auto",
+        availableSources: ["auto", "api"],
+        tokenAccounts: { selection: true, creation: "codex-cli" },
+      },
       {
         provider: "openai",
         enabled: false,
         source: "api",
         availableSources: ["auto", "api"],
+        tokenAccounts: { selection: true, creation: "none" },
       },
     ]);
   });
@@ -85,6 +157,7 @@ describe("desktop provider settings", () => {
       enabled: false,
       source: "auto",
       availableSources: ["auto", "api"],
+      tokenAccounts: { selection: true, creation: "none" },
     });
   });
 
@@ -155,6 +228,7 @@ describe("desktop provider settings", () => {
       enabled: true,
       source: "api",
       availableSources: ["auto", "api"],
+      tokenAccounts: { selection: true, creation: "none" },
     });
   });
 

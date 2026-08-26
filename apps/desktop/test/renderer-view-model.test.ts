@@ -10,8 +10,11 @@ import {
   costTotals,
   displayPercent,
   firstPartyProviderId,
+  codexAccountLoginSuccessDisposition,
   historySince,
   implementationPresentation,
+  shouldAutoCancelCodexAccountLogin,
+  shouldPublishCodexAccountLoginFailure,
   claudeSwapActivationRequest,
   safeDateFromTimestamp,
 } from "../src/renderer/view-model.ts";
@@ -37,6 +40,35 @@ const settingsFixture = (id: string): ProviderSettingsListDTO =>
   ({ providers: [{ provider: id }] }) as unknown as ProviderSettingsListDTO;
 
 describe("desktop renderer view model", () => {
+  it("cancels a pending Codex login only after leaving Codex and only once", () => {
+    expect(shouldAutoCancelCodexAccountLogin(true, "openai", false)).toBe(true);
+    expect(shouldAutoCancelCodexAccountLogin(true, "codex", false)).toBe(false);
+    expect(shouldAutoCancelCodexAccountLogin(false, "openai", false)).toBe(false);
+    expect(shouldAutoCancelCodexAccountLogin(true, "openai", true)).toBe(false);
+  });
+
+  it("reconciles every successful Codex login without publishing a stale roster", () => {
+    expect(codexAccountLoginSuccessDisposition(4, 4, "codex")).toEqual({
+      publishRoster: true,
+      reconcile: true,
+    });
+    expect(codexAccountLoginSuccessDisposition(4, 6, "codex")).toEqual({
+      publishRoster: false,
+      reconcile: true,
+    });
+    expect(codexAccountLoginSuccessDisposition(4, 4, "openai")).toEqual({
+      publishRoster: false,
+      reconcile: true,
+    });
+  });
+
+  it("keeps stale and cancelled Codex login failures out of another provider", () => {
+    expect(shouldPublishCodexAccountLoginFailure(4, 4, "codex", false)).toBe(true);
+    expect(shouldPublishCodexAccountLoginFailure(4, 5, "codex", false)).toBe(false);
+    expect(shouldPublishCodexAccountLoginFailure(4, 4, "openai", false)).toBe(false);
+    expect(shouldPublishCodexAccountLoginFailure(4, 4, "codex", true)).toBe(false);
+  });
+
   it("forwards only an eligible opaque Claude account ID", () => {
     expect(
       claudeSwapActivationRequest(

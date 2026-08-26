@@ -138,6 +138,18 @@ describe("token account preload bridge", () => {
     await expect(api.listTokenAccounts({ provider: "claude" })).rejects.toThrow();
   });
 
+  it("rejects a valid roster issued for a different provider", async () => {
+    const api = makeTokenAccountsApi(async () => ({
+      provider: "claude",
+      accounts: [],
+      activeIndex: 0,
+      selectionAvailable: true,
+      revision: "b".repeat(64),
+    }));
+
+    await expect(api.listTokenAccounts({ provider: "codex" })).rejects.toThrow("provider mismatch");
+  });
+
   it("keeps Codex login host-owned across start and cancel", async () => {
     const calls: Array<{ readonly channel: string; readonly input: unknown }> = [];
     const api = makeTokenAccountsApi(async (channel, input) => {

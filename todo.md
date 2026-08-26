@@ -44,7 +44,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Add v1/v2 config compatibility, v1 plaintext-to-vault migration, v2 save enforcement, and selected-account vault resolution for Claude, Grok, and Antigravity.
   - [x] Serialize automatic migration across concurrent desktop/CLI processes with a Node SQLite mutex, lock-scoped reload, follower no-write path, and synthetic adapter/wrapper tests.
   - [x] Add metadata-only account listing plus revision-checked selection IPC, and route every desktop/CLI config writer through the shared cross-process modify primitive.
-  - [ ] Complete selected-account runtime mapping before enabling selection beyond Grok and Antigravity.
+  - [x] Complete selected-account runtime mapping before enabling selection beyond Grok and Antigravity.
     - [x] Add Claude Admin API and organization-aware selected-account routing; keep remaining Claude parity scoped as partial.
     - [x] Add z.ai personal/team selected-account mapping with explicit ambient team-context scrub.
     - [x] Add Copilot selected-account mapping and keep managed OAuth auth off cookie budget pages.
@@ -71,6 +71,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected Qoder cookie isolation with strict international/China host routing.
     - [x] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
     - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules and bounded HTML-first usage parsing.
+    - [x] Expose capability-driven metadata-only list/select/rename/remove UI for all 30 runtime-mapped providers; communicate host-owned manual-routing side effects, cancel Codex login on navigation, reconcile navigation races, and keep credential creation host-owned and Codex-only.
   - [ ] Add account CRUD/UI and full Codex selected-home/web semantics.
     - [x] Add fail-closed selected Codex `auth.json`/PAT credential mapping with ambient credential suppression and no refresh-token exposure.
     - [x] Share exact `CODEX_HOME` resolution between Codex credential discovery and local cost roots.

@@ -24,32 +24,45 @@ const decodeRemoveTokenAccountRequest = Schema.decodeUnknownPromise(RemoveTokenA
 const decodeSelectTokenAccountRequest = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
 const decodeTokenAccountRoster = Schema.decodeUnknownPromise(TokenAccountRosterDTO);
 
+const decodeProviderRoster = async (
+  provider: TokenAccountRoster["provider"],
+  input: unknown,
+): Promise<TokenAccountRoster> => {
+  const roster = await decodeTokenAccountRoster(input);
+  if (roster.provider !== provider) throw new Error("Token account roster provider mismatch.");
+  return roster;
+};
+
 /** Metadata-only account switching bridge; no secrets or persisted config cross preload. */
 export const makeTokenAccountsApi = (invoke: DesktopInvoke) =>
   Object.freeze({
     listTokenAccounts: async (request: ListTokenAccountsRequest): Promise<TokenAccountRoster> =>
-      decodeTokenAccountRoster(
+      decodeProviderRoster(
+        request.provider,
         await invoke(
           DesktopChannels.listTokenAccounts,
           await decodeListTokenAccountsRequest(request),
         ),
       ),
     selectTokenAccount: async (request: SelectTokenAccountRequest): Promise<TokenAccountRoster> =>
-      decodeTokenAccountRoster(
+      decodeProviderRoster(
+        request.provider,
         await invoke(
           DesktopChannels.selectTokenAccount,
           await decodeSelectTokenAccountRequest(request),
         ),
       ),
     renameTokenAccount: async (request: RenameTokenAccountRequest): Promise<TokenAccountRoster> =>
-      decodeTokenAccountRoster(
+      decodeProviderRoster(
+        request.provider,
         await invoke(
           DesktopChannels.renameTokenAccount,
           await decodeRenameTokenAccountRequest(request),
         ),
       ),
     removeTokenAccount: async (request: RemoveTokenAccountRequest): Promise<TokenAccountRoster> =>
-      decodeTokenAccountRoster(
+      decodeProviderRoster(
+        request.provider,
         await invoke(
           DesktopChannels.removeTokenAccount,
           await decodeRemoveTokenAccountRequest(request),
@@ -58,7 +71,8 @@ export const makeTokenAccountsApi = (invoke: DesktopInvoke) =>
     startCodexAccountLogin: async (
       request: CodexAccountLoginRequest,
     ): Promise<TokenAccountRoster> =>
-      decodeTokenAccountRoster(
+      decodeProviderRoster(
+        request.provider,
         await invoke(
           DesktopChannels.startCodexAccountLogin,
           await decodeCodexAccountLoginRequest(request),

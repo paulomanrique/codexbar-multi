@@ -188,10 +188,13 @@ components:
       - apps/desktop/src/ipc/api.ts
       - apps/desktop/src/main/index.ts
       - apps/desktop/src/main/codex-account-login.ts
+      - apps/desktop/src/main/provider-settings.ts
       - apps/desktop/src/main/token-account-removal.ts
       - apps/desktop/src/preload/token-accounts-api.ts
       - apps/desktop/src/renderer/index.tsx
       - apps/desktop/src/renderer/settings-view-model.ts
+      - apps/desktop/src/renderer/token-account-settings.tsx
+      - apps/desktop/src/renderer/view-model.ts
       - apps/desktop/src/renderer/styles.css
     tests:
       - Tests/CodexBarTests/SettingsStoreCoverageTests.swift
@@ -205,9 +208,13 @@ components:
       - packages/platform/test/node-codex-login.test.ts
       - apps/desktop/test/codex-account-login.test.ts
       - apps/desktop/test/ipc-contract.test.ts
+      - apps/desktop/test/provider-settings.test.ts
+      - apps/desktop/test/preload-provider-settings.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
+      - apps/desktop/test/renderer-view-model.test.ts
       - apps/desktop/test/settings-view-model.test.ts
+      - apps/desktop/test/token-account-settings.test.tsx
       - apps/desktop/test/token-account-removal.test.ts
     fixtures: []
     status: partial

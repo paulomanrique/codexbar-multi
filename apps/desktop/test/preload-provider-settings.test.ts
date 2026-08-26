@@ -13,6 +13,11 @@ describe("provider settings preload bridge", () => {
         enabled: false,
         source: "api",
         availableSources: ["auto", "api"],
+        tokenAccounts: {
+          selection: true,
+          creation: "none",
+          selectionSetsCookieSource: "manual",
+        },
         apiKey: "not-exposed",
       };
     });
@@ -32,6 +37,11 @@ describe("provider settings preload bridge", () => {
       enabled: false,
       source: "api",
       availableSources: ["auto", "api"],
+      tokenAccounts: {
+        selection: true,
+        creation: "none",
+        selectionSetsCookieSource: "manual",
+      },
     });
   });
 

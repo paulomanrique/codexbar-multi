@@ -144,6 +144,7 @@ import { makePluginCredentialBrowserSessions } from "./plugin-browser-session.js
 import { makeElectronPluginSandbox } from "./plugin-sandbox-process.js";
 import {
   DesktopConfigMutations,
+  providerTokenAccountSettingsCapability,
   providerSettingsFor,
   providerSettingsProjection,
   providerSettingsSourcesForStrategies,
@@ -180,12 +181,19 @@ let planUtilizationHistory: PlanUtilizationHistoryCoordinator | undefined;
 let claudeOAuthHistoryOwnerCapture: ClaudeOAuthHistoryOwnerCapture | undefined;
 const sessionQuotaCoordinator = new SessionQuotaCoordinator();
 const desktopConfigMutations = new DesktopConfigMutations();
-const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => ({
-  id: provider.descriptor.id,
-  availableSources: providerSettingsSourcesForStrategies(
-    provider.strategies ?? provider.descriptor.strategies ?? [provider],
-  ),
-}));
+const providerSettingsCapabilities = FIRST_PARTY_PROVIDERS.map((provider) => {
+  const tokenAccounts = providerTokenAccountSettingsCapability(
+    provider.descriptor.id,
+    PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID.get(provider.descriptor.id),
+  );
+  return {
+    id: provider.descriptor.id,
+    availableSources: providerSettingsSourcesForStrategies(
+      provider.strategies ?? provider.descriptor.strategies ?? [provider],
+    ),
+    ...(tokenAccounts === undefined ? {} : { tokenAccounts }),
+  };
+});
 const providerSettingsCapabilitiesById = new Map(
   providerSettingsCapabilities.map((capability) => [capability.id, capability]),
 );

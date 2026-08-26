@@ -305,13 +305,41 @@ describe("desktop IPC boundary", () => {
         enabled: true,
         source: "api",
         availableSources: ["auto", "api"],
+        tokenAccounts: {
+          selection: true,
+          creation: "none",
+          selectionSetsCookieSource: "manual",
+        },
       }),
     ).toEqual({
       provider: "openai",
       enabled: true,
       source: "api",
       availableSources: ["auto", "api"],
+      tokenAccounts: {
+        selection: true,
+        creation: "none",
+        selectionSetsCookieSource: "manual",
+      },
     });
+    expect(() =>
+      decodeSettings({
+        provider: "openai",
+        enabled: true,
+        source: "api",
+        availableSources: ["auto", "api"],
+        tokenAccounts: { selection: true, creation: "renderer-secret" },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeSettings({
+        provider: "openai",
+        enabled: true,
+        source: "api",
+        availableSources: ["auto", "api"],
+        tokenAccounts: { selection: false, creation: "none" },
+      }),
+    ).toThrow();
     expect(() =>
       decodeSettings({
         provider: "fixture-plugin",

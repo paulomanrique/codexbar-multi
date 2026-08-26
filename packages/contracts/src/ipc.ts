@@ -392,6 +392,14 @@ export const ProviderSettingsDTO = Schema.Struct({
   availableSources: Schema.Array(ProviderSourceMode).pipe(
     Schema.check(Schema.isMinLength(1), Schema.isMaxLength(3)),
   ),
+  /** Presence enables metadata-only account management; creation stays host-owned. */
+  tokenAccounts: Schema.optional(
+    Schema.Struct({
+      selection: Schema.Literal(true),
+      creation: Schema.Literals(["none", "codex-cli"]),
+      selectionSetsCookieSource: Schema.optional(Schema.Literal("manual")),
+    }),
+  ),
 });
 export type ProviderSettingsDTO = Schema.Schema.Type<typeof ProviderSettingsDTO>;
 
