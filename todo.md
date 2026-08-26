@@ -71,7 +71,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected Qoder cookie isolation with strict international/China host routing.
     - [x] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
     - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules.
-  - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
+  - [ ] Add account CRUD/UI, unsupported token-account provider mappers, and full Codex selected-home/web semantics.
+    - [x] Add fail-closed selected Codex `auth.json`/PAT credential mapping without refresh-token exposure.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
 - [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.

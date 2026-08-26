@@ -128,12 +128,61 @@ describe("first-party selected accounts from the token-account vault", () => {
     expect(reads).toBe(0);
   });
 
-  it("fails closed for selected Codex accounts without reinterpreting legacy tokens", async () => {
+  it("maps selected Codex auth.json material without exposing refresh tokens", async () => {
+    const key = tokenAccountVaultKey("codex", "account-0");
     await expect(
       resolve(config("codex"), "codex", {
-        [tokenAccountVaultKey("codex", "account-0")]: "could-be-any-legacy-format",
+        [key]: JSON.stringify({
+          tokens: {
+            access_token: "selected-oauth",
+            refresh_token: "must-not-escape",
+            id_token: jwt({ email: "selected@example.test" }),
+            account_id: "acct-selected",
+          },
+        }),
       }),
-    ).rejects.toMatchObject({ kind: "missing-credential" });
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        CODEX_ACCESS_TOKEN: "selected-oauth",
+        CODEX_PERSONAL_ACCESS_TOKEN: null,
+      },
+      plainSettings: { CODEX_ACCOUNT_ID: "acct-selected" },
+    });
+  });
+
+  it("maps selected Codex personal access tokens and suppresses ambient OAuth", async () => {
+    const key = tokenAccountVaultKey("codex", "account-0");
+    await expect(
+      resolve(config("codex"), "codex", {
+        [key]: JSON.stringify({
+          personal_access_token: "  at-selected  ",
+          tokens: { access_token: "oauth-fallback" },
+        }),
+      }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        CODEX_ACCESS_TOKEN: "oauth-fallback",
+        CODEX_PERSONAL_ACCESS_TOKEN: "at-selected",
+      },
+      plainSettings: { CODEX_ACCOUNT_ID: null },
+    });
+  });
+
+  it.each([
+    "",
+    "could-be-any-legacy-format",
+    "null",
+    JSON.stringify({ tokens: { refresh_token: "refresh-only" } }),
+    JSON.stringify({ tokens: { access_token: "" } }),
+    `{"tokens":{"access_token":"${"x".repeat(1024 * 1024)}"}}`,
+    `${JSON.stringify({ tokens: { access_token: "selected" } })}\u0000`,
+  ])("fails closed for invalid selected Codex material", async (material) => {
+    const key = tokenAccountVaultKey("codex", "account-0");
+    await expect(resolve(config("codex"), "codex", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
   });
 
   it.each([

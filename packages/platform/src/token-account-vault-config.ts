@@ -359,6 +359,55 @@ const resolveSelectedMaterial = (
     ),
   );
 
+const selectedCodexString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+
+const selectedCodexObject = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const selectedCodexTokenBag = (root: Record<string, unknown>): Record<string, unknown> =>
+  selectedCodexObject(root.tokens) ?? root;
+
+const selectedCodexAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  if (raw.includes("\u0000") || new TextEncoder().encode(raw).byteLength > 1024 * 1024) {
+    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
+  }
+  const root = selectedCodexObject(parsed);
+  if (root === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
+  }
+  const tokens = selectedCodexTokenBag(root);
+  const accessToken = selectedCodexString(tokens.access_token ?? tokens.accessToken);
+  const personalAccessToken = selectedCodexString(
+    root.personal_access_token ?? root.personalAccessToken,
+  );
+  const accountSetting = selectedCodexString(tokens.account_id ?? tokens.accountId);
+  if (accessToken === undefined && personalAccessToken === undefined) {
+    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: {
+      CODEX_ACCESS_TOKEN: accessToken ?? null,
+      CODEX_PERSONAL_ACCESS_TOKEN: personalAccessToken ?? null,
+    },
+    plainSettings: {
+      CODEX_ACCOUNT_ID: accountSetting ?? null,
+    },
+  });
+};
+
 const selectedClaudeAccount = (
   accountId: string,
   raw: string,
@@ -956,8 +1005,8 @@ export const resolveSelectedFirstPartyAccountFromVault = (
   const account = data.accounts[index];
   if (account === undefined) return Effect.succeed(undefined);
   if (providerId === "codex") {
-    return Effect.fail(
-      selectedAccountFailure("Selected Codex accounts require a dedicated credential mapper."),
+    return resolveSelectedMaterial(credentials, providerId, account.id).pipe(
+      Effect.flatMap((material) => selectedCodexAccount(account.id, material)),
     );
   }
   if (tokenAccountSupportForProvider(providerId)?.runtimeSelectionAvailable !== true) {
