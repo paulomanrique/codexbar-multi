@@ -64,8 +64,10 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected cookie-account isolation for Abacus, Augment, Cursor, and Mistral.
     - [x] Add selected OpenCode cookie isolation with exact auth-cookie filtering.
     - [x] Add selected OpenCode Go web-account isolation and cancel-safe optional billing.
+    - [x] Add selected Manus session isolation and exact session_id-to-Bearer normalization.
+    - [x] Add selected StepFun Oasis token isolation and Swift-compatible cookie normalization.
     - [ ] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
-    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 6 providers.
+    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining 4 providers: Factory, MiniMax, Ollama, and Qoder.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.

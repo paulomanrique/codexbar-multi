@@ -10,11 +10,14 @@ import {
   type PersistedProviderConfig,
 } from "@codexbar/core";
 import { PROVIDER_IDS, type ProviderId } from "@codexbar/contracts";
+import { tokenAccountSupportForProvider } from "@codexbar/providers";
 import {
   parseAntigravityOAuthCredentialValue,
   resolveAntigravityCredentialEmail,
 } from "@codexbar/providers/providers/antigravity";
 import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-code-cookie";
+import { manusSessionToken } from "@codexbar/providers/providers/manus";
+import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
 
 export interface TokenAccountMigrationLock {
@@ -492,6 +495,49 @@ const selectedOpenCodeGoAccount = (
   });
 };
 
+const selectedManusAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const byteLength = new TextEncoder().encode(raw).byteLength;
+  const material = normalizeCookieHeader(raw);
+  const token = manusSessionToken(material);
+  const cookieHeader = token === undefined ? undefined : `session_id=${token}`;
+  if (
+    raw.includes("\u0000") ||
+    raw.includes("\r") ||
+    raw.includes("\n") ||
+    byteLength > 1024 * 1024 ||
+    cookieHeader === undefined ||
+    new TextEncoder().encode(cookieHeader).byteLength > 1024 * 1024
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected Manus account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: { MANUS_COOKIE_HEADER: cookieHeader },
+  });
+};
+
+const selectedStepFunAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const byteLength = new TextEncoder().encode(raw).byteLength;
+  const material = normalizeCookieHeader(raw);
+  const token = normalizeStepFunToken(material);
+  if (
+    raw.includes("\u0000") ||
+    raw.includes("\r") ||
+    raw.includes("\n") ||
+    byteLength > 1024 * 1024 ||
+    token === undefined
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected StepFun account credential is invalid."));
+  }
+  return Effect.succeed({ id: accountId, secureSettings: { STEPFUN_TOKEN: token } });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -798,31 +844,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       selectedAccountFailure("Selected Codex accounts require a dedicated credential mapper."),
     );
   }
-  if (
-    providerId !== "claude" &&
-    providerId !== "grok" &&
-    providerId !== "antigravity" &&
-    providerId !== "zai" &&
-    providerId !== "copilot" &&
-    providerId !== "deepinfra" &&
-    providerId !== "groq" &&
-    providerId !== "venice" &&
-    providerId !== "elevenlabs" &&
-    providerId !== "ibmbob" &&
-    providerId !== "neuralwatt" &&
-    providerId !== "sub2api" &&
-    providerId !== "llmproxy" &&
-    providerId !== "litellm" &&
-    providerId !== "deepseek" &&
-    providerId !== "openai" &&
-    providerId !== "openrouter" &&
-    providerId !== "abacus" &&
-    providerId !== "augment" &&
-    providerId !== "cursor" &&
-    providerId !== "mistral" &&
-    providerId !== "opencode" &&
-    providerId !== "opencodego"
-  ) {
+  if (tokenAccountSupportForProvider(providerId)?.runtimeSelectionAvailable !== true) {
     return Effect.fail(
       selectedAccountFailure("Selected account provider mapper is not available."),
     );
@@ -855,7 +877,12 @@ export const resolveSelectedFirstPartyAccountFromVault = (
         return selectedCookieAccount(account.id, material, "MISTRAL_COOKIE_HEADER", "Mistral");
       if (providerId === "opencode") return selectedOpenCodeAccount(account.id, material);
       if (providerId === "opencodego") return selectedOpenCodeGoAccount(account.id, material);
-      return selectedAntigravityAccount(account.id, material);
+      if (providerId === "manus") return selectedManusAccount(account.id, material);
+      if (providerId === "stepfun") return selectedStepFunAccount(account.id, material);
+      if (providerId === "antigravity") return selectedAntigravityAccount(account.id, material);
+      return Effect.fail(
+        selectedAccountFailure("Selected account provider mapper is not available."),
+      );
     }),
   );
 };

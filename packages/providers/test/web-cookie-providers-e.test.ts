@@ -134,6 +134,35 @@ describe("Swift-derived CommandCode, StepFun and LongCat parity", () => {
     });
     expect((result.primary as { usedPercent: number }).usedPercent).toBeCloseTo(20, 8);
   });
+  it.each([
+    ["Oasis-Token=selected-token; Oasis-Webid=ignored", "selected-token"],
+    ["bare-selected-token", "bare-selected-token"],
+  ] as const)("normalizes the StepFun request token from %s", async (configured, expected) => {
+    const requests: Req[] = [];
+    await stepfun.fetchUsage(
+      ctx(
+        (request) => {
+          requests.push(request);
+          return request.url.pathname.includes("RateLimit")
+            ? reply({
+                status: 1,
+                five_hour_usage_left_rate: 1,
+                weekly_usage_left_rate: 1,
+                five_hour_usage_reset_time: "1777528800",
+                weekly_usage_reset_time: "1777899600",
+              })
+            : reply({ subscription: { name: "Fixture" } });
+        },
+        { STEPFUN_TOKEN: configured },
+      ),
+    );
+    expect(requests[0]?.options).toMatchObject({
+      headers: {
+        "Oasis-Token": expected,
+        Cookie: expect.stringContaining(`Oasis-Token=${expected};`),
+      },
+    });
+  });
   it("aggregates StepFun credit buckets and lets live rolling windows override a stale family ID", async () => {
     const credit = await stepfun.fetchUsage(
       ctx(

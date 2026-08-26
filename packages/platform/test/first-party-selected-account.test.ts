@@ -137,13 +137,74 @@ describe("first-party selected accounts from the token-account vault", () => {
   });
 
   it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["factory"] as const) {
+    for (const providerId of ["factory", "minimax", "ollama", "qoder"] as const) {
       await expect(
         resolve(config(providerId), providerId, {
           [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
         }),
       ).rejects.toMatchObject({ kind: "missing-credential" });
     }
+  });
+
+  it.each([
+    ["bare-session", "session_id=bare-session"],
+    ["session_id=selected; theme=dark", "session_id=selected"],
+    ["Session_ID=case-insensitive; theme=dark", "session_id=case-insensitive"],
+    [
+      "curl https://manus.im -H 'Cookie: theme=dark; session_id=from-curl; other=value'",
+      "session_id=from-curl",
+    ],
+  ] as const)("normalizes a selected Manus session from %s", async (material, expected) => {
+    const key = tokenAccountVaultKey("manus", "account-0");
+    await expect(resolve(config("manus"), "manus", { [key]: material })).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { MANUS_COOKIE_HEADER: expected },
+    });
+  });
+
+  it.each([
+    "",
+    "theme=dark",
+    "session_id=",
+    "session_id=value\nInjected: yes",
+    "session_id=value\rInjected: yes",
+    "session_id=value\u0000suffix",
+    "x".repeat(1024 * 1024),
+    `session_id=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected Manus material", async (material) => {
+    const key = tokenAccountVaultKey("manus", "account-0");
+    await expect(resolve(config("manus"), "manus", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
+  });
+
+  it.each([
+    ["bare-oasis-token", "bare-oasis-token"],
+    ["Oasis-Token=selected-token; Oasis-Webid=device", "selected-token"],
+    [
+      "curl https://platform.stepfun.com -H 'Cookie: Oasis-Token=curl-token; theme=dark'",
+      "curl-token",
+    ],
+  ] as const)("normalizes a selected StepFun token from %s", async (material, expected) => {
+    const key = tokenAccountVaultKey("stepfun", "account-0");
+    await expect(resolve(config("stepfun"), "stepfun", { [key]: material })).resolves.toEqual({
+      id: "account-0",
+      secureSettings: { STEPFUN_TOKEN: expected },
+    });
+  });
+
+  it.each([
+    "",
+    "Oasis-Token=",
+    "Oasis-Token=value\nInjected: yes",
+    "Oasis-Token=value\rInjected: yes",
+    "Oasis-Token=value\u0000suffix",
+    `Oasis-Token=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected StepFun material", async (material) => {
+    const key = tokenAccountVaultKey("stepfun", "account-0");
+    await expect(resolve(config("stepfun"), "stepfun", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
   });
 
   it.each([

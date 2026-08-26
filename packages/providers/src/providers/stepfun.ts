@@ -12,6 +12,19 @@ const clean = (value: string | undefined): string | undefined =>
     ?.trim()
     .replace(/^['"]|['"]$/gu, "")
     .trim() || undefined;
+export const normalizeStepFunToken = (raw: string | undefined): string | undefined => {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  const marker = "Oasis-Token=";
+  const markerIndex = trimmed.indexOf(marker);
+  if (markerIndex < 0) return trimmed;
+  return (
+    trimmed
+      .slice(markerIndex + marker.length)
+      .split(";", 1)[0]
+      ?.trim() || undefined
+  );
+};
 const deviceID = (token: string): string | undefined => {
   for (const part of token.split("...").reverse()) {
     const payload = part.split(".")[1];
@@ -44,11 +57,13 @@ const definition: ProviderDefinition = {
   capabilities: ["browser-cookies"],
   cookieDomains: ["platform.stepfun.com"],
   fetchUsage: async (ctx) => {
-    const token = clean(
-      ctx.settings.getSecret("STEPFUN_TOKEN") ??
-        ctx.settings.get("STEPFUN_TOKEN") ??
-        ctx.settings.getSecret("STEPFUN_MANUAL_TOKEN") ??
-        ctx.settings.get("STEPFUN_MANUAL_TOKEN"),
+    const token = normalizeStepFunToken(
+      clean(
+        ctx.settings.getSecret("STEPFUN_TOKEN") ??
+          ctx.settings.get("STEPFUN_TOKEN") ??
+          ctx.settings.getSecret("STEPFUN_MANUAL_TOKEN") ??
+          ctx.settings.get("STEPFUN_MANUAL_TOKEN"),
+      ),
     );
     if (!token) throw ctx.fail.missingCredential("Missing StepFun authentication token.");
     const webid = deviceID(token) ?? "c8a1002d2c457e758785a9979832217c7c0b884c";

@@ -953,6 +953,14 @@ const selectedStrategyAllowed = (
       strategy.id === "opencodego.web"
     );
   }
+  if (providerId === "manus") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "MANUS_COOKIE_HEADER");
+    return cookie.present && Boolean(cookie.value?.trim()) && strategy.id === "manus.web";
+  }
+  if (providerId === "stepfun") {
+    const token = ownSetting(selectedAccount.secureSettings, "STEPFUN_TOKEN");
+    return token.present && Boolean(token.value?.trim()) && strategy.id === "stepfun.web";
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

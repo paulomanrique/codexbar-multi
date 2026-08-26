@@ -228,10 +228,14 @@ describe("Swift-derived provider extension parity", () => {
     expect(requests[0]?.options).toMatchObject({
       body: {},
       headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
         Authorization: "Bearer fixture-session",
         Origin: "https://manus.im",
         Referer: "https://manus.im/",
         "Connect-Protocol-Version": "1",
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
       },
     });
     expect(raw).toEqual({
@@ -251,6 +255,60 @@ describe("Swift-derived provider extension parity", () => {
       secondary: { usedPercent: 60, resetsAt: "2027-01-15T00:00:00.000Z" },
       identity: { providerId: "manus", loginMethod: "Balance: 1,200 credits" },
     });
+  });
+
+  it("uses a manual Manus account without consulting browser cookies", async () => {
+    const requests: Request[] = [];
+    const raw = await manus.fetchUsage(
+      context(() => json({ totalCredits: 25 }), {
+        settings: { MANUS_COOKIE_HEADER: "Session_ID=manual-session; theme=dark" },
+        cookie: "session_id=ambient-session",
+        requests,
+      }),
+    );
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer manual-session" },
+    });
+    expect(raw.identity).toEqual({ loginMethod: "Balance: 25 credits" });
+  });
+
+  it("normalizes a cURL command pasted into the manual Manus setting", async () => {
+    const requests: Request[] = [];
+    await manus.fetchUsage(
+      context(() => json({ totalCredits: 25 }), {
+        settings: {
+          MANUS_COOKIE_HEADER:
+            "curl https://manus.im -H 'Cookie: theme=dark; Session_ID=curl-session; other=value'",
+        },
+        requests,
+      }),
+    );
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer curl-session" },
+    });
+  });
+
+  it.each([
+    [401, "authentication-expired"],
+    [429, "rate-limited"],
+    [500, "provider-unavailable"],
+    [418, "api-failure"],
+  ] as const)("classifies Manus HTTP %i as %s", async (status, kind) => {
+    await expect(
+      manus.fetchUsage(
+        context(() => json({}, status), { settings: { MANUS_COOKIE_HEADER: "selected" } }),
+      ),
+    ).rejects.toThrow(`${kind}:`);
+  });
+
+  it("rejects a direct Manus success payload without any credits field", async () => {
+    await expect(
+      manus.fetchUsage(
+        context(() => json({ message: "unexpected success envelope" }), {
+          settings: { MANUS_COOKIE_HEADER: "selected" },
+        }),
+      ),
+    ).rejects.toThrow("parse-failure:");
   });
 
   it("matches the Perplexity recurring/purchased/promo waterfall and cookie headers", async () => {
