@@ -25,6 +25,7 @@ import {
   type NodeClaudeCostJsonlState,
   type NodeCodexCostJsonlState,
 } from "./node-cost-jsonl.ts";
+import { resolveNodeCodexHome } from "./node-codex-home.ts";
 import { makeNodeCodexPriorityTurnResolver } from "./node-codex-priority.ts";
 
 const scannerCheckpointVersion = 1 as const;
@@ -368,7 +369,7 @@ export const resolveNodeLocalCostRoots = (
       return paths.join(homeDirectory, trimmed.slice(2));
     return paths.resolve(trimmed);
   };
-  const codexHome = expand(environment.CODEX_HOME, paths.join(homeDirectory, ".codex"));
+  const codexHome = resolveNodeCodexHome(environment, homeDirectory, platform);
   const codexSessions = paths.join(codexHome, "sessions");
   const codexArchived = paths.join(codexHome, "archived_sessions");
   const claudeConfig = environment.CLAUDE_CONFIG_DIR?.trim();
@@ -382,23 +383,6 @@ export const resolveNodeLocalCostRoots = (
         ]
       : [paths.join(expand(claudeConfig, homeDirectory), "projects")];
   return { codex: [codexSessions, codexArchived], claude: claudeRoots };
-};
-
-/** Isolated so the trace adapter follows the exact same CODEX_HOME semantics. */
-const resolveNodeCodexHome = (
-  environment: Readonly<Record<string, string | undefined>>,
-  homeDirectory: string,
-  platform: NodeJS.Platform,
-): string => {
-  const paths = platform === "win32" ? win32 : posix;
-  const configured = environment.CODEX_HOME?.trim();
-  if (configured === undefined || configured.length === 0)
-    return paths.join(homeDirectory, ".codex");
-  if (configured === "~") return homeDirectory;
-  if (configured.startsWith("~/") || configured.startsWith("~\\")) {
-    return paths.join(homeDirectory, configured.slice(2));
-  }
-  return paths.resolve(configured);
 };
 
 const refreshOneSource = async (options: {

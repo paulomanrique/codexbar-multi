@@ -3,6 +3,7 @@ export * from "./first-party-runtime.ts";
 export * from "./token-account-vault-config.ts";
 export * from "./legacy-import.ts";
 export * from "./node-cost-jsonl.ts";
+export * from "./node-codex-home.ts";
 export * from "./node-local-cost-scan.ts";
 export * from "./node-plan-utilization-history.ts";
 export * from "./node-grok-local-session.ts";

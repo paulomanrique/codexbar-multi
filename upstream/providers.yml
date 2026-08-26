@@ -22,6 +22,9 @@ providers:
       tsGlobs:
         - packages/providers/test/codex.test.ts
         - apps/cli/test/codex-credential.test.ts
+        - packages/platform/test/first-party-runtime-codex-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/node-codex-home.test.ts
     fixtures:
       - packages/providers/test/codex.test.ts
       - Tests/CodexBarTests/Fixtures/codex-*
@@ -30,12 +33,21 @@ providers:
       expected:
         - packages/providers/src/providers/codex.ts
         - packages/providers/src/providers/codex-pat.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/node-codex-home.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/codex.ts
         - packages/providers/src/providers/codex-pat.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/node-codex-home.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/codex.test.ts
       - apps/cli/test/codex-credential.test.ts
+      - packages/platform/test/first-party-runtime-codex-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/node-codex-home.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

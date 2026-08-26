@@ -919,6 +919,16 @@ const selectedStrategyAllowed = (
   strategy: ProviderStrategy,
 ): boolean => {
   if (selectedAccount === undefined) return true;
+  if (providerId === "codex") {
+    const oauth = ownSetting(selectedAccount.secureSettings, "CODEX_ACCESS_TOKEN");
+    const pat = ownSetting(selectedAccount.secureSettings, "CODEX_PERSONAL_ACCESS_TOKEN");
+    return (
+      oauth.present &&
+      pat.present &&
+      (Boolean(oauth.value?.trim()) || Boolean(pat.value?.trim())) &&
+      strategy.id === "codex"
+    );
+  }
   if (providerId === "deepinfra") {
     const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPINFRA_API_KEY");
     return apiKey.present && Boolean(apiKey.value?.trim()) && strategy.id === "deepinfra.api";

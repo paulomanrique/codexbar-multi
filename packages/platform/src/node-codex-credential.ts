@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveNodeCodexHome } from "./node-codex-home.ts";
 
 export interface NodeCodexCredential {
   readonly accessToken?: string;
@@ -34,7 +35,7 @@ export function discoverNodeCodexCredential(
 ): NodeCodexCredential {
   const environment = options.environment ?? process.env;
   const authPath = join(
-    environment.CODEX_HOME ?? join(options.homeDirectory ?? homedir(), ".codex"),
+    resolveNodeCodexHome(environment, options.homeDirectory ?? homedir()),
     "auth.json",
   );
   try {

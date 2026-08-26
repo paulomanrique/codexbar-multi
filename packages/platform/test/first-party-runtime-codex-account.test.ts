@@ -127,6 +127,41 @@ describe("first-party runtime selected Codex accounts", () => {
     expect(requests[1]?.headers?.["ChatGPT-Account-Id"]).toBe("acct-pat");
   });
 
+  it("fails closed when the selected account has no usable Codex credential", async () => {
+    const requests: HttpRequest[] = [];
+    await expect(
+      Effect.runPromise(
+        runtime(requests, {
+          secureSettings: {
+            CODEX_ACCESS_TOKEN: null,
+            CODEX_PERSONAL_ACCESS_TOKEN: null,
+          },
+          plainSettings: { CODEX_ACCOUNT_ID: "acct-selected" },
+        }).fetch("codex", { sourceMode: "auto", includeCredits: false }),
+      ),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "codex" });
+    expect(requests).toEqual([]);
+  });
+
+  it.each(["web", "cli"] as const)(
+    "does not route selected Codex account material through %s source mode",
+    async (sourceMode) => {
+      const requests: HttpRequest[] = [];
+      await expect(
+        Effect.runPromise(
+          runtime(requests, {
+            secureSettings: {
+              CODEX_ACCESS_TOKEN: "selected-oauth",
+              CODEX_PERSONAL_ACCESS_TOKEN: null,
+            },
+            plainSettings: { CODEX_ACCOUNT_ID: "acct-selected" },
+          }).fetch("codex", { sourceMode, includeCredits: false }),
+        ),
+      ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "codex" });
+      expect(requests).toEqual([]);
+    },
+  );
+
   it("redacts selected Codex credentials from transport failures", async () => {
     const selected = runtime(
       [],
