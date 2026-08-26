@@ -101,8 +101,6 @@ import {
   makeDefaultCodexBarConfig,
   makeTokenAccountRosterService,
   refreshProviderAndPersist,
-  GROK_LOCAL_SESSION_TOKEN_SOURCE,
-  XAI_DAILY_SPEND_SOURCE,
   type PersistedCodexBarConfig,
   type ProviderRuntimeService,
 } from "@codexbar/core";
@@ -127,6 +125,7 @@ import {
 } from "./session-quota-notification-settings.js";
 import {
   DesktopSpendPublisher,
+  desktopSpendSourceForProvider,
   refreshGrokLocalTokensForSpend,
   type DesktopSpendConfiguration,
   type DesktopSpendProjection,
@@ -372,13 +371,7 @@ const spendConfiguration = (): DesktopSpendConfiguration => {
     .join("\u0000");
   return {
     ownershipFingerprint: createHash("sha256").update(fingerprintMaterial).digest("hex"),
-    roster: enabled.map((provider) => ({
-      id: provider.id,
-      providerId: provider.id,
-      displayName: provider.name,
-      ...(provider.id === "xai" ? { dailySpendSourceKey: XAI_DAILY_SPEND_SOURCE } : {}),
-      ...(provider.id === "grok" ? { dailySpendSourceKey: GROK_LOCAL_SESSION_TOKEN_SOURCE } : {}),
-    })),
+    roster: enabled.map(desktopSpendSourceForProvider),
     requestedDays: 30,
   };
 };

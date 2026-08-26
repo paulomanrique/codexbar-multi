@@ -26,11 +26,11 @@ export interface SpendCopy {
   readonly emptyDescription: string;
   readonly estimatedSpend: string;
   readonly trackedTokens: string;
-  readonly subscriptions: string;
+  readonly sources: string;
   readonly coverage: string;
   readonly input: string;
   readonly output: string;
-  readonly bySubscription: string;
+  readonly bySource: string;
   readonly dailyEstimatedSpend: string;
   readonly stale: string;
   readonly partial: string;
@@ -105,7 +105,7 @@ export function SpendDashboard({
               <dd>{formatNumber(locale, presentation.overview.totals.totalTokens)}</dd>
             </div>
             <div>
-              <dt>{copy.subscriptions}</dt>
+              <dt>{copy.sources}</dt>
               <dd>{formatNumber(locale, presentation.overview.totals.sourceCount)}</dd>
             </div>
             <div>
@@ -122,7 +122,7 @@ export function SpendDashboard({
             </div>
           </dl>
           <section className="spend-section" aria-labelledby="spend-providers-title">
-            <h3 id="spend-providers-title">{copy.bySubscription}</h3>
+            <h3 id="spend-providers-title">{copy.bySource}</h3>
             <ol className="spend-provider-list">
               {presentation.overview.providers.map((provider) => (
                 <li key={provider.provider}>

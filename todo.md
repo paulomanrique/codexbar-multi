@@ -69,7 +69,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected Ollama session isolation, full session-cookie normalization, and distinct web/API strategies.
     - [x] Add selected Factory Cookie/Bearer isolation with Swift-compatible manual credential parsing.
     - [x] Add selected Qoder cookie isolation with strict international/China host routing.
-    - [ ] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
+    - [x] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
     - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.

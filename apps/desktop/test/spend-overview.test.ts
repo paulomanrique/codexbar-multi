@@ -13,6 +13,7 @@ import { grok } from "@codexbar/providers";
 
 import {
   DesktopSpendPublisher,
+  desktopSpendSourceForProvider,
   publishedSpendOverviewInputs,
   refreshGrokLocalTokensForSpend,
   type DesktopSpendPersistence,
@@ -186,6 +187,54 @@ describe("published desktop spend overview (Swift #3067 parity)", () => {
       providers: [{ provider: "grok", totals: { totalTokens: 250, costUsd: 0 } }],
     });
     expect(JSON.stringify(projection)).not.toContain("grok-private-source");
+  });
+
+  it("labels OpenRouter Activity spend as global management-key enrichment", async () => {
+    const source = desktopSpendSourceForProvider({ id: "openrouter", name: "OpenRouter" });
+    const persistence: DesktopSpendPersistence = {
+      costs: {
+        list: () =>
+          Effect.succeed([
+            {
+              providerId: "openrouter",
+              recordedAt: Date.parse("2026-08-20T00:00:00.000Z"),
+              inputTokens: 100,
+              outputTokens: 50,
+              costUsd: 0.42,
+            },
+          ]),
+      },
+    };
+    const projection = await new DesktopSpendPublisher(
+      persistence,
+      () => new Date("2026-08-20T12:00:00.000Z"),
+    ).refresh({
+      ownershipFingerprint: "openrouter-management-source",
+      requestedDays: 30,
+      roster: [source],
+    });
+
+    expect(source).toEqual({
+      id: "openrouter",
+      providerId: "openrouter",
+      displayName: "OpenRouter Activity (global management key)",
+      role: "enrichment",
+    });
+    expect(projection.overview.sources).toEqual([
+      expect.objectContaining({
+        provider: "openrouter",
+        displayName: "OpenRouter Activity (global management key)",
+        role: "enrichment",
+        state: "available",
+      }),
+    ]);
+    expect(projection.overview.providers).toEqual([
+      expect.objectContaining({
+        provider: "openrouter",
+        displayName: "OpenRouter Activity (global management key)",
+        totals: expect.objectContaining({ totalTokens: 150, costUsd: 0.42 }),
+      }),
+    ]);
   });
 
   it("keeps Grok local tokens publishable when remote billing fails", async () => {

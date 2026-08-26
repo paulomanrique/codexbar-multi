@@ -8,6 +8,8 @@ import type {
 } from "@codexbar/contracts";
 import {
   buildSpendDashboard,
+  GROK_LOCAL_SESSION_TOKEN_SOURCE,
+  XAI_DAILY_SPEND_SOURCE,
   visibleSpendPublicationInputs,
   SpendPublicationCoordinator,
   type CostUsageRecord,
@@ -49,6 +51,19 @@ export interface DesktopSpendSource {
   /** Internal ledger key; never included in DTOs or renderer state. */
   readonly dailySpendSourceKey?: string;
 }
+
+export const desktopSpendSourceForProvider = (provider: {
+  readonly id: ProviderId;
+  readonly name: string;
+}): DesktopSpendSource => ({
+  id: provider.id,
+  providerId: provider.id,
+  displayName:
+    provider.id === "openrouter" ? "OpenRouter Activity (global management key)" : provider.name,
+  ...(provider.id === "openrouter" ? { role: "enrichment" as const } : {}),
+  ...(provider.id === "xai" ? { dailySpendSourceKey: XAI_DAILY_SPEND_SOURCE } : {}),
+  ...(provider.id === "grok" ? { dailySpendSourceKey: GROK_LOCAL_SESSION_TOKEN_SOURCE } : {}),
+});
 
 export interface DesktopSpendConfiguration {
   /** Opaque config/account ownership hash, computed by the desktop composition root. */
