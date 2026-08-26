@@ -71,7 +71,6 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected Qoder cookie isolation with strict international/China host routing.
     - [x] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
     - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules and bounded HTML-first usage parsing.
-    - [x] Add bounded MiniMax HTML/`__NEXT_DATA__` parser coverage for coding-plan fallback work.
   - [ ] Add account CRUD/UI and full Codex selected-home/web semantics.
     - [x] Add fail-closed selected Codex `auth.json`/PAT credential mapping with ambient credential suppression and no refresh-token exposure.
     - [x] Share exact `CODEX_HOME` resolution between Codex credential discovery and local cost roots.
