@@ -1,14 +1,18 @@
 import { BrowserWindow, session as electronSession, type Session } from "electron";
 import { Effect } from "effect";
-import type { LoginRequestDTO, LoginResultDTO } from "@codexbar/contracts";
+import type { LoginRequestDTO, LoginResultDTO, ProviderId } from "@codexbar/contracts";
+import { InfrastructureError } from "@codexbar/core";
 import { makeNativeCredentialStore } from "@codexbar/platform/node";
+import type { BrowserSessionCleanupAdapter } from "@codexbar/platform";
 import {
   BrowserLoginController,
   browserSessionPartition,
+  requireDefaultBrowserLoginRequest,
   type BrowserLoginSession,
   type BrowserLoginWindow,
 } from "./browser-session-controller.js";
 import {
+  browserLoginDescriptor,
   isAllowedBrowserLoginNavigation,
   type BrowserLoginDescriptor,
 } from "./browser-session-policy.js";
@@ -59,6 +63,7 @@ const sessionFacade = (session: Session): BrowserLoginSession => ({
 const windowFacade = (window: BrowserWindow): BrowserLoginWindow => ({
   focus: () => window.focus(),
   close: () => window.close(),
+  destroy: () => window.destroy(),
   isDestroyed: () => window.isDestroyed(),
   load: (url) => window.loadURL(url),
   onClosed: (listener) => window.on("closed", listener),
@@ -91,15 +96,37 @@ const loginController = new BrowserLoginController({
     return windowFacade(loginWindow);
   },
   persistCredential: (key, value) => Effect.runPromise(credentials.write(key, value)),
+  readCredential: (key) => Effect.runPromise(credentials.read(key)),
   removeCredential: (key) => Effect.runPromise(credentials.remove(key)),
   now: () => new Date(),
 });
 
 export const startBrowserLogin = (request: LoginRequestDTO): Promise<LoginResultDTO> =>
-  loginController.start(request);
+  loginController.start(requireDefaultBrowserLoginRequest(request));
 
 export const cancelBrowserLogin = (request: LoginRequestDTO): void =>
-  loginController.cancel(request);
+  loginController.cancel(requireDefaultBrowserLoginRequest(request));
 
 export const logoutBrowserSession = (request: LoginRequestDTO): Promise<void> =>
+  browserLoginDescriptor(request.provider) === undefined
+    ? Promise.reject(new Error("Interactive login is not declared for this provider"))
+    : loginController.logout(requireDefaultBrowserLoginRequest(request));
+
+/** Host-only recovery entrypoint. It never crosses preload/renderer IPC. */
+export const cleanupBrowserSession = (request: LoginRequestDTO): Promise<void> =>
   loginController.logout(request);
+
+export const desktopBrowserSessionCleanupAdapter: BrowserSessionCleanupAdapter = {
+  cleanup: ({
+    providerId,
+    accountId,
+  }: {
+    readonly providerId: ProviderId;
+    readonly accountId: string;
+  }) =>
+    Effect.tryPromise({
+      try: () => cleanupBrowserSession({ provider: providerId, accountId }),
+      catch: (cause) =>
+        new InfrastructureError("clean browser session", "Browser-session cleanup failed.", cause),
+    }),
+};

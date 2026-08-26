@@ -47,6 +47,26 @@ export const PendingTokenAccountDeletion = Schema.Struct({
 });
 export type PendingTokenAccountDeletion = Schema.Schema.Type<typeof PendingTokenAccountDeletion>;
 
+/** Durable, non-secret intent used while the host cleans up browser-session state. */
+const PendingBrowserSessionCleanupAccountIds = Schema.Array(
+  Schema.String.pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+    Schema.check(Schema.isPattern(/^[^\p{Cc}]+$/u)),
+  ),
+).pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  Schema.check(
+    Schema.makeFilter<readonly string[]>((accountIds) =>
+      new Set(accountIds).size === accountIds.length ? undefined : "account IDs must be unique",
+    ),
+  ),
+);
+export const PendingBrowserSessionCleanup = Schema.Struct({
+  version: Schema.Literal(1),
+  accountIds: PendingBrowserSessionCleanupAccountIds,
+});
+export type PendingBrowserSessionCleanup = Schema.Schema.Type<typeof PendingBrowserSessionCleanup>;
+
 /**
  * Durable, non-secret intent used while the host publishes a new vault-backed
  * account. The credential hash proves readback equality without persisting the
@@ -101,6 +121,7 @@ export const ProviderConfig = Schema.Struct({
   tokenAccounts: Schema.optional(ProviderTokenAccountData),
   pendingTokenAccountAddition: Schema.optional(PendingTokenAccountAddition),
   pendingTokenAccountDeletion: Schema.optional(PendingTokenAccountDeletion),
+  pendingBrowserSessionCleanup: Schema.optional(PendingBrowserSessionCleanup),
   quotaWarnings: Schema.optional(QuotaWarningConfig),
   accentColor: Schema.optional(Schema.String),
   pluginSettings: Schema.optional(Schema.Record(Schema.String, Schema.String)),

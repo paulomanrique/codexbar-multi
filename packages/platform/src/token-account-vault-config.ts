@@ -86,6 +86,18 @@ const containsPendingTokenAccountDeletion = (config: PersistedCodexBarConfig): b
 const containsPendingTokenAccountAddition = (config: PersistedCodexBarConfig): boolean =>
   config.providers.some((provider) => provider.pendingTokenAccountAddition !== undefined);
 
+const validBrowserSessionCleanupMarker = (provider: PersistedProviderConfig): boolean => {
+  const marker = provider.pendingBrowserSessionCleanup;
+  if (marker === undefined) return true;
+  if (provider.id !== "codex" || marker.version !== 1) return false;
+  if (marker.accountIds.length === 0 || marker.accountIds.length > 256) return false;
+  const unique = new Set(marker.accountIds);
+  return (
+    unique.size === marker.accountIds.length &&
+    marker.accountIds.every((accountId) => validMetadataString(accountId, false))
+  );
+};
+
 const validMetadataString = (value: string, allowEmpty: boolean): boolean =>
   (allowEmpty || value.length > 0) && value.length <= 256 && !/\p{Cc}/u.test(value);
 
@@ -107,6 +119,9 @@ const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureEr
     const tokenAccounts = provider.tokenAccounts;
     const pendingAddition = provider.pendingTokenAccountAddition;
     const pending = provider.pendingTokenAccountDeletion;
+    if (!validBrowserSessionCleanupMarker(provider)) {
+      return invalidMetadataError(new Error("Browser-session cleanup metadata is invalid."));
+    }
     if (pendingAddition !== undefined && pending !== undefined) {
       return invalidMetadataError(
         new Error("A provider cannot add and delete token accounts in the same recovery state."),
@@ -474,6 +489,20 @@ const tokenAccountRostersEqual = (
   return JSON.stringify(project(current)) === JSON.stringify(project(next));
 };
 
+const browserSessionCleanupJournalsEqual = (
+  current: PersistedCodexBarConfig | undefined,
+  next: PersistedCodexBarConfig,
+): boolean => {
+  const project = (config: PersistedCodexBarConfig | undefined) =>
+    (config?.providers ?? [])
+      .filter((provider) => provider.pendingBrowserSessionCleanup !== undefined)
+      .map((provider) => ({
+        id: provider.id,
+        pendingBrowserSessionCleanup: provider.pendingBrowserSessionCleanup,
+      }));
+  return JSON.stringify(project(current)) === JSON.stringify(project(next));
+};
+
 const commitVaultBackedConfigMutation = (
   current: PersistedCodexBarConfig | undefined,
   next: PersistedCodexBarConfig,
@@ -488,6 +517,11 @@ const commitVaultBackedConfigMutation = (
   if (containsPendingTokenAccountDeletion(next)) {
     return Effect.fail(
       invalidMetadataError(new Error("Pending token-account deletions are host-owned.")),
+    );
+  }
+  if (!browserSessionCleanupJournalsEqual(current, next)) {
+    return Effect.fail(
+      invalidMetadataError(new Error("Browser-session cleanup journals are host-owned.")),
     );
   }
   const changes = tokenAccountIdentityChanges(current, next);
@@ -531,6 +565,21 @@ const commitVaultBackedConfigMutation = (
       return {
         ...provider,
         pendingTokenAccountDeletion: { version: 1 as const, accountId: removal.accountId },
+        ...(removal.providerId === "codex"
+          ? {
+              pendingBrowserSessionCleanup: {
+                version: 1 as const,
+                accountIds: [
+                  ...(provider.pendingBrowserSessionCleanup?.accountIds ?? []),
+                  ...((provider.pendingBrowserSessionCleanup?.accountIds ?? []).includes(
+                    removal.accountId,
+                  )
+                    ? []
+                    : [removal.accountId]),
+                ],
+              },
+            }
+          : {}),
       };
     }),
   };
@@ -542,6 +591,8 @@ const commitVaultBackedConfigMutation = (
       ),
     );
   }
+  const stagedInvalid = assertMetadataOnlyV2(staged);
+  if (stagedInvalid !== undefined) return Effect.fail(stagedInvalid);
   return repository.save(staged).pipe(
     Effect.mapError((error) =>
       tokenAccountLifecycleError("stage token account deletion", new Error(error.operation)),
@@ -591,6 +642,13 @@ export const makeTokenAccountVaultConfigRepository = (
             tokenAccountLifecycleError(
               "save config",
               new Error("Blind saves cannot mutate token-account rosters; use modify."),
+            ),
+          );
+        }
+        if (!browserSessionCleanupJournalsEqual(current, config)) {
+          return yield* Effect.fail(
+            invalidMetadataError(
+              new Error("Blind saves cannot mutate browser-session cleanup journals."),
             ),
           );
         }
@@ -851,6 +909,14 @@ export const addCodexTokenAccountCredentialToVault = (
         );
       }
       const existingAccounts = provider.tokenAccounts?.accounts ?? [];
+      if (provider.pendingBrowserSessionCleanup?.accountIds.includes(accountId) === true) {
+        return yield* Effect.fail(
+          tokenAccountLifecycleError(
+            "add token account",
+            new Error("Browser-session cleanup is still pending for this account ID."),
+          ),
+        );
+      }
       if (existingAccounts.some((account) => account.id === accountId)) {
         return yield* Effect.fail(
           tokenAccountLifecycleError("add token account", new Error("Account ID already exists.")),
@@ -1560,8 +1626,15 @@ export const resolveSelectedFirstPartyAccountFromVault = (
   const account = data.accounts[index];
   if (account === undefined) return Effect.succeed(undefined);
   if (providerId === "codex") {
+    const browserSessionCleanupPending =
+      providerConfig?.pendingBrowserSessionCleanup?.accountIds.includes(account.id) === true;
     return resolveSelectedMaterial(credentials, providerId, account.id).pipe(
       Effect.flatMap((material) => selectedCodexAccount(account.id, material, account)),
+      Effect.map((selected) =>
+        browserSessionCleanupPending
+          ? { ...selected, browserSessionCleanupPending: true }
+          : selected,
+      ),
     );
   }
   if (tokenAccountSupportForProvider(providerId)?.runtimeSelectionAvailable !== true) {

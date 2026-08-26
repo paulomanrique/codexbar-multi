@@ -16,6 +16,8 @@ export interface BrowserLoginSession {
 export interface BrowserLoginWindow {
   readonly focus: () => void;
   readonly close: () => void;
+  /** Force-close path used by security cleanup; provider pages cannot veto it. */
+  readonly destroy: () => void;
   readonly isDestroyed: () => boolean;
   readonly load: (url: string) => Promise<void>;
   readonly onClosed: (listener: () => void) => void;
@@ -29,15 +31,19 @@ export interface BrowserLoginHost {
     session: BrowserLoginSession,
   ) => BrowserLoginWindow;
   readonly persistCredential: (key: string, value: string) => Promise<void>;
+  readonly readCredential: (key: string) => Promise<string | undefined>;
   readonly removeCredential: (key: string) => Promise<void>;
   readonly now: () => Date;
 }
 
 interface ActiveLogin {
+  readonly request: LoginRequestDTO;
   readonly window: BrowserLoginWindow;
   readonly session: BrowserLoginSession;
   readonly close: () => void;
+  readonly waitClosed: () => Promise<void>;
   pendingPersistence: Promise<void> | undefined;
+  credentialDirty: boolean;
   cancelled: boolean;
 }
 
@@ -47,6 +53,13 @@ export const browserCredentialKey = ({ provider, accountId }: LoginRequestDTO) =
   `browser-session/${provider}/${accountId}`;
 export const browserSessionPartition = ({ provider, accountId }: LoginRequestDTO) =>
   `persist:codexbar-multi-${provider}-${accountId}`;
+
+/** The generic renderer bridge owns only one host-selected account per provider. */
+export const requireDefaultBrowserLoginRequest = (request: LoginRequestDTO): LoginRequestDTO => {
+  if (request.accountId !== "default")
+    throw new Error("Generic browser login is restricted to the default account");
+  return request;
+};
 
 export const browserCredentialPayload = (
   request: LoginRequestDTO,
@@ -88,6 +101,66 @@ export class BrowserLoginController {
     this.#host = host;
   }
 
+  async #closeWindow(active: ActiveLogin): Promise<void> {
+    if (active.window.isDestroyed()) {
+      active.close();
+      return active.waitClosed();
+    }
+    active.window.destroy();
+    if (active.window.isDestroyed()) active.close();
+    return active.waitClosed();
+  }
+
+  async #drainCancelledLogin(active: ActiveLogin): Promise<void> {
+    active.cancelled = true;
+    await this.#closeWindow(active);
+    await active.pendingPersistence?.catch(() => undefined);
+  }
+
+  async #clearSessionAndCredential(
+    request: LoginRequestDTO,
+    session: BrowserLoginSession,
+    removeCredential: boolean,
+  ): Promise<void> {
+    const operations = [
+      session.clear(),
+      removeCredential
+        ? this.#host.removeCredential(browserCredentialKey(request))
+        : Promise.resolve(),
+    ] as const;
+    const [cleared, credentialRemoved] = await Promise.allSettled(operations);
+    if (cleared.status === "rejected") throw cleared.reason;
+    if (credentialRemoved.status === "rejected") throw credentialRemoved.reason;
+    if (removeCredential) {
+      const remaining = await this.#host.readCredential(browserCredentialKey(request));
+      if (remaining !== undefined)
+        throw new Error("Browser-session credential remained available after removal");
+    }
+  }
+
+  #scheduleCancelCleanup(key: string, active: ActiveLogin): void {
+    if (this.#cleanup.has(key)) return;
+    active.cancelled = true;
+    const cleanup = Promise.resolve().then(async () => {
+      try {
+        await this.#drainCancelledLogin(active);
+        await this.#clearSessionAndCredential(
+          active.request,
+          active.session,
+          active.credentialDirty,
+        );
+        this.#cleanupRequired.delete(key);
+      } catch (cause) {
+        this.#cleanupRequired.add(key);
+        throw cause;
+      } finally {
+        if (this.#cleanup.get(key) === cleanup) this.#cleanup.delete(key);
+      }
+    });
+    this.#cleanup.set(key, cleanup);
+    void cleanup.catch(() => undefined);
+  }
+
   async start(request: LoginRequestDTO): Promise<LoginResultDTO> {
     const descriptor = browserLoginDescriptor(request.provider);
     if (descriptor === undefined)
@@ -107,12 +180,27 @@ export class BrowserLoginController {
       let settled = false;
       let persisting = false;
       let pendingCookieChange = false;
+      let windowClosed = false;
+      let closingForFailure = false;
+      let resolveClosed: (() => void) | undefined;
+      const closed = new Promise<void>((resolve) => {
+        resolveClosed = resolve;
+      });
       const active: ActiveLogin = {
+        request,
         window,
         session,
         pendingPersistence: undefined,
+        credentialDirty: false,
         cancelled: false,
-        close: () => finish("cancelled"),
+        close: () => {
+          if (!windowClosed) {
+            windowClosed = true;
+            resolveClosed?.();
+          }
+          if (!closingForFailure) finish("cancelled");
+        },
+        waitClosed: () => closed,
       };
       const isCurrent = () => this.#active.get(key) === active && !active.cancelled;
       const finish = (status: LoginResultDTO["status"]) => {
@@ -129,6 +217,22 @@ export class BrowserLoginController {
         this.#active.delete(key);
         reject(new Error(message, { cause }));
       };
+      const failAfterClosing = async (
+        message: string,
+        cause: unknown,
+        removeCredential: boolean,
+      ) => {
+        closingForFailure = true;
+        active.cancelled = true;
+        try {
+          await this.#closeWindow(active);
+          await this.#clearSessionAndCredential(request, session, removeCredential);
+          fail(message, cause);
+        } catch (cleanupCause) {
+          this.#cleanupRequired.add(key);
+          fail(message, cleanupCause);
+        }
+      };
       const changed = () => {
         if (!isCurrent() || settled) return;
         pendingCookieChange = true;
@@ -143,25 +247,19 @@ export class BrowserLoginController {
               browserCredentialKey(request),
               browserCredentialPayload(request, cookieHeaders, this.#host.now()),
             );
-            if (!isCurrent() || settled) {
-              // Logout owns credential removal while its per-account cleanup
-              // lock is held. A standalone cancel still rolls back its write.
-              if (!this.#cleanup.has(key))
-                await this.#host.removeCredential(browserCredentialKey(request));
-              return;
-            }
+            active.credentialDirty = true;
+            if (!isCurrent() || settled) return;
             finish("connected");
             if (!window.isDestroyed()) window.close();
           }
         })()
           .catch(async (cause: unknown) => {
             if (!isCurrent() || settled) return;
-            try {
-              await session.clear();
-            } finally {
-              fail("Could not persist the authenticated browser session", cause);
-              if (!window.isDestroyed()) window.close();
-            }
+            await failAfterClosing(
+              "Could not persist the authenticated browser session",
+              cause,
+              true,
+            );
           })
           .finally(() => {
             persisting = false;
@@ -170,43 +268,33 @@ export class BrowserLoginController {
       this.#active.set(key, active);
       session.onCookiesChanged(changed);
       window.onClosed(active.close);
+      if (window.isDestroyed()) active.close();
       void window.load(descriptor.startUrl).catch(async (cause: unknown) => {
         if (!isCurrent() || settled) return;
-        try {
-          await session.clear();
-        } finally {
-          fail("Could not open the provider login page", cause);
-          if (!window.isDestroyed()) window.close();
-        }
+        await failAfterClosing("Could not open the provider login page", cause, false);
       });
     });
   }
 
   cancel(request: LoginRequestDTO): void {
-    const active = this.#active.get(browserLoginKey(request));
+    const key = browserLoginKey(request);
+    const active = this.#active.get(key);
     if (active === undefined) return;
-    active.cancelled = true;
-    active.close();
-    if (!active.window.isDestroyed()) active.window.close();
+    this.#scheduleCancelCleanup(key, active);
   }
 
   async logout(request: LoginRequestDTO): Promise<void> {
     const key = browserLoginKey(request);
-    const existingCleanup = this.#cleanup.get(key);
-    if (existingCleanup !== undefined) return existingCleanup;
+    const priorCleanup = this.#cleanup.get(key);
     const active = this.#active.get(key);
     const cleanup = (async () => {
-      this.cancel(request);
-      // A write that began just before cancellation must finish before deleting
-      // the exported credential, otherwise it could resurrect a logged-out key.
-      await active?.pendingPersistence?.catch(() => undefined);
-      const session = this.#host.sessionFor(request);
-      const [cleared, credentialRemoved] = await Promise.allSettled([
-        session.clear(),
-        this.#host.removeCredential(browserCredentialKey(request)),
-      ]);
-      if (cleared.status === "rejected") throw cleared.reason;
-      if (credentialRemoved.status === "rejected") throw credentialRemoved.reason;
+      await priorCleanup?.catch(() => undefined);
+      if (active !== undefined) await this.#drainCancelledLogin(active);
+      await this.#clearSessionAndCredential(
+        request,
+        active?.session ?? this.#host.sessionFor(request),
+        true,
+      );
     })();
     this.#cleanup.set(key, cleanup);
     try {

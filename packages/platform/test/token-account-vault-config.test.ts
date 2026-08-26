@@ -1028,6 +1028,95 @@ describe("token-account vault config repository", () => {
     });
   });
 
+  it("durably queues Codex browser cleanup with account removal", async () => {
+    const account = { id: "codex-account", label: "Personal", addedAt: 1 };
+    const key = tokenAccountVaultKey("codex", account.id);
+    const repository = memoryRepository(v2CodexConfig([account]));
+    const credentials = memoryCredentials({
+      [key]: JSON.stringify({
+        tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+      }),
+    });
+    const config = vaultRepository(repository, credentials);
+    const accounts = makeTokenAccountRosterService({
+      config,
+      support: new Map<ProviderId, TokenAccountSupport>([
+        [
+          "codex",
+          {
+            provider: "codex",
+            requiresManualCookieSource: false,
+            selectedAccountRequiresManualCookieSource: false,
+            runtimeSelectionAvailable: true,
+          },
+        ],
+      ]),
+    });
+    const before = await Effect.runPromise(accounts.list("codex"));
+
+    await Effect.runPromise(
+      accounts.remove({
+        provider: "codex",
+        accountId: account.id,
+        expectedRevision: before.revision,
+      }),
+    );
+
+    expect(repository.saves).toHaveLength(2);
+    expect(repository.saves[0]?.providers[0]).toMatchObject({
+      pendingTokenAccountDeletion: { version: 1, accountId: account.id },
+      pendingBrowserSessionCleanup: { version: 1, accountIds: [account.id] },
+    });
+    expect(repository.saves[1]?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+    expect(repository.current?.providers[0]?.pendingBrowserSessionCleanup).toEqual({
+      version: 1,
+      accountIds: [account.id],
+    });
+    expect(credentials.removes).toEqual([key]);
+  });
+
+  it("rejects reuse and blind clearing while Codex browser cleanup is pending", async () => {
+    const pending = {
+      ...v2CodexConfig(),
+      providers: [
+        {
+          id: "codex",
+          enabled: true,
+          extensions: {},
+          pendingBrowserSessionCleanup: { version: 1 as const, accountIds: ["codex-account"] },
+        },
+      ],
+    } satisfies PersistedCodexBarConfig;
+    const repository = memoryRepository(pending);
+    const credentials = memoryCredentials();
+    const wrapped = vaultRepository(repository, credentials);
+
+    await expect(
+      Effect.runPromise(
+        addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
+          accountId: "codex-account",
+          label: "Personal",
+          credentialJson: JSON.stringify({
+            tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+          }),
+          addedAt: 1,
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "add token account" });
+
+    const cleared: PersistedCodexBarConfig = {
+      ...pending,
+      providers: pending.providers.map((provider) => {
+        const { pendingBrowserSessionCleanup: _marker, ...withoutMarker } = provider;
+        return withoutMarker;
+      }),
+    };
+    await expect(Effect.runPromise(wrapped.save(cleared))).rejects.toMatchObject({
+      operation: "validate token accounts",
+    });
+    expect(repository.current).toBe(pending);
+  });
+
   it("keeps a tombstone after keyring failure and recovers idempotently on next load", async () => {
     const key = tokenAccountVaultKey("claude", "account-1");
     const input = v1Config([{ id: "account-1", label: "Main", token: "secret-1", addedAt: 0 }]);

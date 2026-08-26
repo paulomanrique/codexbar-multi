@@ -75,6 +75,8 @@ export interface FirstPartyBrowserSessions {
 export interface FirstPartySelectedAccount extends ProviderSelectedAccount {
   readonly plainSettings?: Readonly<Record<string, string | null>>;
   readonly secureSettings?: Readonly<Record<string, string | null>>;
+  /** Host-only fence: token/API strategies remain usable while the web session is purged. */
+  readonly browserSessionCleanupPending?: boolean;
   readonly claudeHistoryBinding?: {
     readonly selectionKey: string;
     readonly oauthHistoryOwnerIdentifier?: string;
@@ -920,7 +922,12 @@ const selectedStrategyAllowed = (
   strategy: ProviderStrategy,
 ): boolean => {
   if (providerId === "codex" && strategy.id === "codex.web.dashboard") {
-    if (context.sourceMode !== "web" || selectedAccount === undefined) return false;
+    if (
+      context.sourceMode !== "web" ||
+      selectedAccount === undefined ||
+      selectedAccount.browserSessionCleanupPending === true
+    )
+      return false;
     const oauth = ownSetting(selectedAccount.secureSettings, "CODEX_ACCESS_TOKEN");
     const pat = ownSetting(selectedAccount.secureSettings, "CODEX_PERSONAL_ACCESS_TOKEN");
     const accountId = ownSetting(selectedAccount.plainSettings, "CODEX_ACCOUNT_ID");

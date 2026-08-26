@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { CodexBarConfig } from "../src/config.ts";
+import { CodexBarConfig, PendingBrowserSessionCleanup } from "../src/config.ts";
 import { ProviderFetchClassifiedError } from "../src/errors.ts";
 import {
   decodeUsageSnapshot,
@@ -10,6 +10,21 @@ import {
 } from "../src/usage.ts";
 
 describe("schema contracts", () => {
+  it("validates browser-session cleanup markers", () => {
+    expect(
+      Schema.decodeUnknownSync(PendingBrowserSessionCleanup)({
+        version: 1,
+        accountIds: ["account-1", "account-2"],
+      }),
+    ).toEqual({ version: 1, accountIds: ["account-1", "account-2"] });
+    expect(() =>
+      Schema.decodeUnknownSync(PendingBrowserSessionCleanup)({
+        version: 1,
+        accountIds: ["account-1", "account-1"],
+      }),
+    ).toThrow();
+  });
+
   it("uses CodexBar's persisted field spelling and private config wire types", () => {
     const config = Schema.decodeUnknownSync(CodexBarConfig)({
       version: 1,

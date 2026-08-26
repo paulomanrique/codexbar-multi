@@ -436,6 +436,57 @@ describe("first-party runtime selected Codex accounts", () => {
     expect(JSON.stringify(outcome)).not.toContain("selected-cookie");
   });
 
+  it("keeps Codex web fenced while selected-account browser cleanup is pending", async () => {
+    let browserCalls = 0;
+    let httpCalls = 0;
+    const selected = makeFirstPartyProviderRuntime({
+      providers: [codex],
+      settings: {
+        read: (_provider, setting) =>
+          setting === "CODEX_CLI_USER_AGENT"
+            ? Effect.succeed("codex_cli_rs/1.2.3 (Windows 11; x86_64)")
+            : Effect.die(`cleanup-fenced Codex account must suppress ${setting}`),
+      },
+      selectedAccounts: {
+        resolve: () =>
+          Effect.succeed({
+            id: "codex-web-selected",
+            accountEmail: "owner@example.com",
+            browserSessionCleanupPending: true,
+            secureSettings: {
+              CODEX_ACCESS_TOKEN: null,
+              CODEX_PERSONAL_ACCESS_TOKEN: null,
+            },
+            plainSettings: { CODEX_ACCOUNT_ID: "acct-owner" },
+          }),
+      },
+      browserSessions: {
+        cookieHeader: () => {
+          browserCalls += 1;
+          return Effect.succeed("__Secure-session=must-not-be-read");
+        },
+      },
+      credentials: {
+        read: () => Effect.die("cleanup-fenced Codex account must not read ambient credentials"),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      http: {
+        execute: (request) => {
+          httpCalls += 1;
+          return Effect.succeed(response(request, usagePayload));
+        },
+      },
+      clock,
+    });
+
+    await expect(
+      Effect.runPromise(selected.fetch("codex", { sourceMode: "web", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "codex" });
+    expect(browserCalls).toBe(0);
+    expect(httpCalls).toBe(0);
+  });
+
   it("keeps Codex web unavailable without scoped ownership and maps a missing selected session", async () => {
     let browserCalls = 0;
     let httpCalls = 0;

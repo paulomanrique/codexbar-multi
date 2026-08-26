@@ -73,6 +73,7 @@ import { terminateProcessTree } from "./node-process-terminator.ts";
 export * from "./node-persistence.ts";
 export * from "./node-token-account-migration-lock.ts";
 export * from "./token-account-vault-config.ts";
+export * from "./browser-session-cleanup-journal.ts";
 export * from "./node-antigravity-local.ts";
 export * from "./node-persistence-worker-client.ts";
 export * from "./first-party-runtime.ts";

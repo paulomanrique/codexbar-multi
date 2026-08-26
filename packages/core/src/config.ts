@@ -8,6 +8,7 @@ import {
   type ProviderTokenAccountData,
   type PendingTokenAccountAddition,
   type PendingTokenAccountDeletion,
+  type PendingBrowserSessionCleanup,
   type QuotaWarningConfig,
 } from "@codexbar/contracts";
 
@@ -58,6 +59,8 @@ export interface PersistedProviderConfig {
   readonly pendingTokenAccountAddition?: PendingTokenAccountAddition;
   /** Host-only, non-secret recovery marker; never projected to renderer DTOs. */
   readonly pendingTokenAccountDeletion?: PendingTokenAccountDeletion;
+  /** Host-only, non-secret recovery marker; never projected to renderer DTOs. */
+  readonly pendingBrowserSessionCleanup?: PendingBrowserSessionCleanup;
   readonly quotaWarnings?: QuotaWarningConfig;
   readonly accentColor?: string;
   readonly pluginSettings?: Readonly<Record<string, string>>;
@@ -120,6 +123,7 @@ const providerFields = new Set([
   "tokenAccounts",
   "pendingTokenAccountAddition",
   "pendingTokenAccountDeletion",
+  "pendingBrowserSessionCleanup",
   "quotaWarnings",
   "accentColor",
   "pluginSettings",
@@ -187,6 +191,38 @@ const optionalPendingTokenAccountDeletion = (
     throw new ConfigDecodeError(`${path}.accountId is invalid.`);
   }
   return { version: 1, accountId };
+};
+
+const optionalPendingBrowserSessionCleanup = (
+  value: unknown,
+  path: string,
+): PendingBrowserSessionCleanup | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new ConfigDecodeError(`${path} must be an object.`);
+  if (Object.keys(value).some((key) => key !== "version" && key !== "accountIds")) {
+    throw new ConfigDecodeError(`${path} contains unsupported fields.`);
+  }
+  const version = optionalNumber(own(value, "version"), `${path}.version`);
+  if (version !== 1) throw new ConfigDecodeError(`${path}.version is invalid.`);
+  const rawAccountIds = own(value, "accountIds");
+  if (!Array.isArray(rawAccountIds) || rawAccountIds.length < 1 || rawAccountIds.length > 256) {
+    throw new ConfigDecodeError(`${path}.accountIds is invalid.`);
+  }
+  const accountIds = rawAccountIds.map((accountId, index) => {
+    if (
+      typeof accountId !== "string" ||
+      accountId.length === 0 ||
+      accountId.length > 256 ||
+      /\p{Cc}/u.test(accountId)
+    ) {
+      throw new ConfigDecodeError(`${path}.accountIds[${index}] is invalid.`);
+    }
+    return accountId;
+  });
+  if (new Set(accountIds).size !== accountIds.length) {
+    throw new ConfigDecodeError(`${path}.accountIds must contain unique IDs.`);
+  }
+  return { version: 1, accountIds };
 };
 
 const pendingTokenAccountFieldNames = new Set([
@@ -533,6 +569,10 @@ export const decodeCodexBarConfig = (
       own(rawProvider, "pendingTokenAccountDeletion"),
       `${path}.pendingTokenAccountDeletion`,
     );
+    const pendingBrowserSessionCleanup = optionalPendingBrowserSessionCleanup(
+      own(rawProvider, "pendingBrowserSessionCleanup"),
+      `${path}.pendingBrowserSessionCleanup`,
+    );
     const quotaWarnings = optionalQuotaWarnings(
       own(rawProvider, "quotaWarnings"),
       `${path}.quotaWarnings`,
@@ -561,6 +601,7 @@ export const decodeCodexBarConfig = (
       ...(tokenAccounts === undefined ? {} : { tokenAccounts }),
       ...(pendingTokenAccountAddition === undefined ? {} : { pendingTokenAccountAddition }),
       ...(pendingTokenAccountDeletion === undefined ? {} : { pendingTokenAccountDeletion }),
+      ...(pendingBrowserSessionCleanup === undefined ? {} : { pendingBrowserSessionCleanup }),
       ...(quotaWarnings === undefined ? {} : { quotaWarnings }),
       ...(accentColor === undefined ? {} : { accentColor }),
       ...(pluginSettings === undefined ? {} : { pluginSettings }),
@@ -604,6 +645,7 @@ export const encodeCodexBarConfig = (config: PersistedCodexBarConfig): Record<st
       tokenAccounts: provider.tokenAccounts,
       pendingTokenAccountAddition: provider.pendingTokenAccountAddition,
       pendingTokenAccountDeletion: provider.pendingTokenAccountDeletion,
+      pendingBrowserSessionCleanup: provider.pendingBrowserSessionCleanup,
       quotaWarnings: provider.quotaWarnings,
       accentColor: provider.accentColor,
       pluginSettings: provider.pluginSettings,

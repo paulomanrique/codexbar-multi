@@ -5,6 +5,7 @@ import {
   BrowserLoginController,
   browserCredentialKey,
   browserSessionPartition,
+  requireDefaultBrowserLoginRequest,
   type BrowserLoginHost,
   type BrowserLoginSession,
   type BrowserLoginWindow,
@@ -49,12 +50,25 @@ class FakeWindow implements BrowserLoginWindow {
   loaded: string | undefined;
   focused = 0;
   closed = false;
+  closeRequested = false;
+  delayClose = false;
 
   focus(): void {
     this.focused += 1;
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closeRequested = true;
+    if (this.delayClose) return;
+    this.finishClose();
+  }
+
+  destroy(): void {
+    this.close();
+  }
+
+  finishClose(): void {
     if (this.closed) return;
     this.closed = true;
     for (const listener of this.closeListeners) listener();
@@ -84,15 +98,19 @@ const makeHost = () => {
   const window = new FakeWindow();
   const writes: Array<{ key: string; value: string }> = [];
   const removes: string[] = [];
+  const credentials = new Map<string, string>();
   const host: BrowserLoginHost = {
     sessionFor: () => session,
     createWindow: (_request: LoginRequestDTO, _descriptor: BrowserLoginDescriptor, _session) =>
       window,
     persistCredential: async (key, value) => {
       writes.push({ key, value });
+      credentials.set(key, value);
     },
+    readCredential: async (key) => credentials.get(key),
     removeCredential: async (key) => {
       removes.push(key);
+      credentials.delete(key);
     },
     now: () => new Date("2026-08-20T12:34:56.000Z"),
   };
@@ -109,6 +127,13 @@ describe("browser login controller", () => {
     expect(browserCredentialKey(claudeDefaultRequest)).toBe("browser-session/claude/default");
     expect(browserSessionPartition(grokDefaultRequest)).toBe("persist:codexbar-multi-grok-default");
     expect(browserCredentialKey(grokDefaultRequest)).toBe("browser-session/grok/default");
+  });
+
+  it("restricts the generic renderer login bridge to default account IDs", () => {
+    expect(requireDefaultBrowserLoginRequest(grokDefaultRequest)).toBe(grokDefaultRequest);
+    expect(() => requireDefaultBrowserLoginRequest(request)).toThrow(
+      "restricted to the default account",
+    );
   });
 
   it("persists only allowlisted completion cookies and never exposes them in the result", async () => {
@@ -229,6 +254,28 @@ describe("browser login controller", () => {
     expect(removes).toEqual([browserCredentialKey(grokDefaultRequest)]);
   });
 
+  it("waits for the login window to close before clearing storage on logout", async () => {
+    const { host, session, window, removes } = makeHost();
+    window.delayClose = true;
+    const controller = new BrowserLoginController(host);
+    const pending = controller.start(grokDefaultRequest);
+    await flush();
+
+    const logout = controller.logout(grokDefaultRequest);
+    await flush();
+
+    expect(window.closeRequested).toBe(true);
+    expect(session.clearCalls).toBe(0);
+    expect(removes).toEqual([]);
+    await expect(controller.start(grokDefaultRequest)).rejects.toThrow("cleanup is incomplete");
+
+    window.finishClose();
+    await logout;
+    await expect(pending).resolves.toEqual({ ...grokDefaultRequest, status: "cancelled" });
+    expect(session.clearCalls).toBe(1);
+    expect(removes).toEqual([browserCredentialKey(grokDefaultRequest)]);
+  });
+
   it("blocks a same-account relogin until an earlier logout cleanup finishes", async () => {
     const { host, session, removes } = makeHost();
     let releasePersistence: (() => void) | undefined;
@@ -261,6 +308,46 @@ describe("browser login controller", () => {
     await expect(second).resolves.toEqual({ ...grokDefaultRequest, status: "cancelled" });
   });
 
+  it("fences cancel until a late credential write is rolled back", async () => {
+    const { host, session, window, removes } = makeHost();
+    window.delayClose = true;
+    let releasePersistence: (() => void) | undefined;
+    const slowHost: BrowserLoginHost = {
+      ...host,
+      persistCredential: async (key, value) => {
+        await new Promise<void>((resolve) => {
+          releasePersistence = resolve;
+        });
+        await host.persistCredential(key, value);
+      },
+    };
+    session.cookies.set("grok.com", [{ name: "sso", value: "late-session" }]);
+    const controller = new BrowserLoginController(slowHost);
+    const pending = controller.start(grokDefaultRequest);
+    await flush();
+    session.changed();
+    await flush();
+
+    controller.cancel(grokDefaultRequest);
+    await expect(controller.start(grokDefaultRequest)).rejects.toThrow("cleanup is incomplete");
+    window.finishClose();
+    await flush();
+    await expect(controller.start(grokDefaultRequest)).rejects.toThrow("cleanup is incomplete");
+
+    releasePersistence?.();
+    await expect(pending).resolves.toEqual({ ...grokDefaultRequest, status: "cancelled" });
+    await flush();
+
+    expect(session.clearCalls).toBe(1);
+    expect(removes).toEqual([browserCredentialKey(grokDefaultRequest)]);
+    await flush();
+    await flush();
+    const next = controller.start(grokDefaultRequest);
+    await flush();
+    controller.cancel(grokDefaultRequest);
+    await expect(next).resolves.toEqual({ ...grokDefaultRequest, status: "cancelled" });
+  });
+
   it("keeps login fail-closed after cleanup failure until logout retry succeeds", async () => {
     const { host, session } = makeHost();
     let failClear = true;
@@ -279,11 +366,34 @@ describe("browser login controller", () => {
     await flush();
     controller.cancel(grokDefaultRequest);
     await expect(login).resolves.toEqual({ ...grokDefaultRequest, status: "cancelled" });
-    expect(session.clearCalls).toBe(2);
+    expect(session.clearCalls).toBe(3);
+  });
+
+  it("keeps cleanup pending when credential readback remains present", async () => {
+    const { host } = makeHost();
+    let retained = true;
+    const retainingHost: BrowserLoginHost = {
+      ...host,
+      readCredential: async () => (retained ? "still-present" : undefined),
+    };
+    const controller = new BrowserLoginController(retainingHost);
+
+    await expect(controller.logout(grokDefaultRequest)).rejects.toThrow(
+      "remained available after removal",
+    );
+    await expect(controller.start(grokDefaultRequest)).rejects.toThrow("cleanup is incomplete");
+
+    retained = false;
+    await expect(controller.logout(grokDefaultRequest)).resolves.toBeUndefined();
+    const login = controller.start(grokDefaultRequest);
+    await flush();
+    controller.cancel(grokDefaultRequest);
+    await expect(login).resolves.toEqual({ ...grokDefaultRequest, status: "cancelled" });
   });
 
   it("clears an isolated partition when exporting to the credential store fails", async () => {
-    const { host, session } = makeHost();
+    const { host, session, removes, window } = makeHost();
+    window.delayClose = true;
     const failingHost: BrowserLoginHost = {
       ...host,
       persistCredential: async () => {
@@ -296,8 +406,14 @@ describe("browser login controller", () => {
     await flush();
 
     session.changed();
+    for (let index = 0; index < 5 && !window.closeRequested; index += 1) await flush();
+    expect(window.closeRequested).toBe(true);
+    expect(session.clearCalls).toBe(0);
+    expect(removes).toEqual([]);
+    window.finishClose();
     await expect(result).rejects.toThrow("Could not persist the authenticated browser session");
     expect(session.clearCalls).toBe(1);
+    expect(removes).toEqual([browserCredentialKey(request)]);
   });
 
   it("coalesces a completion-cookie event that arrives during an earlier cookie read", async () => {

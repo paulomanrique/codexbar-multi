@@ -71,6 +71,7 @@ import {
   makeNodeConfigRepository,
   makeNodeTokenAccountMigrationLock,
   makeTokenAccountVaultConfigRepository,
+  drainPendingBrowserSessionCleanups,
   addCodexTokenAccountCredentialToVault,
   cleanupStaleNodeCodexLoginHomes,
   makeSystemClock,
@@ -121,7 +122,12 @@ import { Effect } from "effect";
 import * as Schema from "effect/Schema";
 
 import { DesktopChannels } from "../ipc/api.js";
-import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./browser-session.js";
+import {
+  cancelBrowserLogin,
+  desktopBrowserSessionCleanupAdapter,
+  logoutBrowserSession,
+  startBrowserLogin,
+} from "./browser-session.js";
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
 import { DesktopClaudeSwapController } from "./claude-swap.js";
@@ -639,6 +645,23 @@ void desktopReady?.then(async () => {
       );
       desktopConfig = initialized.config;
     }
+    try {
+      await Effect.runPromise(
+        drainPendingBrowserSessionCleanups(
+          rawConfigRepository,
+          tokenAccountMigrationLock,
+          desktopBrowserSessionCleanupAdapter,
+        ),
+      );
+    } catch {
+      // The durable marker remains in raw config. Provider resolution fences
+      // Codex web for that account and the next desktop startup retries.
+      console.warn("Pending browser-session cleanup will be retried.");
+    } finally {
+      // A partial drain may have acknowledged some accounts before another
+      // failed. Keep the process-local strategy fence aligned with disk.
+      desktopConfig = await Effect.runPromise(configRepository.load);
+    }
 
     hostLifecycle.advanceBootstrapStage("runtime");
     providerRuntime = makeFirstPartyProviderRuntime({
@@ -1038,6 +1061,18 @@ void desktopReady?.then(async () => {
         const roster = await desktopConfigMutations.run(async () => {
           return runTokenAccountRemovalMutation({
             remove: () => Effect.runPromise(tokenAccounts.remove(request)),
+            ...(request.provider === "codex"
+              ? {
+                  cleanupRemovedAccount: () =>
+                    Effect.runPromise(
+                      drainPendingBrowserSessionCleanups(
+                        rawConfigRepository,
+                        tokenAccountMigrationLock,
+                        desktopBrowserSessionCleanupAdapter,
+                      ),
+                    ),
+                }
+              : {}),
             loadCommittedConfig: () => Effect.runPromise(configRepository.load),
             // Wrapped load intentionally retries keyring cleanup and can fail.
             // Raw load exposes only the already-decoded metadata/tombstone and

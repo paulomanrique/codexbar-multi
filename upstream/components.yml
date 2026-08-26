@@ -189,11 +189,14 @@ components:
       - packages/core/src/token-accounts.ts
       - packages/providers/src/token-account-support.ts
       - packages/platform/src/token-account-vault-config.ts
+      - packages/platform/src/browser-session-cleanup-journal.ts
       - packages/platform/src/node-codex-credential.ts
       - packages/platform/src/node-codex-login.ts
       - apps/desktop/src/ipc/api.ts
       - apps/desktop/src/main/index.ts
       - apps/desktop/src/main/codex-account-login.ts
+      - apps/desktop/src/main/browser-session-controller.ts
+      - apps/desktop/src/main/browser-session.ts
       - apps/desktop/src/main/provider-settings.ts
       - apps/desktop/src/main/token-account-removal.ts
       - apps/desktop/src/preload/token-accounts-api.ts
@@ -212,6 +215,8 @@ components:
       - packages/providers/test/token-account-support.test.ts
       - packages/platform/test/token-account-vault-config.test.ts
       - packages/platform/test/first-party-runtime-codex-account.test.ts
+      - packages/platform/test/browser-session-cleanup-journal.test.ts
+      - apps/desktop/test/browser-session-controller.test.ts
       - packages/platform/test/node-codex-login.test.ts
       - packages/platform/test/node-discovered-provider-settings.test.ts
       - apps/cli/test/codex-credential.test.ts

@@ -86,6 +86,46 @@ describe("CodexBarConfig coding (Swift parity)", () => {
     }
   });
 
+  it("round-trips and strictly validates the browser-session cleanup marker", () => {
+    const input = {
+      version: 1,
+      providers: [
+        {
+          id: "codex",
+          pendingBrowserSessionCleanup: { version: 1, accountIds: ["account-1", "account-2"] },
+        },
+      ],
+    };
+    const expectedMarker = { version: 1, accountIds: ["account-1", "account-2"] };
+    const decoded = decodeCodexBarConfig(input);
+    expect(decoded.providers[0]?.pendingBrowserSessionCleanup).toEqual(expectedMarker);
+    expect(encodeCodexBarConfig(decoded)).toEqual(input);
+    expect(
+      normalizeCodexBarConfig({ version: 1, providers: decoded.providers }).providers[0]
+        ?.pendingBrowserSessionCleanup,
+    ).toEqual(expectedMarker);
+    expect(
+      sanitizedCodexBarConfigForDump({ version: 1, providers: decoded.providers }).providers[0]
+        ?.pendingBrowserSessionCleanup,
+    ).toEqual(expectedMarker);
+
+    for (const marker of [
+      { version: 2, accountIds: ["account-1"] },
+      { version: 1, accountIds: [] },
+      { version: 1, accountIds: ["account-1", "account-1"] },
+      { version: 1, accountIds: ["bad\naccount"] },
+      { version: 1, accountIds: ["a".repeat(257)] },
+      { version: 1, accountIds: ["account-1"], extra: true },
+    ]) {
+      expect(() =>
+        decodeCodexBarConfig({
+          version: 1,
+          providers: [{ id: "codex", pendingBrowserSessionCleanup: marker }],
+        }),
+      ).toThrow(ConfigDecodeError);
+    }
+  });
+
   it("round-trips only the typed non-secret token-account addition marker", () => {
     const marker = {
       version: 1,

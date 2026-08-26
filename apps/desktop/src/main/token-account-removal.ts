@@ -5,12 +5,15 @@
  */
 export const runTokenAccountRemovalMutation = async <Value, Config>(options: {
   readonly remove: () => Promise<Value>;
+  /** Runs after the durable roster/vault commit and before publishing success. */
+  readonly cleanupRemovedAccount?: () => Promise<void>;
   readonly loadCommittedConfig: () => Promise<Config | undefined>;
   readonly loadRawConfig: () => Promise<Config | undefined>;
   readonly publishConfig: (config: Config | undefined) => void;
 }): Promise<Value> => {
   try {
     const value = await options.remove();
+    await options.cleanupRemovedAccount?.();
     options.publishConfig(await options.loadCommittedConfig());
     return value;
   } catch (error) {

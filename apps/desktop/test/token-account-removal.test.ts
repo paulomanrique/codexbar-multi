@@ -13,15 +13,41 @@ import { runTokenAccountRemovalMutation } from "../src/main/token-account-remova
 describe("desktop token account removal cache", () => {
   it("publishes the committed config after successful vault cleanup", async () => {
     const published: unknown[] = [];
+    const events: string[] = [];
     await expect(
       runTokenAccountRemovalMutation({
-        remove: async () => "removed",
-        loadCommittedConfig: async () => ({ accounts: [] }),
+        remove: async () => {
+          events.push("remove");
+          return "removed";
+        },
+        cleanupRemovedAccount: async () => {
+          events.push("cleanup-browser");
+        },
+        loadCommittedConfig: async () => {
+          events.push("load");
+          return { accounts: [] };
+        },
         loadRawConfig: async () => ({ accounts: ["stale"] }),
         publishConfig: (config) => published.push(config),
       }),
     ).resolves.toBe("removed");
+    expect(events).toEqual(["remove", "cleanup-browser", "load"]);
     expect(published).toEqual([{ accounts: [] }]);
+  });
+
+  it("publishes the staged tombstone when browser cleanup fails after removal", async () => {
+    const staged = { accounts: [], pendingBrowserSessionCleanup: ["removed"] };
+    const published: unknown[] = [];
+    await expect(
+      runTokenAccountRemovalMutation({
+        remove: async () => "removed",
+        cleanupRemovedAccount: async () => Promise.reject(new Error("partition busy")),
+        loadCommittedConfig: async () => ({ accounts: ["must-not-publish"] }),
+        loadRawConfig: async () => staged,
+        publishConfig: (config) => published.push(config),
+      }),
+    ).rejects.toThrow("partition busy");
+    expect(published).toEqual([undefined, staged]);
   });
 
   it("replaces stale runtime state with staged raw config after keyring failure", async () => {
