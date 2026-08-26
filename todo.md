@@ -152,6 +152,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [ ] Finish Swift-oracle/native parity gates for the simple HTTP wave.
 - [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial; MiniMax selected-account isolation and HTML-first parsing are complete).
   - [x] Harden Wayfinder required payload decoding, cancellation, and no-redirect transport proof; native-oracle parity remains pending.
+  - [x] Align ZenMux opt-in PAYG fetches, cancellation, strict decoding, and HTTP error classification; native-oracle parity remains pending.
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.

@@ -1427,6 +1427,7 @@ const executeProvider = (
             }),
         env: { timeZone },
         sourceMode: fetchContext.sourceMode,
+        includeCredits: fetchContext.includeCredits,
         signal: operationSignal,
         date: {
           now,

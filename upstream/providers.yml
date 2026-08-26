@@ -1743,12 +1743,14 @@ providers:
   - id: zenmux
     swiftGlobs:
       - Sources/CodexBar/Providers/ZenMux/**/*.swift
+      - Sources/CodexBarCore/Providers/ZenMux/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*ZenMux*Tests.swift
         - TestsLinux/*ZenMux*Tests.swift
       tsGlobs:
         - packages/providers/test/gateway-parity-wave.test.ts
+        - packages/platform/test/first-party-runtime-zenmux.test.ts
     fixtures:
       - packages/providers/test/gateway-parity-wave.test.ts
     tsPaths:
@@ -1757,6 +1759,7 @@ providers:
         - packages/providers/src/providers/zenmux.ts
     tsTestGlobs:
       - packages/providers/test/gateway-parity-wave.test.ts
+      - packages/platform/test/first-party-runtime-zenmux.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

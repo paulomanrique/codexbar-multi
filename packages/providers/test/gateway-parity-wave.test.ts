@@ -43,6 +43,7 @@ function context(
     },
     browser: { cookieHeader: async () => "" },
     env: {},
+    includeCredits: true,
     date: {
       now: () => now,
       nowMillis: () => now.getTime(),
@@ -344,12 +345,14 @@ describe("Swift-derived LiteLLM, ZenMux, and Wayfinder parity", () => {
           resets_at: "2026-03-24T08:35:09.000Z",
           max_flows: 800,
           used_flows: 57.2,
+          remaining_flows: 742.8,
         },
         quota_7_day: {
           usage_percentage: 0.0673,
           resets_at: "2026-03-26T02:15:05.000Z",
           max_flows: 6_182,
           used_flows: 416.11,
+          remaining_flows: 5_765.89,
         },
       },
     };
@@ -397,6 +400,119 @@ describe("Swift-derived LiteLLM, ZenMux, and Wayfinder parity", () => {
     expect(noBalance).toMatchObject({ identity: { loginMethod: "Ultra plan" } });
     expect((noBalance.primary as { usedPercent: number }).usedPercent).toBeCloseTo(7.15, 8);
     expect(noBalance).not.toHaveProperty("providerCost");
+
+    const quotaOnlyRequests: Request[] = [];
+    const quotaOnlyContext = context(
+      (request) => {
+        if (!request.url.pathname.endsWith("subscription/detail"))
+          throw new Error("PAYG balance must remain opt-in");
+        return response(subscription);
+      },
+      { ZENMUX_MANAGEMENT_API_KEY: "management-key" },
+      quotaOnlyRequests,
+    );
+    const quotaOnly = await zenmux.fetchUsage({ ...quotaOnlyContext, includeCredits: false });
+    expect(quotaOnlyRequests.map((request) => request.url.pathname)).toEqual([
+      "/api/v1/management/subscription/detail",
+    ]);
+    expect(quotaOnly).not.toHaveProperty("providerCost");
+  });
+
+  it("preserves ZenMux cancellation from the optional PAYG request", async () => {
+    const aborted = new Error("cancelled");
+    aborted.name = "AbortError";
+    const subscription = {
+      success: true,
+      data: {
+        plan: { tier: "ultra" },
+        account_status: "healthy",
+        quota_5_hour: {
+          usage_percentage: 0.1,
+          max_flows: 100,
+          used_flows: 10,
+          remaining_flows: 90,
+        },
+        quota_7_day: {
+          usage_percentage: 0.2,
+          max_flows: 200,
+          used_flows: 40,
+          remaining_flows: 160,
+        },
+      },
+    };
+    await expect(
+      zenmux.fetchUsage(
+        context(
+          (request) => {
+            if (request.url.pathname.endsWith("subscription/detail")) return response(subscription);
+            throw aborted;
+          },
+          { ZENMUX_MANAGEMENT_API_KEY: "management-key" },
+        ),
+      ),
+    ).rejects.toBe(aborted);
+  });
+
+  it.each([
+    [
+      "numeric strings",
+      { usage_percentage: "0.1", max_flows: 100, used_flows: 10, remaining_flows: 90 },
+    ],
+    ["missing remaining flows", { usage_percentage: 0.1, max_flows: 100, used_flows: 10 }],
+  ])("rejects ZenMux %s like Swift Decodable", async (_label, quota) => {
+    await expect(
+      zenmux.fetchUsage(
+        context(
+          () =>
+            response({
+              success: true,
+              data: {
+                plan: { tier: "ultra" },
+                account_status: "healthy",
+                quota_5_hour: quota,
+                quota_7_day: {
+                  usage_percentage: 0.2,
+                  max_flows: 200,
+                  used_flows: 40,
+                  remaining_flows: 160,
+                },
+              },
+            }),
+          { ZENMUX_MANAGEMENT_API_KEY: "management-key" },
+        ),
+      ),
+    ).rejects.toThrow("parse-failure: ZenMux");
+  });
+
+  it("requires ZenMux account_status like Swift Decodable", async () => {
+    await expect(
+      zenmux.fetchUsage(
+        context(
+          () =>
+            response({
+              success: true,
+              data: {
+                plan: { tier: "ultra" },
+                quota_5_hour: {
+                  usage_percentage: 0.1,
+                  max_flows: 100,
+                  used_flows: 10,
+                  remaining_flows: 90,
+                },
+                quota_7_day: {
+                  usage_percentage: 0.2,
+                  max_flows: 200,
+                  used_flows: 40,
+                  remaining_flows: 160,
+                },
+              },
+            }),
+          { ZENMUX_MANAGEMENT_API_KEY: "management-key" },
+        ),
+      ),
+    ).rejects.toThrow(
+      "parse-failure: ZenMux subscription response did not include account_status.",
+    );
   });
 
   it("does not hide a rejected ZenMux management credential", async () => {
@@ -407,6 +523,16 @@ describe("Swift-derived LiteLLM, ZenMux, and Wayfinder parity", () => {
         }),
       ),
     ).rejects.toThrow("authentication-expired: ZenMux rejected the Management API key.");
+  });
+
+  it.each([429, 500])("classifies ZenMux HTTP %s as the upstream API error", async (status) => {
+    await expect(
+      zenmux.fetchUsage(
+        context(() => response({ error: "unavailable" }, status), {
+          ZENMUX_MANAGEMENT_API_KEY: "management-key",
+        }),
+      ),
+    ).rejects.toThrow(`api-failure: ZenMux Management API returned HTTP ${status}.`);
   });
 
   it("consolidates Wayfinder health, models, savings and optional Prometheus metrics", async () => {

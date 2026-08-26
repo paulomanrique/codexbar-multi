@@ -157,6 +157,8 @@ export interface ProviderContext {
    * their declared strategies; it never grants a host capability.
    */
   readonly sourceMode?: "auto" | "web" | "cli" | "oauth" | "api";
+  /** Host policy matching Swift's CLI `includeCredits` / app optional-usage toggle. */
+  readonly includeCredits?: boolean;
   /** Host refresh cancellation; first-party providers may derive narrower request scopes from it. */
   readonly signal?: AbortSignal;
   readonly date: {
