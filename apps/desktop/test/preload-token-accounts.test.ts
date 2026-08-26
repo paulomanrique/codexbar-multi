@@ -59,6 +59,22 @@ describe("token account preload bridge", () => {
       },
     });
 
+    await expect(
+      api.removeTokenAccount({
+        provider: "claude",
+        accountId: "account-1",
+        expectedRevision: "a".repeat(64),
+      }),
+    ).resolves.toMatchObject({ provider: "claude" });
+    expect(calls[2]).toEqual({
+      channel: DesktopChannels.removeTokenAccount,
+      input: {
+        provider: "claude",
+        accountId: "account-1",
+        expectedRevision: "a".repeat(64),
+      },
+    });
+
     await expect(api.listTokenAccounts({ provider: "fixture-plugin" as never })).rejects.toThrow();
     await expect(
       api.renameTokenAccount({
@@ -68,7 +84,15 @@ describe("token account preload bridge", () => {
         expectedRevision: "a".repeat(64),
       }),
     ).rejects.toThrow();
-    expect(calls).toHaveLength(2);
+    await expect(
+      api.removeTokenAccount({
+        provider: "claude",
+        accountId: "account-1",
+        expectedRevision: "a".repeat(64),
+        token: "must-not-cross-preload",
+      } as never),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(3);
   });
 
   it("rejects token-bearing responses before returning to the renderer", async () => {

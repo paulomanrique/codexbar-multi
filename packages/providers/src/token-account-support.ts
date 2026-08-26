@@ -6,6 +6,7 @@ export interface ProviderTokenAccountSupport {
   readonly selectedAccountRequiresManualCookieSource: boolean;
   /** True only after the selected credential has a complete, fail-closed runtime mapper. */
   readonly runtimeSelectionAvailable: boolean;
+  readonly clearsAPIKeyOnMutation: boolean;
 }
 
 const providerTokenAccountSupportBase = [
@@ -82,6 +83,7 @@ export const PROVIDER_TOKEN_ACCOUNT_SUPPORT: readonly ProviderTokenAccountSuppor
     ...support,
     selectedAccountRequiresManualCookieSource: support.provider === "cursor",
     runtimeSelectionAvailable: runtimeSelectableProviders.has(support.provider),
+    clearsAPIKeyOnMutation: support.provider === "copilot",
   }));
 
 export const PROVIDER_TOKEN_ACCOUNT_SUPPORT_BY_ID: ReadonlyMap<

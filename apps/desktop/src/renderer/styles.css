@@ -96,6 +96,11 @@ button.secondary {
   background: #1f2937;
   border-color: #374151;
 }
+button.secondary.danger {
+  color: #fecaca;
+  border-color: #7f1d1d;
+  background: #3f151a;
+}
 .parity-notice {
   color: #fcd34d;
   background: #422006;
@@ -368,7 +373,7 @@ h2 {
 }
 .settings-token-account-rename {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: end;
   margin-top: 7px;

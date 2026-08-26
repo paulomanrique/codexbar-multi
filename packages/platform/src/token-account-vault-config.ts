@@ -80,9 +80,18 @@ const metadataOnlyTokenAccounts = (provider: PersistedProviderConfig): Persisted
 const containsLegacyTokenAccountData = (config: PersistedCodexBarConfig): boolean =>
   config.providers.some((provider) => provider.tokenAccounts?.version === 1);
 
+const containsPendingTokenAccountDeletion = (config: PersistedCodexBarConfig): boolean =>
+  config.providers.some((provider) => provider.pendingTokenAccountDeletion !== undefined);
+
 const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureError | undefined => {
   for (const provider of config.providers) {
     const tokenAccounts = provider.tokenAccounts;
+    const pending = provider.pendingTokenAccountDeletion;
+    if (pending !== undefined && !firstPartyProviderIds.has(provider.id)) {
+      return invalidMetadataError(
+        new Error("Plugin token-account deletion recovery is not supported."),
+      );
+    }
     if (tokenAccounts === undefined) continue;
     if (tokenAccounts.version !== 2) {
       return saveError(new Error("Legacy token account data cannot be saved."));
@@ -93,8 +102,100 @@ const assertMetadataOnlyV2 = (config: PersistedCodexBarConfig): InfrastructureEr
     if (hasDuplicateAccountIds(tokenAccounts.accounts)) {
       return invalidMetadataError(new Error("Token account IDs must be unique per provider."));
     }
+    if (pending !== undefined) {
+      if (tokenAccounts.accounts.some((account) => account.id === pending.accountId)) {
+        return invalidMetadataError(
+          new Error("A pending token-account deletion must not remain selectable."),
+        );
+      }
+    }
   }
   return undefined;
+};
+
+const tokenAccountLifecycleError = (operation: string, cause: unknown): InfrastructureError =>
+  new InfrastructureError(
+    operation,
+    "Token account credential lifecycle did not complete. Recovery will retry without exposing the credential.",
+    cause,
+  );
+
+const removeAndVerifyTokenAccountCredential = (
+  providerId: string,
+  accountId: string,
+  credentials: CredentialStoreService,
+): Effect.Effect<void, InfrastructureError> => {
+  const key = tokenAccountVaultKey(providerId, accountId);
+  return credentials.remove(key).pipe(
+    Effect.mapError((error) =>
+      tokenAccountLifecycleError("remove token account credential", new Error(error.operation)),
+    ),
+    Effect.flatMap(() =>
+      credentials
+        .read(key)
+        .pipe(
+          Effect.mapError((error) =>
+            tokenAccountLifecycleError(
+              "verify token account credential removal",
+              new Error(error.operation),
+            ),
+          ),
+        ),
+    ),
+    Effect.flatMap((remaining) =>
+      remaining === undefined
+        ? Effect.void
+        : Effect.fail(
+            tokenAccountLifecycleError(
+              "verify token account credential removal",
+              new Error("Credential remained available after removal."),
+            ),
+          ),
+    ),
+  );
+};
+
+const clearPendingTokenAccountDeletions = (
+  config: PersistedCodexBarConfig,
+): PersistedCodexBarConfig => ({
+  ...config,
+  providers: config.providers.map((provider) => {
+    if (provider.pendingTokenAccountDeletion === undefined) return provider;
+    const { pendingTokenAccountDeletion: _pending, ...cleared } = provider;
+    return cleared;
+  }),
+});
+
+const reconcilePendingTokenAccountDeletions = (
+  config: PersistedCodexBarConfig,
+  repository: ConfigRepositoryService,
+  credentials: CredentialStoreService,
+): Effect.Effect<PersistedCodexBarConfig, InfrastructureError> => {
+  const pending = config.providers.flatMap((provider) =>
+    provider.pendingTokenAccountDeletion === undefined
+      ? []
+      : [{ providerId: provider.id, accountId: provider.pendingTokenAccountDeletion.accountId }],
+  );
+  if (pending.length === 0) return Effect.succeed(config);
+  return Effect.forEach(
+    pending,
+    ({ providerId, accountId }) =>
+      removeAndVerifyTokenAccountCredential(providerId, accountId, credentials),
+    { concurrency: 1, discard: true },
+  ).pipe(
+    Effect.flatMap(() => {
+      const recovered = clearPendingTokenAccountDeletions(config);
+      return repository.save(recovered).pipe(
+        Effect.mapError((error) =>
+          tokenAccountLifecycleError(
+            "save token account deletion recovery",
+            new Error(error.operation),
+          ),
+        ),
+        Effect.as(recovered),
+      );
+    }),
+  );
 };
 
 const migrateTokenAccountsToVault = (
@@ -175,17 +276,150 @@ const loadFreshAndMigrateUnderHeldLock = (
   repository: ConfigRepositoryService,
   credentials: CredentialStoreService,
 ): Effect.Effect<PersistedCodexBarConfig | undefined, InfrastructureError> =>
-  repository.load.pipe(
-    Effect.mapError((error) => vaultError("load config", error)),
-    Effect.flatMap((freshConfig) => {
-      if (freshConfig === undefined) return Effect.succeed(undefined);
-      if (!containsLegacyTokenAccountData(freshConfig)) {
-        const invalid = assertMetadataOnlyV2(freshConfig);
-        return invalid === undefined ? Effect.succeed(freshConfig) : Effect.fail(invalid);
-      }
-      return migrateTokenAccountsToVault(freshConfig, repository, credentials);
-    }),
+  Effect.gen(function* () {
+    const freshConfig = yield* repository.load.pipe(
+      Effect.mapError((error) => vaultError("load config", error)),
+    );
+    if (freshConfig === undefined) return undefined;
+    if (
+      containsLegacyTokenAccountData(freshConfig) &&
+      containsPendingTokenAccountDeletion(freshConfig)
+    ) {
+      return yield* Effect.fail(
+        invalidMetadataError(
+          new Error("Legacy token accounts cannot contain pending vault deletions."),
+        ),
+      );
+    }
+    const current = containsLegacyTokenAccountData(freshConfig)
+      ? yield* migrateTokenAccountsToVault(freshConfig, repository, credentials)
+      : freshConfig;
+    const invalid = assertMetadataOnlyV2(current);
+    if (invalid !== undefined) return yield* Effect.fail(invalid);
+    return yield* reconcilePendingTokenAccountDeletions(current, repository, credentials);
+  });
+
+interface TokenAccountIdentityChange {
+  readonly providerId: string;
+  readonly accountId: string;
+}
+
+const tokenAccountIdentityChanges = (
+  current: PersistedCodexBarConfig | undefined,
+  next: PersistedCodexBarConfig,
+): {
+  readonly added: readonly TokenAccountIdentityChange[];
+  readonly removed: readonly TokenAccountIdentityChange[];
+} => {
+  const currentByProvider = new Map(
+    (current?.providers ?? []).map((provider) => [
+      provider.id,
+      new Set(provider.tokenAccounts?.accounts.map((account) => account.id) ?? []),
+    ]),
   );
+  const nextByProvider = new Map(
+    next.providers.map((provider) => [
+      provider.id,
+      new Set(provider.tokenAccounts?.accounts.map((account) => account.id) ?? []),
+    ]),
+  );
+  const providerIds = new Set([...currentByProvider.keys(), ...nextByProvider.keys()]);
+  const added: TokenAccountIdentityChange[] = [];
+  const removed: TokenAccountIdentityChange[] = [];
+  for (const providerId of providerIds) {
+    const before = currentByProvider.get(providerId) ?? new Set<string>();
+    const after = nextByProvider.get(providerId) ?? new Set<string>();
+    for (const accountId of after) {
+      if (!before.has(accountId)) added.push({ providerId, accountId });
+    }
+    for (const accountId of before) {
+      if (!after.has(accountId)) removed.push({ providerId, accountId });
+    }
+  }
+  return { added, removed };
+};
+
+const tokenAccountRostersEqual = (
+  current: PersistedCodexBarConfig | undefined,
+  next: PersistedCodexBarConfig,
+): boolean => {
+  const project = (config: PersistedCodexBarConfig | undefined) =>
+    (config?.providers ?? [])
+      .filter((provider) => provider.tokenAccounts !== undefined)
+      .map((provider) => ({ id: provider.id, tokenAccounts: provider.tokenAccounts }));
+  return JSON.stringify(project(current)) === JSON.stringify(project(next));
+};
+
+const commitVaultBackedConfigMutation = (
+  current: PersistedCodexBarConfig | undefined,
+  next: PersistedCodexBarConfig,
+  repository: ConfigRepositoryService,
+  credentials: CredentialStoreService,
+): Effect.Effect<PersistedCodexBarConfig, InfrastructureError> => {
+  if (containsPendingTokenAccountDeletion(next)) {
+    return Effect.fail(
+      invalidMetadataError(new Error("Pending token-account deletions are host-owned.")),
+    );
+  }
+  const changes = tokenAccountIdentityChanges(current, next);
+  if (changes.added.length > 0) {
+    return Effect.fail(
+      tokenAccountLifecycleError(
+        "add token account",
+        new Error("Account creation requires the host credential lifecycle service."),
+      ),
+    );
+  }
+  if (changes.removed.length === 0) {
+    return repository.save(next).pipe(
+      Effect.mapError((error) => vaultError("save config", error)),
+      Effect.as(next),
+    );
+  }
+  if (changes.removed.length !== 1) {
+    return Effect.fail(
+      tokenAccountLifecycleError(
+        "remove token account",
+        new Error("Only one token account may be removed per transaction."),
+      ),
+    );
+  }
+  const removal = changes.removed[0];
+  if (removal === undefined || !firstPartyProviderIds.has(removal.providerId)) {
+    return Effect.fail(
+      tokenAccountLifecycleError(
+        "remove token account",
+        new Error("Plugin token-account deletion is not supported."),
+      ),
+    );
+  }
+  let foundProvider = false;
+  const staged: PersistedCodexBarConfig = {
+    ...next,
+    providers: next.providers.map((provider) => {
+      if (provider.id !== removal.providerId) return provider;
+      foundProvider = true;
+      return {
+        ...provider,
+        pendingTokenAccountDeletion: { version: 1 as const, accountId: removal.accountId },
+      };
+    }),
+  };
+  if (!foundProvider) {
+    return Effect.fail(
+      tokenAccountLifecycleError(
+        "remove token account",
+        new Error("The owning provider must remain in config during deletion."),
+      ),
+    );
+  }
+  return repository.save(staged).pipe(
+    Effect.mapError((error) =>
+      tokenAccountLifecycleError("stage token account deletion", new Error(error.operation)),
+    ),
+    Effect.flatMap(() => reconcilePendingTokenAccountDeletions(staged, repository, credentials)),
+  );
+};
 
 export const makeTokenAccountVaultConfigRepository = (
   repository: ConfigRepositoryService,
@@ -196,7 +430,7 @@ export const makeTokenAccountVaultConfigRepository = (
     Effect.mapError((error) => vaultError("load config", error)),
     Effect.flatMap((config) => {
       if (config === undefined) return Effect.succeed(undefined);
-      if (!containsLegacyTokenAccountData(config)) {
+      if (!containsLegacyTokenAccountData(config) && !containsPendingTokenAccountDeletion(config)) {
         const invalid = assertMetadataOnlyV2(config);
         return invalid === undefined ? Effect.succeed(config) : Effect.fail(invalid);
       }
@@ -206,9 +440,27 @@ export const makeTokenAccountVaultConfigRepository = (
   save: (config) => {
     const invalid = assertMetadataOnlyV2(config);
     if (invalid !== undefined) return Effect.fail(invalid);
-    return repository
-      .save(config)
-      .pipe(Effect.mapError((error) => vaultError("save config", error)));
+    if (containsPendingTokenAccountDeletion(config)) {
+      return Effect.fail(
+        invalidMetadataError(new Error("Pending token-account deletions are host-owned.")),
+      );
+    }
+    return lock.runExclusive(
+      Effect.gen(function* () {
+        const current = yield* loadFreshAndMigrateUnderHeldLock(repository, credentials);
+        if (!tokenAccountRostersEqual(current, config)) {
+          return yield* Effect.fail(
+            tokenAccountLifecycleError(
+              "save config",
+              new Error("Blind saves cannot mutate token-account rosters; use modify."),
+            ),
+          );
+        }
+        yield* repository
+          .save(config)
+          .pipe(Effect.mapError((error) => vaultError("save config", error)));
+      }),
+    );
   },
   modify: (mutation) =>
     lock.runExclusive(
@@ -217,10 +469,13 @@ export const makeTokenAccountVaultConfigRepository = (
         const result = yield* mutation(current);
         const invalid = assertMetadataOnlyV2(result.config);
         if (invalid !== undefined) return yield* Effect.fail(invalid);
-        yield* repository
-          .save(result.config)
-          .pipe(Effect.mapError((error) => vaultError("save config", error)));
-        return result;
+        const committed = yield* commitVaultBackedConfigMutation(
+          current,
+          result.config,
+          repository,
+          credentials,
+        );
+        return { config: committed, value: result.value };
       }),
     ),
 });

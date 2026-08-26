@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isAvailableProviderSource,
   optimisticRenameTokenAccountRoster,
+  optimisticRemoveTokenAccountRoster,
   optimisticTokenAccountRoster,
   sessionQuotaNotificationSettingsViewState,
   tokenAccountDetail,
@@ -79,6 +80,32 @@ describe("settings view model", () => {
     expect(
       optimisticRenameTokenAccountRoster(roster, "opaque-2", "invalid\nlabel"),
     ).toBeUndefined();
+
+    const removedInactive = optimisticRemoveTokenAccountRoster(roster, "opaque-1");
+    expect(removedInactive?.accounts.map((account) => account.id)).toEqual(["opaque-2"]);
+    expect(removedInactive?.activeIndex).toBe(0);
+    expect(removedInactive?.revision).toBe(roster.revision);
+    expect(optimisticRemoveTokenAccountRoster(roster, "not-listed")).toBeUndefined();
+
+    const three = {
+      ...roster,
+      accounts: [...roster.accounts, { id: "opaque-3", label: "Third", addedAt: 3 }],
+      activeIndex: 1,
+    } as const;
+    const removedMiddle = optimisticRemoveTokenAccountRoster(three, "opaque-2");
+    expect(removedMiddle?.activeIndex).toBe(1);
+    expect(removedMiddle?.accounts[1]?.id).toBe("opaque-3");
+    const removedLast = optimisticRemoveTokenAccountRoster(
+      { ...three, activeIndex: 2 },
+      "opaque-3",
+    );
+    expect(removedLast?.activeIndex).toBe(1);
+    expect(removedLast?.accounts[1]?.id).toBe("opaque-2");
+    const removedOnly = optimisticRemoveTokenAccountRoster(
+      { ...roster, accounts: [roster.accounts[0]], activeIndex: 0 },
+      "opaque-1",
+    );
+    expect(removedOnly).toMatchObject({ accounts: [], activeIndex: 0 });
   });
 
   it("keeps token-account loading, empty, pending and error states local", () => {

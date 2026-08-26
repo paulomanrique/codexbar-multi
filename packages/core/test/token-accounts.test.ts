@@ -86,6 +86,16 @@ const service = (config: PersistedCodexBarConfig | undefined) => {
             runtimeSelectionAvailable: false,
           },
         ],
+        [
+          "copilot",
+          {
+            provider: "copilot",
+            requiresManualCookieSource: false,
+            selectedAccountRequiresManualCookieSource: false,
+            runtimeSelectionAvailable: true,
+            clearsAPIKeyOnMutation: true,
+          },
+        ],
       ]),
     }),
   };
@@ -336,6 +346,155 @@ describe("token account roster service", () => {
         }),
       ),
     ).rejects.toMatchObject({ code: "invalid-roster" });
+  });
+
+  it("removes a non-active account while preserving the selected account identity", async () => {
+    const base = accountConfig(1);
+    const withThird: PersistedCodexBarConfig = {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id === "claude" && provider.tokenAccounts !== undefined
+          ? {
+              ...provider,
+              tokenAccounts: {
+                ...provider.tokenAccounts,
+                accounts: [
+                  ...provider.tokenAccounts.accounts,
+                  { id: "third", label: "Third", addedAt: 3 },
+                ],
+              },
+            }
+          : provider,
+      ),
+    };
+    const { store, tokenAccounts } = service(withThird);
+    const before = await Effect.runPromise(tokenAccounts.list("claude"));
+    const after = await Effect.runPromise(
+      tokenAccounts.remove({
+        provider: "claude",
+        accountId: "first",
+        expectedRevision: before.revision,
+      }),
+    );
+
+    expect(after.accounts.map((account) => account.id)).toEqual(["second", "third"]);
+    expect(after.accounts[after.activeIndex]?.id).toBe("second");
+    expect(after.activeIndex).toBe(0);
+    expect(after.revision).not.toBe(before.revision);
+    expect(store.current?.providers.find((provider) => provider.id === "claude")).toMatchObject({
+      cookieSource: "auto",
+      tokenAccounts: { version: 2, activeIndex: 0 },
+    });
+  });
+
+  it("selects the next or previous row when removing the active account", async () => {
+    const base = accountConfig(1);
+    const withThird: PersistedCodexBarConfig = {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id === "claude" && provider.tokenAccounts !== undefined
+          ? {
+              ...provider,
+              tokenAccounts: {
+                ...provider.tokenAccounts,
+                accounts: [
+                  ...provider.tokenAccounts.accounts,
+                  { id: "third", label: "Third", addedAt: 3 },
+                ],
+              },
+            }
+          : provider,
+      ),
+    };
+    const middle = service(withThird);
+    const middleBefore = await Effect.runPromise(middle.tokenAccounts.list("claude"));
+    const middleAfter = await Effect.runPromise(
+      middle.tokenAccounts.remove({
+        provider: "claude",
+        accountId: "second",
+        expectedRevision: middleBefore.revision,
+      }),
+    );
+    expect(middleAfter.accounts.map((account) => account.id)).toEqual(["first", "third"]);
+    expect(middleAfter.activeIndex).toBe(1);
+    expect(middleAfter.accounts[middleAfter.activeIndex]?.id).toBe("third");
+
+    const last = service({
+      ...withThird,
+      providers: withThird.providers.map((provider) =>
+        provider.id === "claude" && provider.tokenAccounts !== undefined
+          ? { ...provider, tokenAccounts: { ...provider.tokenAccounts, activeIndex: 2 } }
+          : provider,
+      ),
+    });
+    const lastBefore = await Effect.runPromise(last.tokenAccounts.list("claude"));
+    const lastAfter = await Effect.runPromise(
+      last.tokenAccounts.remove({
+        provider: "claude",
+        accountId: "third",
+        expectedRevision: lastBefore.revision,
+      }),
+    );
+    expect(lastAfter.activeIndex).toBe(1);
+    expect(lastAfter.accounts[lastAfter.activeIndex]?.id).toBe("second");
+  });
+
+  it("removes the final roster and clears only provider-declared API key fallback", async () => {
+    const base = makeDefaultCodexBarConfig();
+    const config: PersistedCodexBarConfig = {
+      ...base,
+      providers: base.providers.map((provider) =>
+        provider.id === "copilot"
+          ? {
+              ...provider,
+              apiKey: "legacy-fallback",
+              tokenAccounts: {
+                version: 2,
+                activeIndex: 0,
+                accounts: [{ id: "only", label: "Only", addedAt: 1 }],
+              },
+            }
+          : provider,
+      ),
+    };
+    const { store, tokenAccounts } = service(config);
+    const before = await Effect.runPromise(tokenAccounts.list("copilot"));
+    const after = await Effect.runPromise(
+      tokenAccounts.remove({
+        provider: "copilot",
+        accountId: "only",
+        expectedRevision: before.revision,
+      }),
+    );
+    expect(after).toMatchObject({ accounts: [], activeIndex: 0 });
+    const saved = store.current?.providers.find((provider) => provider.id === "copilot");
+    expect(saved?.tokenAccounts).toBeUndefined();
+    expect(saved?.apiKey).toBeUndefined();
+  });
+
+  it("rejects stale and missing removal targets without mutating config", async () => {
+    const { store, tokenAccounts } = service(accountConfig(0));
+    const original = store.current;
+    const roster = await Effect.runPromise(tokenAccounts.list("claude"));
+    await expect(
+      Effect.runPromise(
+        tokenAccounts.remove({
+          provider: "claude",
+          accountId: "first",
+          expectedRevision: "0".repeat(64),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "stale-revision" });
+    await expect(
+      Effect.runPromise(
+        tokenAccounts.remove({
+          provider: "claude",
+          accountId: "missing",
+          expectedRevision: roster.revision,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "missing-account" });
+    expect(store.current).toBe(original);
   });
 
   it("rejects unsupported providers before credential access", async () => {

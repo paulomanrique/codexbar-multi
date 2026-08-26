@@ -2,10 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { Effect, Fiber, Semaphore } from "effect";
 import {
   InfrastructureError,
+  makeTokenAccountRosterService,
   type ConfigRepositoryService,
   type CredentialStoreService,
   type PersistedCodexBarConfig,
+  type TokenAccountSupport,
 } from "@codexbar/core";
+import type { ProviderId } from "@codexbar/contracts";
 import {
   makeTokenAccountVaultConfigRepository,
   resolveSelectedFirstPartyAccountFromVault,
@@ -81,21 +84,26 @@ const memoryCredentials = (
   options: {
     readonly failRead?: boolean;
     readonly failWrite?: boolean;
+    readonly failRemove?: boolean;
+    readonly retainAfterRemove?: boolean;
     readonly corruptReadback?: boolean;
   } = {},
 ): CredentialStoreService & {
   readonly values: Map<string, string>;
   readonly reads: string[];
   readonly writes: Array<{ readonly key: string; readonly value: string }>;
+  readonly removes: string[];
 } => {
   const values = new Map(Object.entries(initial));
   const reads: string[] = [];
   const writes: Array<{ readonly key: string; readonly value: string }> = [];
+  const removes: string[] = [];
   let writeHappened = false;
   return {
     values,
     reads,
     writes,
+    removes,
     read: (key) =>
       options.failRead
         ? Effect.fail(new InfrastructureError("read", "read failed"))
@@ -112,7 +120,13 @@ const memoryCredentials = (
             values.set(key, value);
             writeHappened = true;
           }),
-    remove: () => Effect.void,
+    remove: (key) =>
+      options.failRemove
+        ? Effect.fail(new InfrastructureError("remove", "remove failed"))
+        : Effect.sync(() => {
+            removes.push(key);
+            if (options.retainAfterRemove !== true) values.delete(key);
+          }),
   };
 };
 
@@ -560,6 +574,357 @@ describe("token-account vault config repository", () => {
     expect(saved?.providers.find((provider) => provider.id === "claude")?.enabled).toBe(false);
     expect(saved?.sessionQuotaNotificationsEnabled).toBe(false);
     expect(saved?.providers[0]?.tokenAccounts?.version).toBe(2);
+  });
+
+  it("stages metadata removal before deleting and verifying the native credential", async () => {
+    const input = v1Config([
+      { id: "account-1", label: "Main", token: "secret-1", addedAt: 0 },
+      { id: "account-2", label: "Second", token: "secret-2", addedAt: 1 },
+    ]);
+    const repository = memoryRepository(input);
+    const credentials = memoryCredentials();
+    const wrapped = vaultRepository(repository, credentials);
+    await Effect.runPromise(wrapped.load);
+    repository.saves.length = 0;
+
+    const result = await Effect.runPromise(
+      wrapped.modify((current) => {
+        const next: PersistedCodexBarConfig = {
+          ...current!,
+          providers: current!.providers.map((provider) =>
+            provider.id === "claude" && provider.tokenAccounts !== undefined
+              ? {
+                  ...provider,
+                  tokenAccounts: {
+                    version: 2,
+                    activeIndex: 0,
+                    accounts: provider.tokenAccounts.accounts.filter(
+                      (account) => account.id !== "account-1",
+                    ),
+                  },
+                }
+              : provider,
+          ),
+        };
+        return Effect.succeed({ config: next, value: "removed" });
+      }),
+    );
+
+    expect(result.value).toBe("removed");
+    expect(repository.saves).toHaveLength(2);
+    expect(repository.saves[0]?.providers[0]).toMatchObject({
+      pendingTokenAccountDeletion: { version: 1, accountId: "account-1" },
+      tokenAccounts: { accounts: [{ id: "account-2" }] },
+    });
+    expect(repository.saves[1]?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+    expect(credentials.removes).toEqual([tokenAccountVaultKey("claude", "account-1")]);
+    expect(credentials.values.has(tokenAccountVaultKey("claude", "account-1"))).toBe(false);
+    expect(credentials.values.get(tokenAccountVaultKey("claude", "account-2"))).toBe("secret-2");
+  });
+
+  it("integrates revision-CAS roster removal with the vault deletion transaction", async () => {
+    const input = v1Config([
+      { id: "account-1", label: "Main", token: "secret-1", addedAt: 0 },
+      { id: "account-2", label: "Second", token: "secret-2", addedAt: 1 },
+    ]);
+    const repository = memoryRepository(input);
+    const credentials = memoryCredentials();
+    const config = vaultRepository(repository, credentials);
+    const accounts = makeTokenAccountRosterService({
+      config,
+      support: new Map<ProviderId, TokenAccountSupport>([
+        [
+          "claude",
+          {
+            provider: "claude",
+            requiresManualCookieSource: true,
+            selectedAccountRequiresManualCookieSource: false,
+            runtimeSelectionAvailable: true,
+          },
+        ],
+      ]),
+    });
+    const before = await Effect.runPromise(accounts.list("claude"));
+    const after = await Effect.runPromise(
+      accounts.remove({
+        provider: "claude",
+        accountId: "account-1",
+        expectedRevision: before.revision,
+      }),
+    );
+
+    expect(after.accounts.map((account) => account.id)).toEqual(["account-2"]);
+    expect(after.activeIndex).toBe(0);
+    expect(after.revision).not.toBe(before.revision);
+    expect(credentials.removes).toEqual([tokenAccountVaultKey("claude", "account-1")]);
+    expect(repository.current?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+    expect(repository.current?.providers[0]?.tokenAccounts).toMatchObject({
+      version: 2,
+      activeIndex: 0,
+      accounts: [{ id: "account-2" }],
+    });
+  });
+
+  it("keeps a tombstone after keyring failure and recovers idempotently on next load", async () => {
+    const key = tokenAccountVaultKey("claude", "account-1");
+    const input = v1Config([{ id: "account-1", label: "Main", token: "secret-1", addedAt: 0 }]);
+    const repository = memoryRepository(input);
+    const migrationCredentials = memoryCredentials();
+    await Effect.runPromise(vaultRepository(repository, migrationCredentials).load);
+    repository.saves.length = 0;
+
+    const failingCredentials = memoryCredentials({ [key]: "secret-1" }, { failRemove: true });
+    await expect(
+      Effect.runPromise(
+        vaultRepository(repository, failingCredentials).modify((current) => {
+          const provider = current!.providers.find((entry) => entry.id === "claude")!;
+          const { tokenAccounts: _accounts, ...withoutAccounts } = provider;
+          return Effect.succeed({
+            config: {
+              ...current!,
+              providers: current!.providers.map((entry) =>
+                entry.id === "claude" ? withoutAccounts : entry,
+              ),
+            },
+            value: undefined,
+          });
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "remove token account credential" });
+    expect(repository.current?.providers[0]).toMatchObject({
+      pendingTokenAccountDeletion: { version: 1, accountId: "account-1" },
+    });
+    expect(repository.current?.providers[0]?.tokenAccounts).toBeUndefined();
+
+    const recoveredCredentials = memoryCredentials({ [key]: "secret-1" });
+    const recovered = await Effect.runPromise(
+      vaultRepository(repository, recoveredCredentials).load,
+    );
+    expect(recoveredCredentials.removes).toEqual([key]);
+    expect(recoveredCredentials.values.has(key)).toBe(false);
+    expect(recovered?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+    expect(repository.current?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+  });
+
+  it("does not touch the keyring when the deletion-staging save fails", async () => {
+    const key = tokenAccountVaultKey("claude", "account-1");
+    const underlying = memoryRepository(
+      v1Config([{ id: "account-1", label: "Main", token: "secret-1", addedAt: 0 }]),
+    );
+    await Effect.runPromise(vaultRepository(underlying, memoryCredentials()).load);
+    underlying.saves.length = 0;
+    const before = underlying.current;
+    const failStagingSave: ConfigRepositoryService = {
+      load: underlying.load,
+      save: () => Effect.fail(new InfrastructureError("save", "staging save failed")),
+      modify: underlying.modify,
+    };
+    const credentials = memoryCredentials({ [key]: "secret-1" });
+
+    await expect(
+      Effect.runPromise(
+        vaultRepository(failStagingSave, credentials).modify((current) => {
+          const provider = current!.providers.find((entry) => entry.id === "claude")!;
+          const { tokenAccounts: _accounts, ...withoutAccounts } = provider;
+          return Effect.succeed({
+            config: {
+              ...current!,
+              providers: current!.providers.map((entry) =>
+                entry.id === "claude" ? withoutAccounts : entry,
+              ),
+            },
+            value: undefined,
+          });
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "stage token account deletion" });
+    expect(underlying.current).toBe(before);
+    expect(underlying.current?.providers[0]?.tokenAccounts?.accounts).toHaveLength(1);
+    expect(underlying.current?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+    expect(credentials.removes).toEqual([]);
+    expect(credentials.reads).toEqual([]);
+  });
+
+  it("retains recovery intent when keyring readback still exposes the credential", async () => {
+    const key = tokenAccountVaultKey("claude", "account-1");
+    const input = v1Config([{ id: "account-1", label: "Main", token: "secret-1", addedAt: 0 }]);
+    const repository = memoryRepository(input);
+    await Effect.runPromise(vaultRepository(repository, memoryCredentials()).load);
+    repository.saves.length = 0;
+    const credentials = memoryCredentials({ [key]: "secret-1" }, { retainAfterRemove: true });
+
+    await expect(
+      Effect.runPromise(
+        vaultRepository(repository, credentials).modify((current) => {
+          const provider = current!.providers.find((entry) => entry.id === "claude")!;
+          const { tokenAccounts: _accounts, ...withoutAccounts } = provider;
+          return Effect.succeed({
+            config: {
+              ...current!,
+              providers: current!.providers.map((entry) =>
+                entry.id === "claude" ? withoutAccounts : entry,
+              ),
+            },
+            value: undefined,
+          });
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "verify token account credential removal" });
+    expect(credentials.removes).toEqual([key]);
+    expect(repository.current?.providers[0]?.pendingTokenAccountDeletion).toEqual({
+      version: 1,
+      accountId: "account-1",
+    });
+  });
+
+  it("recovers when the final marker-clear save fails after credential deletion", async () => {
+    const key = tokenAccountVaultKey("claude", "account-1");
+    const underlying = memoryRepository(
+      v1Config([{ id: "account-1", label: "Main", token: "secret-1", addedAt: 0 }]),
+    );
+    const migrationCredentials = memoryCredentials();
+    await Effect.runPromise(vaultRepository(underlying, migrationCredentials).load);
+    underlying.saves.length = 0;
+    let saveCount = 0;
+    const failFinalSave: ConfigRepositoryService = {
+      load: underlying.load,
+      save: (config) => {
+        saveCount += 1;
+        return saveCount === 2
+          ? Effect.fail(new InfrastructureError("save", "final save failed"))
+          : underlying.save(config);
+      },
+      modify: underlying.modify,
+    };
+    const credentials = memoryCredentials({ [key]: "secret-1" });
+
+    await expect(
+      Effect.runPromise(
+        vaultRepository(failFinalSave, credentials).modify((current) => {
+          const provider = current!.providers.find((entry) => entry.id === "claude")!;
+          const { tokenAccounts: _accounts, ...withoutAccounts } = provider;
+          return Effect.succeed({
+            config: {
+              ...current!,
+              providers: current!.providers.map((entry) =>
+                entry.id === "claude" ? withoutAccounts : entry,
+              ),
+            },
+            value: undefined,
+          });
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "save token account deletion recovery" });
+    expect(credentials.values.has(key)).toBe(false);
+    expect(underlying.current?.providers[0]?.pendingTokenAccountDeletion).toEqual({
+      version: 1,
+      accountId: "account-1",
+    });
+
+    const recovered = await Effect.runPromise(vaultRepository(underlying, credentials).load);
+    expect(credentials.removes).toEqual([key, key]);
+    expect(recovered?.providers[0]?.pendingTokenAccountDeletion).toBeUndefined();
+  });
+
+  it("rejects metadata additions and blind roster replacement before config save", async () => {
+    const repository = memoryRepository(v1Config([]));
+    const credentials = memoryCredentials();
+    const wrapped = vaultRepository(repository, credentials);
+    await Effect.runPromise(wrapped.load);
+    repository.saves.length = 0;
+    const current = repository.current!;
+    const withAccount: PersistedCodexBarConfig = {
+      ...current,
+      providers: current.providers.map((provider) =>
+        provider.id === "claude"
+          ? {
+              ...provider,
+              tokenAccounts: {
+                version: 2,
+                activeIndex: 0,
+                accounts: [{ id: "new", label: "New", addedAt: 1 }],
+              },
+            }
+          : provider,
+      ),
+    };
+    await expect(
+      Effect.runPromise(
+        wrapped.modify(() => Effect.succeed({ config: withAccount, value: undefined })),
+      ),
+    ).rejects.toMatchObject({ operation: "add token account" });
+    await expect(Effect.runPromise(wrapped.save(withAccount))).rejects.toMatchObject({
+      operation: "save config",
+    });
+    expect(repository.saves).toEqual([]);
+    expect(credentials.writes).toEqual([]);
+  });
+
+  it("prevents a stale full-document save from clearing or reversing pending deletion", async () => {
+    const key = tokenAccountVaultKey("claude", "account-1");
+    const repository = memoryRepository(
+      v1Config([{ id: "account-1", label: "Main", token: "secret-1", addedAt: 0 }]),
+    );
+    const migrationCredentials = memoryCredentials();
+    const first = vaultRepository(repository, migrationCredentials);
+    const stale = (await Effect.runPromise(first.load))!;
+    repository.saves.length = 0;
+    const failingCredentials = memoryCredentials({ [key]: "secret-1" }, { failRemove: true });
+    const failing = vaultRepository(repository, failingCredentials);
+
+    await expect(
+      Effect.runPromise(
+        failing.modify((current) => {
+          const provider = current!.providers.find((entry) => entry.id === "claude")!;
+          const { tokenAccounts: _accounts, ...withoutAccounts } = provider;
+          return Effect.succeed({
+            config: {
+              ...current!,
+              providers: current!.providers.map((entry) =>
+                entry.id === "claude" ? withoutAccounts : entry,
+              ),
+            },
+            value: undefined,
+          });
+        }),
+      ),
+    ).rejects.toMatchObject({ operation: "remove token account credential" });
+    const saveCountWithPending = repository.saves.length;
+    await expect(Effect.runPromise(failing.save(stale))).rejects.toMatchObject({
+      operation: "remove token account credential",
+    });
+    expect(repository.saves).toHaveLength(saveCountWithPending);
+    expect(repository.current?.providers[0]?.pendingTokenAccountDeletion).toEqual({
+      version: 1,
+      accountId: "account-1",
+    });
+
+    const recoveredCredentials = memoryCredentials({ [key]: "secret-1" });
+    const recovered = vaultRepository(repository, recoveredCredentials);
+    await Effect.runPromise(recovered.load);
+    const saveCountAfterRecovery = repository.saves.length;
+    await expect(Effect.runPromise(recovered.save(stale))).rejects.toMatchObject({
+      operation: "save config",
+    });
+    expect(repository.saves).toHaveLength(saveCountAfterRecovery);
+    expect(repository.current?.providers[0]?.tokenAccounts).toBeUndefined();
+  });
+
+  it("serializes valid full-document saves and preserves an unchanged roster", async () => {
+    const repository = memoryRepository(v1Config([]));
+    const credentials = memoryCredentials();
+    const lock = memoryLock();
+    const wrapped = vaultRepository(repository, credentials, lock);
+    const current = await Effect.runPromise(wrapped.load);
+    const acquisitionsBeforeSave = lock.acquisitions();
+    await Effect.runPromise(wrapped.save({ ...current!, sessionQuotaNotificationsEnabled: false }));
+    expect(lock.acquisitions()).toBe(acquisitionsBeforeSave + 1);
+    expect(repository.current?.sessionQuotaNotificationsEnabled).toBe(false);
+    expect(repository.current?.providers[0]?.tokenAccounts).toEqual({
+      version: 2,
+      activeIndex: 0,
+      accounts: [],
+    });
   });
 
   it("maps selected Claude Admin API accounts and nulls ambient credential channels", async () => {

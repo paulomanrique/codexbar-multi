@@ -1,10 +1,12 @@
 import {
   ListTokenAccountsRequestDTO,
   RenameTokenAccountRequestDTO,
+  RemoveTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountRosterDTO,
   type ListTokenAccountsRequestDTO as ListTokenAccountsRequest,
   type RenameTokenAccountRequestDTO as RenameTokenAccountRequest,
+  type RemoveTokenAccountRequestDTO as RemoveTokenAccountRequest,
   type SelectTokenAccountRequestDTO as SelectTokenAccountRequest,
   type TokenAccountRosterDTO as TokenAccountRoster,
 } from "@codexbar/contracts";
@@ -15,6 +17,7 @@ import type { DesktopInvoke } from "./provider-settings-api.js";
 
 const decodeListTokenAccountsRequest = Schema.decodeUnknownPromise(ListTokenAccountsRequestDTO);
 const decodeRenameTokenAccountRequest = Schema.decodeUnknownPromise(RenameTokenAccountRequestDTO);
+const decodeRemoveTokenAccountRequest = Schema.decodeUnknownPromise(RemoveTokenAccountRequestDTO);
 const decodeSelectTokenAccountRequest = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
 const decodeTokenAccountRoster = Schema.decodeUnknownPromise(TokenAccountRosterDTO);
 
@@ -40,6 +43,13 @@ export const makeTokenAccountsApi = (invoke: DesktopInvoke) =>
         await invoke(
           DesktopChannels.renameTokenAccount,
           await decodeRenameTokenAccountRequest(request),
+        ),
+      ),
+    removeTokenAccount: async (request: RemoveTokenAccountRequest): Promise<TokenAccountRoster> =>
+      decodeTokenAccountRoster(
+        await invoke(
+          DesktopChannels.removeTokenAccount,
+          await decodeRemoveTokenAccountRequest(request),
         ),
       ),
   });

@@ -97,3 +97,25 @@ export const optimisticRenameTokenAccountRoster = (
     ),
   };
 };
+
+/** Mirrors Swift removal selection while retaining the host revision until IPC commits. */
+export const optimisticRemoveTokenAccountRoster = (
+  roster: TokenAccountRosterDTO,
+  accountId: string,
+): TokenAccountRosterDTO | undefined => {
+  const removedIndex = roster.accounts.findIndex((account) => account.id === accountId);
+  if (removedIndex < 0) return undefined;
+  const active = roster.accounts[roster.activeIndex];
+  const accounts = roster.accounts.filter((account) => account.id !== accountId);
+  if (accounts.length === 0) return { ...roster, accounts, activeIndex: 0 };
+  const preservedActiveIndex =
+    active?.id === accountId ? -1 : accounts.findIndex((account) => account.id === active?.id);
+  return {
+    ...roster,
+    accounts,
+    activeIndex:
+      preservedActiveIndex >= 0
+        ? preservedActiveIndex
+        : Math.min(removedIndex, accounts.length - 1),
+  };
+};

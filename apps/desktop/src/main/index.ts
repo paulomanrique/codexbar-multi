@@ -37,6 +37,7 @@ import {
   RefreshProviderResultDTO,
   ListTokenAccountsRequestDTO,
   RenameTokenAccountRequestDTO,
+  RemoveTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountRosterDTO,
   ProviderSettingsDTO,
@@ -118,6 +119,7 @@ import { cancelBrowserLogin, logoutBrowserSession, startBrowserLogin } from "./b
 import { exportCosts, exportHistory, queryCosts, queryHistory } from "./history-api.js";
 import { loadPersistedOverview } from "./overview.js";
 import { DesktopClaudeSwapController } from "./claude-swap.js";
+import { runTokenAccountRemovalMutation } from "./token-account-removal.js";
 import { DesktopAdaptiveRefreshController } from "./adaptive-refresh.js";
 import { makeDesktopSessionQuotaNotificationAdapter } from "./session-quota-notifications.js";
 import {
@@ -752,6 +754,7 @@ void desktopReady?.then(async () => {
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
     const decodeListTokenAccounts = Schema.decodeUnknownPromise(ListTokenAccountsRequestDTO);
     const decodeRenameTokenAccount = Schema.decodeUnknownPromise(RenameTokenAccountRequestDTO);
+    const decodeRemoveTokenAccount = Schema.decodeUnknownPromise(RemoveTokenAccountRequestDTO);
     const decodeSelectTokenAccount = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
     const decodeTokenAccountRoster = Schema.decodeUnknownPromise(TokenAccountRosterDTO);
     const decodeActivateClaudeSwapAccount = Schema.decodeUnknownPromise(
@@ -970,6 +973,36 @@ void desktopReady?.then(async () => {
           desktopConfig = await Effect.runPromise(configRepository.load);
           return renamed;
         });
+        return decodeTokenAccountRoster(roster);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.removeTokenAccount, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeRemoveTokenAccount(input);
+        const roster = await desktopConfigMutations.run(async () => {
+          return runTokenAccountRemovalMutation({
+            remove: () => Effect.runPromise(tokenAccounts.remove(request)),
+            loadCommittedConfig: () => Effect.runPromise(configRepository.load),
+            // Wrapped load intentionally retries keyring cleanup and can fail.
+            // Raw load exposes only the already-decoded metadata/tombstone and
+            // prevents the runtime from retaining the removed selected account.
+            loadRawConfig: () => Effect.runPromise(rawConfigRepository.load),
+            publishConfig: (config) => {
+              desktopConfig = config;
+            },
+          });
+        });
+        await Effect.runPromise(
+          refreshProviderAndPersist(activeProviderRuntime(), request.provider, {
+            sourceMode: "auto",
+            includeCredits: true,
+          }).pipe(
+            Effect.provideService(Clock, providerClock),
+            Effect.provideService(HistoryRepository, activePersistence().history),
+            Effect.provideService(CostUsageRepository, activePersistence().costs),
+            Effect.orElseSucceed(() => undefined),
+          ),
+        );
         return decodeTokenAccountRoster(roster);
       }),
     );

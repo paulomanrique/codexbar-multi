@@ -169,24 +169,30 @@ components:
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
 
   - id: token-accounts
-    description: Metadata-only account rosters, native-vault separation, selection and label mutation.
+    description: Metadata-only account rosters, native-vault separation, selection, rename, and crash-recoverable removal.
     swiftGlobs:
       - Sources/CodexBarCore/TokenAccounts.swift
       - Sources/CodexBar/SettingsStore+TokenAccounts.swift
       - Sources/CodexBar/PreferencesProviderSettingsRows.swift
       - Sources/CodexBar/PreferencesCodexAccountsSection.swift
     tsPaths:
+      - packages/contracts/src/config.ts
       - packages/contracts/src/ipc.ts
+      - packages/core/src/config.ts
       - packages/core/src/token-accounts.ts
       - packages/providers/src/token-account-support.ts
       - packages/platform/src/token-account-vault-config.ts
       - apps/desktop/src/ipc/api.ts
       - apps/desktop/src/main/index.ts
+      - apps/desktop/src/main/token-account-removal.ts
       - apps/desktop/src/preload/token-accounts-api.ts
       - apps/desktop/src/renderer/index.tsx
       - apps/desktop/src/renderer/settings-view-model.ts
+      - apps/desktop/src/renderer/styles.css
     tests:
-      - Tests/CodexBarTests/SpendDashboardControllerTests.swift
+      - Tests/CodexBarTests/SettingsStoreCoverageTests.swift
+      - Tests/CodexBarTests/StatusMenuTokenAccountSwitcherTests.swift
+      - packages/core/test/config.test.ts
       - packages/core/test/token-accounts.test.ts
       - packages/providers/test/token-account-support.test.ts
       - packages/platform/test/token-account-vault-config.test.ts
@@ -194,6 +200,7 @@ components:
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
       - apps/desktop/test/settings-view-model.test.ts
+      - apps/desktop/test/token-account-removal.test.ts
     fixtures: []
     status: partial
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

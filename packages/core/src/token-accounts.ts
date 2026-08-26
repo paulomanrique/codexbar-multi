@@ -14,6 +14,7 @@ export interface TokenAccountSupport {
   readonly requiresManualCookieSource: boolean;
   readonly selectedAccountRequiresManualCookieSource: boolean;
   readonly runtimeSelectionAvailable: boolean;
+  readonly clearsAPIKeyOnMutation?: boolean;
 }
 
 export type TokenAccountErrorCode =
@@ -153,6 +154,11 @@ export interface TokenAccountRosterService {
     readonly provider: ProviderId;
     readonly accountId: string;
     readonly label: string;
+    readonly expectedRevision: string;
+  }) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | InfrastructureError>;
+  readonly remove: (request: {
+    readonly provider: ProviderId;
+    readonly accountId: string;
     readonly expectedRevision: string;
   }) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | InfrastructureError>;
 }
@@ -303,6 +309,73 @@ export const makeTokenAccountRosterService = (
             }),
           );
         }),
+        Effect.map((result) => result.value),
+      ),
+    remove: (request) =>
+      requireSupport(request.provider).pipe(
+        Effect.flatMap((support) =>
+          options.config.modify((config) =>
+            Effect.gen(function* () {
+              if (config === undefined)
+                return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
+              const provider = providerConfig(config, request.provider);
+              const data = provider?.tokenAccounts;
+              if (provider === undefined || data === undefined || data.accounts.length === 0) {
+                return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
+              }
+              if (
+                data.version !== 2 ||
+                data.accounts.some((account) => hasOwnToken(account)) ||
+                hasDuplicateAccountIds(data.accounts)
+              ) {
+                return yield* Effect.fail(new TokenAccountRosterError("invalid-roster"));
+              }
+              const currentRoster = yield* rosterFor(request.provider, config, support);
+              if (currentRoster.revision !== request.expectedRevision) {
+                return yield* Effect.fail(new TokenAccountRosterError("stale-revision"));
+              }
+              const removedIndex = data.accounts.findIndex(
+                (account) => account.id === request.accountId,
+              );
+              if (removedIndex < 0)
+                return yield* Effect.fail(new TokenAccountRosterError("missing-account"));
+              const activeAccount = data.accounts[currentRoster.activeIndex];
+              const filtered = data.accounts.filter((account) => account.id !== request.accountId);
+              const { apiKey: _apiKey, tokenAccounts: _tokenAccounts, ...providerBase } = provider;
+              const preservedProvider = support.clearsAPIKeyOnMutation
+                ? providerBase
+                : {
+                    ...providerBase,
+                    ...(provider.apiKey === undefined ? {} : { apiKey: provider.apiKey }),
+                  };
+              let nextProvider: PersistedProviderConfig;
+              if (filtered.length === 0) {
+                nextProvider = preservedProvider;
+              } else {
+                const preservedActiveIndex =
+                  activeAccount?.id === request.accountId
+                    ? -1
+                    : filtered.findIndex((account) => account.id === activeAccount?.id);
+                const activeIndex =
+                  preservedActiveIndex >= 0
+                    ? preservedActiveIndex
+                    : Math.min(removedIndex, filtered.length - 1);
+                nextProvider = {
+                  ...preservedProvider,
+                  tokenAccounts: { version: 2, accounts: filtered, activeIndex },
+                };
+              }
+              const nextConfig: PersistedCodexBarConfig = {
+                ...config,
+                providers: config.providers.map((entry) =>
+                  entry.id === request.provider ? nextProvider : entry,
+                ),
+              };
+              const roster = yield* rosterFor(request.provider, nextConfig, support);
+              return { config: nextConfig, value: roster };
+            }),
+          ),
+        ),
         Effect.map((result) => result.value),
       ),
   };

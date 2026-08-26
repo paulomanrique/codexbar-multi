@@ -73,6 +73,7 @@ const ipcBoundaryRoots = [
 ] as const;
 const persistedSecretSchemaPattern =
   /\b(?:ProviderTokenAccount|ProviderTokenAccountData|ProviderConfig|CodexBarConfig)\b/;
+const tokenAccountRecoveryMarkerPattern = /\bpendingTokenAccountDeletion\b/;
 for (const root of ipcBoundaryRoots) {
   const paths = root.endsWith(".ts")
     ? [join(repositoryRoot, root)]
@@ -81,6 +82,11 @@ for (const root of ipcBoundaryRoots) {
     if (persistedSecretSchemaPattern.test(await readFile(path, "utf8"))) {
       failures.push(
         `${relative(repositoryRoot, path)}: secret-bearing persisted schema crosses IPC boundary`,
+      );
+    }
+    if (tokenAccountRecoveryMarkerPattern.test(await readFile(path, "utf8"))) {
+      failures.push(
+        `${relative(repositoryRoot, path)}: token-account recovery marker crosses IPC boundary`,
       );
     }
   }

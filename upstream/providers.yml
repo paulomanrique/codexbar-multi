@@ -29,7 +29,10 @@ providers:
         - apps/desktop/test/preload-token-accounts.test.ts
         - apps/desktop/test/renderer-token-accounts.test.ts
         - apps/desktop/test/settings-view-model.test.ts
+        - apps/desktop/test/token-account-removal.test.ts
         - packages/core/test/token-accounts.test.ts
+        - packages/core/test/config.test.ts
+        - packages/platform/test/token-account-vault-config.test.ts
     fixtures:
       - packages/providers/test/codex.test.ts
       - Tests/CodexBarTests/Fixtures/codex-*
@@ -44,7 +47,10 @@ providers:
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/token-account-vault-config.ts
         - packages/core/src/token-accounts.ts
+        - packages/core/src/config.ts
+        - packages/contracts/src/config.ts
         - apps/desktop/src/preload/token-accounts-api.ts
+        - apps/desktop/src/main/token-account-removal.ts
         - apps/desktop/src/renderer/index.tsx
         - apps/desktop/src/renderer/settings-view-model.ts
       real:
@@ -56,7 +62,10 @@ providers:
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/token-account-vault-config.ts
         - packages/core/src/token-accounts.ts
+        - packages/core/src/config.ts
+        - packages/contracts/src/config.ts
         - apps/desktop/src/preload/token-accounts-api.ts
+        - apps/desktop/src/main/token-account-removal.ts
         - apps/desktop/src/renderer/index.tsx
         - apps/desktop/src/renderer/settings-view-model.ts
     tsTestGlobs:
@@ -69,7 +78,10 @@ providers:
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
       - apps/desktop/test/settings-view-model.test.ts
+      - apps/desktop/test/token-account-removal.test.ts
       - packages/core/test/token-accounts.test.ts
+      - packages/core/test/config.test.ts
+      - packages/platform/test/token-account-vault-config.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

@@ -34,6 +34,19 @@ export const ProviderTokenAccountData = Schema.Struct({
 });
 export type ProviderTokenAccountData = Schema.Schema.Type<typeof ProviderTokenAccountData>;
 
+/**
+ * Durable, non-secret intent used while the host removes a vault-backed account.
+ * The marker is never projected over renderer IPC.
+ */
+export const PendingTokenAccountDeletion = Schema.Struct({
+  version: Schema.Literal(1),
+  accountId: Schema.String.pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+    Schema.check(Schema.isPattern(/^[^\p{Cc}]+$/u)),
+  ),
+});
+export type PendingTokenAccountDeletion = Schema.Schema.Type<typeof PendingTokenAccountDeletion>;
+
 export const QuotaWarningWindowConfig = Schema.Struct({
   thresholds: Schema.optional(Schema.Array(Schema.Number)),
   enabled: Schema.optional(Schema.Boolean),
@@ -59,6 +72,7 @@ export const ProviderConfig = Schema.Struct({
   workspaceID: Schema.optional(Schema.String),
   enterpriseHost: Schema.optional(Schema.String),
   tokenAccounts: Schema.optional(ProviderTokenAccountData),
+  pendingTokenAccountDeletion: Schema.optional(PendingTokenAccountDeletion),
   quotaWarnings: Schema.optional(QuotaWarningConfig),
   accentColor: Schema.optional(Schema.String),
   pluginSettings: Schema.optional(Schema.Record(Schema.String, Schema.String)),

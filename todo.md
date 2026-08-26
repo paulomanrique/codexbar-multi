@@ -78,6 +78,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Match Swift `auth.json` API-key precedence for ambient and selected Codex credentials.
     - [x] Expose metadata-only Codex account selection in React with host revisions, optimistic rollback, and no renderer credential surface.
     - [x] Add metadata-only Codex account rename with trimmed labels, revision CAS, duplicate-label parity, and no credential mutation.
+    - [x] Add Codex account removal with Swift active-row semantics, revision CAS, typed config tombstones, keyring readback verification, and crash recovery.
+    - [ ] Add host-owned Codex account creation/login without credential material crossing renderer IPC.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
 - [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.

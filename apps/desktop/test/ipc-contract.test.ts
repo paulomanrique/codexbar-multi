@@ -23,6 +23,7 @@ import {
   DefaultBrowserSessionStatusesDTO,
   ListTokenAccountsRequestDTO,
   RenameTokenAccountRequestDTO,
+  RemoveTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountMetadataDTO,
   TokenAccountRosterDTO,
@@ -153,6 +154,7 @@ describe("desktop IPC boundary", () => {
   it("keeps token-account IPC metadata-only and rejects token-bearing accounts", () => {
     const decodeList = Schema.decodeUnknownSync(ListTokenAccountsRequestDTO);
     const decodeRename = Schema.decodeUnknownSync(RenameTokenAccountRequestDTO);
+    const decodeRemove = Schema.decodeUnknownSync(RemoveTokenAccountRequestDTO);
     const decodeSelect = Schema.decodeUnknownSync(SelectTokenAccountRequestDTO);
     const decodeAccount = Schema.decodeUnknownSync(TokenAccountMetadataDTO);
     const decodeRoster = Schema.decodeUnknownSync(TokenAccountRosterDTO);
@@ -189,6 +191,31 @@ describe("desktop IPC boundary", () => {
         expectedRevision: "b".repeat(64),
       }),
     ).toThrow();
+    expect(
+      decodeRemove({
+        provider: "codex",
+        accountId: "account-1",
+        expectedRevision: "c".repeat(64),
+      }),
+    ).toEqual({
+      provider: "codex",
+      accountId: "account-1",
+      expectedRevision: "c".repeat(64),
+    });
+    for (const forbidden of [
+      { token: "secret" },
+      { secret: "secret" },
+      { vaultKey: "private-key" },
+    ]) {
+      expect(() =>
+        decodeRemove({
+          provider: "codex",
+          accountId: "account-1",
+          expectedRevision: "c".repeat(64),
+          ...forbidden,
+        }),
+      ).toThrow();
+    }
     expect(() =>
       decodeRename({
         provider: "codex",
@@ -303,6 +330,7 @@ describe("desktop IPC boundary", () => {
     expect(DesktopChannels.listTokenAccounts).toBe("codexbar-multi:list-token-accounts");
     expect(DesktopChannels.selectTokenAccount).toBe("codexbar-multi:select-token-account");
     expect(DesktopChannels.renameTokenAccount).toBe("codexbar-multi:rename-token-account");
+    expect(DesktopChannels.removeTokenAccount).toBe("codexbar-multi:remove-token-account");
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
   });

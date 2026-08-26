@@ -53,6 +53,39 @@ describe("CodexBarConfig coding (Swift parity)", () => {
     ).toThrow(ConfigDecodeError);
   });
 
+  it("round-trips only the typed non-secret token-account deletion marker", () => {
+    const input = {
+      version: 1,
+      providers: [
+        {
+          id: "codex",
+          pendingTokenAccountDeletion: { version: 1, accountId: "account-1" },
+        },
+      ],
+    };
+    const decoded = decodeCodexBarConfig(input);
+    expect(decoded.providers[0]?.pendingTokenAccountDeletion).toEqual({
+      version: 1,
+      accountId: "account-1",
+    });
+    expect(decoded.providers[0]?.extensions).toEqual({});
+    expect(encodeCodexBarConfig(decoded)).toEqual(input);
+
+    for (const marker of [
+      { version: 2, accountId: "account-1" },
+      { version: 1, accountId: "" },
+      { version: 1, accountId: "bad\naccount" },
+      { version: 1, accountId: "account-1", token: "must-not-persist" },
+    ]) {
+      expect(() =>
+        decodeCodexBarConfig({
+          version: 1,
+          providers: [{ id: "codex", pendingTokenAccountDeletion: marker }],
+        }),
+      ).toThrow(ConfigDecodeError);
+    }
+  });
+
   it("matches Swift encodeIfPresent omissions after decoding null legacy values", () => {
     const decoded = decodeCodexBarConfig({
       version: 1,

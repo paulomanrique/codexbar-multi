@@ -79,6 +79,7 @@ const QueryLimit = Schema.Natural.pipe(
 );
 const TokenAccountId = Schema.String.pipe(
   Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  Schema.check(Schema.isPattern(/^[^\p{Cc}]+$/u)),
 );
 const TokenAccountMetadataString = Schema.String.pipe(Schema.check(Schema.isMaxLength(256)));
 const TokenAccountRenameLabel = Schema.String.pipe(
@@ -309,6 +310,17 @@ export const RenameTokenAccountRequestDTO = Schema.Struct({
   expectedRevision: TokenAccountRevision,
 });
 export type RenameTokenAccountRequestDTO = Schema.Schema.Type<typeof RenameTokenAccountRequestDTO>;
+
+export const RemoveTokenAccountRequestDTO = Schema.Struct({
+  provider: ProviderId,
+  accountId: TokenAccountId,
+  expectedRevision: TokenAccountRevision,
+  /** Explicitly reject common secret-bearing fields before the main handler. */
+  token: Schema.optional(Schema.Never),
+  secret: Schema.optional(Schema.Never),
+  vaultKey: Schema.optional(Schema.Never),
+});
+export type RemoveTokenAccountRequestDTO = Schema.Schema.Type<typeof RemoveTokenAccountRequestDTO>;
 
 /** Explicit, provider-scoped refresh request. The renderer cannot supply endpoints, headers, or secrets. */
 export const RefreshProviderRequestDTO = Schema.Struct({

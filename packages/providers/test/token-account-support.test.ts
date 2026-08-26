@@ -43,7 +43,9 @@ describe("provider token account support inventory", () => {
       provider: "codex",
       requiresManualCookieSource: false,
       runtimeSelectionAvailable: true,
+      clearsAPIKeyOnMutation: false,
     });
+    expect(tokenAccountSupportForProvider("copilot")?.clearsAPIKeyOnMutation).toBe(true);
   });
 
   it("matches Swift persisted manual-cookie selection providers", () => {

@@ -6,6 +6,7 @@ import {
   type ProviderSourceMode,
   type ProviderTokenAccount,
   type ProviderTokenAccountData,
+  type PendingTokenAccountDeletion,
   type QuotaWarningConfig,
 } from "@codexbar/contracts";
 
@@ -52,6 +53,8 @@ export interface PersistedProviderConfig {
   readonly workspaceID?: string;
   readonly enterpriseHost?: string;
   readonly tokenAccounts?: ProviderTokenAccountData;
+  /** Host-only, non-secret recovery marker; never projected to renderer DTOs. */
+  readonly pendingTokenAccountDeletion?: PendingTokenAccountDeletion;
   readonly quotaWarnings?: QuotaWarningConfig;
   readonly accentColor?: string;
   readonly pluginSettings?: Readonly<Record<string, string>>;
@@ -112,6 +115,7 @@ const providerFields = new Set([
   "workspaceID",
   "enterpriseHost",
   "tokenAccounts",
+  "pendingTokenAccountDeletion",
   "quotaWarnings",
   "accentColor",
   "pluginSettings",
@@ -155,6 +159,30 @@ const optionalStringRecord = (
     result[key] = entry;
   }
   return result;
+};
+
+const optionalPendingTokenAccountDeletion = (
+  value: unknown,
+  path: string,
+): PendingTokenAccountDeletion | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new ConfigDecodeError(`${path} must be an object.`);
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== "version" && key !== "accountId")) {
+    throw new ConfigDecodeError(`${path} contains unsupported fields.`);
+  }
+  const version = optionalNumber(own(value, "version"), `${path}.version`);
+  if (version !== 1) throw new ConfigDecodeError(`${path}.version is invalid.`);
+  const accountId = optionalString(own(value, "accountId"), `${path}.accountId`);
+  if (
+    accountId === undefined ||
+    accountId.length === 0 ||
+    accountId.length > 256 ||
+    /\p{Cc}/u.test(accountId)
+  ) {
+    throw new ConfigDecodeError(`${path}.accountId is invalid.`);
+  }
+  return { version: 1, accountId };
 };
 
 const jsonValue = (value: unknown, path: string): ConfigJsonValue => {
@@ -396,6 +424,10 @@ export const decodeCodexBarConfig = (
       own(rawProvider, "tokenAccounts"),
       `${path}.tokenAccounts`,
     );
+    const pendingTokenAccountDeletion = optionalPendingTokenAccountDeletion(
+      own(rawProvider, "pendingTokenAccountDeletion"),
+      `${path}.pendingTokenAccountDeletion`,
+    );
     const quotaWarnings = optionalQuotaWarnings(
       own(rawProvider, "quotaWarnings"),
       `${path}.quotaWarnings`,
@@ -422,6 +454,7 @@ export const decodeCodexBarConfig = (
       ...(workspaceID === undefined ? {} : { workspaceID }),
       ...(enterpriseHost === undefined ? {} : { enterpriseHost }),
       ...(tokenAccounts === undefined ? {} : { tokenAccounts }),
+      ...(pendingTokenAccountDeletion === undefined ? {} : { pendingTokenAccountDeletion }),
       ...(quotaWarnings === undefined ? {} : { quotaWarnings }),
       ...(accentColor === undefined ? {} : { accentColor }),
       ...(pluginSettings === undefined ? {} : { pluginSettings }),
@@ -463,6 +496,7 @@ export const encodeCodexBarConfig = (config: PersistedCodexBarConfig): Record<st
       workspaceID: provider.workspaceID,
       enterpriseHost: provider.enterpriseHost,
       tokenAccounts: provider.tokenAccounts,
+      pendingTokenAccountDeletion: provider.pendingTokenAccountDeletion,
       quotaWarnings: provider.quotaWarnings,
       accentColor: provider.accentColor,
       pluginSettings: provider.pluginSettings,

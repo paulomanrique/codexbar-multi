@@ -39,6 +39,7 @@ import {
 import {
   isAvailableProviderSource,
   optimisticRenameTokenAccountRoster,
+  optimisticRemoveTokenAccountRoster,
   optimisticTokenAccountRoster,
   sessionQuotaNotificationSettingsViewState,
   tokenAccountDetail,
@@ -457,6 +458,7 @@ function TokenAccountSettings({
   copy,
   onSelect,
   onRename,
+  onRemove,
 }: {
   readonly roster: TokenAccountRosterDTO | undefined;
   readonly loading: boolean;
@@ -469,9 +471,11 @@ function TokenAccountSettings({
     readonly empty: string;
     readonly apply: string;
     readonly refreshing: string;
+    readonly remove: string;
   };
   readonly onSelect: (accountId: string) => void;
   readonly onRename: (accountId: string, label: string) => void;
+  readonly onRemove: (accountId: string) => void;
 }) {
   const state = tokenAccountSelectionViewState(roster, loading, pending, error);
   const statusId = "codex-token-account-status";
@@ -537,6 +541,16 @@ function TokenAccountSettings({
           </label>
           <button className="secondary" disabled={renameDisabled} type="submit">
             {copy.apply}
+          </button>
+          <button
+            className="secondary danger"
+            disabled={state.disabled}
+            type="button"
+            onClick={() => {
+              if (state.active !== undefined) onRemove(state.active.id);
+            }}
+          >
+            {copy.remove}
           </button>
         </form>
       )}
@@ -1016,6 +1030,48 @@ function App() {
         setTokenAccountPending(false);
       });
   };
+  const removeTokenAccount = (accountId: string): void => {
+    const previous = tokenAccountRoster;
+    if (selectedProviderFirstPartyId !== "codex" || previous === undefined) return;
+    const optimistic = optimisticRemoveTokenAccountRoster(previous, accountId);
+    if (optimistic === undefined) return;
+    const scope = tokenAccountScope.current;
+    setTokenAccountRoster(optimistic);
+    setTokenAccountPending(true);
+    setTokenAccountError(undefined);
+    const removal = window.codexbar.removeTokenAccount({
+      provider: "codex",
+      accountId,
+      expectedRevision: previous.revision,
+    });
+    void removal
+      .then(
+        (roster) => {
+          if (tokenAccountScope.current !== scope) return;
+          setTokenAccountRoster(roster);
+          void loadOverview()
+            .then(() => setActivityVersion((version) => version + 1))
+            .catch(() => setError(localization.upstream("Unavailable")));
+        },
+        () => {
+          if (tokenAccountScope.current !== scope) return;
+          // Config-first deletion may already be durable even when keyring
+          // cleanup fails. Hide stale controls until a host relist succeeds.
+          setTokenAccountRoster(undefined);
+          setTokenAccountError(localization.upstream("Unavailable"));
+          void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+            (roster) => {
+              if (tokenAccountScope.current === scope) setTokenAccountRoster(roster);
+            },
+            () => undefined,
+          );
+        },
+      )
+      .finally(() => {
+        if (tokenAccountScope.current !== scope) return;
+        setTokenAccountPending(false);
+      });
+  };
   const updateSessionQuotaNotificationSettings = (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
   ): void => {
@@ -1403,12 +1459,14 @@ function App() {
                   empty: copy.noSavedAccounts,
                   apply: localization.upstream("apply"),
                   refreshing: copy.refreshing,
+                  remove: localization.upstream("Remove"),
                 }}
                 error={tokenAccountError}
                 loading={tokenAccountLoading}
                 pending={tokenAccountPending}
                 roster={tokenAccountRoster}
                 onRename={renameTokenAccount}
+                onRemove={removeTokenAccount}
                 onSelect={selectTokenAccount}
               />
             ) : null}
