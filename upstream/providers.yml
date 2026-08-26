@@ -34,12 +34,14 @@ providers:
         - packages/providers/src/providers/codex.ts
         - packages/providers/src/providers/codex-pat.ts
         - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/node-codex-credential.ts
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/codex.ts
         - packages/providers/src/providers/codex-pat.ts
         - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/node-codex-credential.ts
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:

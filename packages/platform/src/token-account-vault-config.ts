@@ -23,6 +23,7 @@ import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers
 import { normalizeQoderManualCredential } from "@codexbar/providers/providers/qoder";
 import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
+import { accountIdFromJwt } from "./node-codex-credential.ts";
 
 export interface TokenAccountMigrationLock {
   runExclusive<A, E, R>(
@@ -392,7 +393,10 @@ const selectedCodexAccount = (
   const personalAccessToken = selectedCodexString(
     root.personal_access_token ?? root.personalAccessToken,
   );
-  const accountSetting = selectedCodexString(tokens.account_id ?? tokens.accountId);
+  const accountSetting =
+    selectedCodexString(tokens.account_id ?? tokens.accountId) ??
+    accountIdFromJwt(selectedCodexString(tokens.id_token ?? tokens.idToken)) ??
+    accountIdFromJwt(accessToken);
   if (accessToken === undefined && personalAccessToken === undefined) {
     return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
   }

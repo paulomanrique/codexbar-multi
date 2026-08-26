@@ -74,6 +74,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [ ] Add account CRUD/UI and full Codex selected-home/web semantics.
     - [x] Add fail-closed selected Codex `auth.json`/PAT credential mapping with ambient credential suppression and no refresh-token exposure.
     - [x] Share exact `CODEX_HOME` resolution between Codex credential discovery and local cost roots.
+    - [x] Recover selected Codex account IDs from direct, namespaced, and organization JWT claims without exposing ID/refresh tokens.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
 - [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.

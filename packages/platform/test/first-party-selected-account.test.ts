@@ -151,6 +151,55 @@ describe("first-party selected accounts from the token-account vault", () => {
     });
   });
 
+  it.each([
+    ["direct ID-token claim", { chatgpt_account_id: "acct-direct" }, "acct-direct"],
+    [
+      "namespaced ID-token claim",
+      { "https://api.openai.com/auth": { chatgpt_account_id: "acct-namespaced" } },
+      "acct-namespaced",
+    ],
+    [
+      "first organization ID-token claim",
+      { organizations: [{ id: "org-first" }, { id: "org-second" }] },
+      "org-first",
+    ],
+  ] as const)(
+    "derives a selected Codex account from the %s",
+    async (_label, payload, accountId) => {
+      const key = tokenAccountVaultKey("codex", "account-0");
+      await expect(
+        resolve(config("codex"), "codex", {
+          [key]: JSON.stringify({
+            tokens: { access_token: "selected-oauth", id_token: jwt(payload) },
+          }),
+        }),
+      ).resolves.toMatchObject({ plainSettings: { CODEX_ACCOUNT_ID: accountId } });
+    },
+  );
+
+  it("falls back to selected Codex access-token claims but prefers an explicit account ID", async () => {
+    const key = tokenAccountVaultKey("codex", "account-0");
+    await expect(
+      resolve(config("codex"), "codex", {
+        [key]: JSON.stringify({
+          tokens: {
+            access_token: jwt({ organizations: [{ id: "org-from-access" }] }),
+            account_id: "acct-explicit",
+            id_token: jwt({ chatgpt_account_id: "acct-from-id-token" }),
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({ plainSettings: { CODEX_ACCOUNT_ID: "acct-explicit" } });
+
+    await expect(
+      resolve(config("codex"), "codex", {
+        [key]: JSON.stringify({
+          tokens: { access_token: jwt({ organizations: [{ id: "org-from-access" }] }) },
+        }),
+      }),
+    ).resolves.toMatchObject({ plainSettings: { CODEX_ACCOUNT_ID: "org-from-access" } });
+  });
+
   it("maps selected Codex personal access tokens and suppresses ambient OAuth", async () => {
     const key = tokenAccountVaultKey("codex", "account-0");
     await expect(

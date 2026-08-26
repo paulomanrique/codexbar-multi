@@ -47,5 +47,21 @@ describe("Codex credential discovery", () => {
       }),
     ).toEqual({});
     expect(accountIdFromJwt("not-a-jwt")).toBeUndefined();
+    expect(accountIdFromJwt(`header.${Buffer.from("{}").toString("base64url")}`)).toBeUndefined();
+  });
+
+  it("matches Swift account claim precedence and organization fallback", () => {
+    expect(
+      accountIdFromJwt(
+        jwt({
+          chatgpt_account_id: "direct",
+          "https://api.openai.com/auth": { chatgpt_account_id: "namespaced" },
+          organizations: [{ id: "organization" }],
+        }),
+      ),
+    ).toBe("direct");
+    expect(accountIdFromJwt(jwt({ organizations: [{ id: "first" }, { id: "second" }] }))).toBe(
+      "first",
+    );
   });
 });

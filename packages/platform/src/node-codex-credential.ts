@@ -12,15 +12,27 @@ export interface NodeCodexCredential {
 export function accountIdFromJwt(token: string | undefined): string | undefined {
   if (token === undefined) return undefined;
   try {
-    const payload = JSON.parse(
-      Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
+    const parts = token.split(".");
+    if (parts.length !== 3) return undefined;
+    const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    const direct = nonEmptyString(payload.chatgpt_account_id);
+    if (direct !== undefined) return direct;
     const auth = payload["https://api.openai.com/auth"];
     if (typeof auth === "object" && auth !== null && "chatgpt_account_id" in auth) {
-      const accountId = auth.chatgpt_account_id;
-      return typeof accountId === "string" && accountId !== "" ? accountId : undefined;
+      const accountId = nonEmptyString(auth.chatgpt_account_id);
+      if (accountId !== undefined) return accountId;
     }
-    return typeof payload.chatgpt_account_id === "string" ? payload.chatgpt_account_id : undefined;
+    if (Array.isArray(payload.organizations)) {
+      for (const organization of payload.organizations) {
+        if (typeof organization !== "object" || organization === null) continue;
+        const accountId = nonEmptyString((organization as Record<string, unknown>).id);
+        if (accountId !== undefined) return accountId;
+      }
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -56,7 +68,8 @@ export function discoverNodeCodexCredential(
     );
     const accountId =
       nonEmptyString(configuredAccount) ??
-      accountIdFromJwt(typeof idToken === "string" ? idToken : accessToken);
+      accountIdFromJwt(typeof idToken === "string" ? idToken : undefined) ??
+      accountIdFromJwt(accessToken);
     return {
       ...(accessToken === undefined ? {} : { accessToken }),
       ...(accountId === undefined ? {} : { accountId }),

@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Effect } from "effect";
-import { InfrastructureError, type HttpRequest, type HttpResponse } from "@codexbar/core";
+import {
+  InfrastructureError,
+  type HttpRequest,
+  type HttpResponse,
+  type PersistedCodexBarConfig,
+} from "@codexbar/core";
 import { codex } from "@codexbar/providers";
 import { makeFirstPartyProviderRuntime } from "../src/first-party-runtime.ts";
+import {
+  resolveSelectedFirstPartyAccountFromVault,
+  tokenAccountVaultKey,
+} from "../src/token-account-vault-config.ts";
 
 const clock = { now: Effect.succeed(Date.parse("2026-08-25T12:00:00Z")), sleep: () => Effect.void };
 
@@ -24,6 +33,9 @@ const usagePayload = {
     },
   },
 };
+
+const jwt = (payload: Record<string, unknown>): string =>
+  `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
 
 const runtime = (
   requests: HttpRequest[],
@@ -61,6 +73,77 @@ const runtime = (
   });
 
 describe("first-party runtime selected Codex accounts", () => {
+  it("derives the selected account header through the production vault resolver", async () => {
+    const requests: HttpRequest[] = [];
+    const credentialReads: string[] = [];
+    const account = { id: "codex-selected", label: "Selected", addedAt: 0 };
+    const key = tokenAccountVaultKey("codex", account.id);
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "codex",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    const credentials = {
+      read: (requestedKey: string) => {
+        credentialReads.push(requestedKey);
+        return requestedKey === key
+          ? Effect.succeed(
+              JSON.stringify({
+                tokens: {
+                  access_token: "selected-oauth",
+                  refresh_token: "must-not-escape",
+                  id_token: jwt({
+                    "https://api.openai.com/auth": { chatgpt_account_id: "acct-from-jwt" },
+                  }),
+                },
+              }),
+            )
+          : Effect.die(`selected Codex account must suppress keyring read ${requestedKey}`);
+      },
+      write: () => Effect.void,
+      remove: () => Effect.void,
+    };
+    const selected = makeFirstPartyProviderRuntime({
+      providers: [codex],
+      settings: {
+        read: (_provider, setting) =>
+          setting === "CODEX_CLI_USER_AGENT"
+            ? Effect.succeed("codex_cli_rs/1.2.3 (Windows 11; x86_64)")
+            : Effect.die(`selected Codex account must suppress ambient setting ${setting}`),
+      },
+      selectedAccounts: {
+        resolve: () => resolveSelectedFirstPartyAccountFromVault(config, credentials, "codex"),
+      },
+      browserSessions: { cookieHeader: () => Effect.die("must not use web") },
+      credentials,
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          return Effect.succeed(
+            response(request, { ...usagePayload, account_id: "acct-from-jwt" }),
+          );
+        },
+      },
+      clock,
+    });
+
+    const outcome = await Effect.runPromise(
+      selected.fetch("codex", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(requests[0]?.headers).toMatchObject({
+      Authorization: "Bearer selected-oauth",
+      "ChatGPT-Account-Id": "acct-from-jwt",
+    });
+    expect(credentialReads).toEqual([key]);
+    expect(JSON.stringify(outcome)).not.toContain("selected-oauth");
+    expect(JSON.stringify(outcome)).not.toContain("must-not-escape");
+  });
+
   it("uses only the selected OAuth credential and account header", async () => {
     const requests: HttpRequest[] = [];
     const outcome = await Effect.runPromise(
