@@ -36,6 +36,7 @@ import {
   RefreshProviderRequestDTO,
   RefreshProviderResultDTO,
   ListTokenAccountsRequestDTO,
+  RenameTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountRosterDTO,
   ProviderSettingsDTO,
@@ -750,6 +751,7 @@ void desktopReady?.then(async () => {
     const decodeRefresh = Schema.decodeUnknownPromise(RefreshProviderRequestDTO);
     const decodeRefreshResult = Schema.decodeUnknownPromise(RefreshProviderResultDTO);
     const decodeListTokenAccounts = Schema.decodeUnknownPromise(ListTokenAccountsRequestDTO);
+    const decodeRenameTokenAccount = Schema.decodeUnknownPromise(RenameTokenAccountRequestDTO);
     const decodeSelectTokenAccount = Schema.decodeUnknownPromise(SelectTokenAccountRequestDTO);
     const decodeTokenAccountRoster = Schema.decodeUnknownPromise(TokenAccountRosterDTO);
     const decodeActivateClaudeSwapAccount = Schema.decodeUnknownPromise(
@@ -955,6 +957,19 @@ void desktopReady?.then(async () => {
             Effect.orElseSucceed(() => undefined),
           ),
         );
+        return decodeTokenAccountRoster(roster);
+      }),
+    );
+    ipcMain.handle(DesktopChannels.renameTokenAccount, (_event, input: unknown) =>
+      handleDesktopRequest(async () => {
+        const request = await decodeRenameTokenAccount(input);
+        const roster = await desktopConfigMutations.run(async () => {
+          const renamed = await Effect.runPromise(tokenAccounts.rename(request));
+          // Rename is metadata-only. Serialize it with selection and reload the
+          // local projection without probing a provider or reading a secret.
+          desktopConfig = await Effect.runPromise(configRepository.load);
+          return renamed;
+        });
         return decodeTokenAccountRoster(roster);
       }),
     );

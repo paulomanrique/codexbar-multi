@@ -9,6 +9,10 @@ describe("renderer Codex token-account selection", () => {
     expect(source).toContain('listTokenAccounts({ provider: "codex" })');
     expect(source).toContain("expectedRevision: previous.revision");
     expect(source).toContain("optimisticTokenAccountRoster(previous, accountId)");
+    expect(source).toContain("optimisticRenameTokenAccountRoster(previous, accountId, label)");
+    expect(source).toContain(".renameTokenAccount({");
+    expect(source).toContain('localization.upstream("Label")');
+    expect(source).toContain('localization.upstream("apply")');
     expect(source).toContain("<TokenAccountSettings");
     expect(source).not.toContain("CODEX_ACCESS_TOKEN");
     expect(source).not.toContain("refresh_token");

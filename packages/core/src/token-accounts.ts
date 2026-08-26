@@ -20,6 +20,7 @@ export type TokenAccountErrorCode =
   | "unsupported-provider"
   | "selection-unavailable"
   | "invalid-roster"
+  | "invalid-label"
   | "missing-roster"
   | "missing-account"
   | "stale-revision";
@@ -43,6 +44,8 @@ const tokenAccountErrorMessage = (code: TokenAccountErrorCode): string => {
       return "Token account selection is not available for this provider yet.";
     case "invalid-roster":
       return "Token account metadata is not vault-backed.";
+    case "invalid-label":
+      return "Token account label is invalid.";
     case "missing-roster":
       return "Token account roster is missing.";
     case "missing-account":
@@ -126,6 +129,12 @@ const providerConfig = (
   provider: ProviderId,
 ): PersistedProviderConfig | undefined => config.providers.find((entry) => entry.id === provider);
 
+const normalizedRenameLabel = (label: string): string | undefined => {
+  const trimmed = label.trim();
+  if (trimmed.length === 0 || trimmed.length > 256 || /\p{Cc}/u.test(trimmed)) return undefined;
+  return trimmed;
+};
+
 export interface TokenAccountRosterServiceOptions {
   readonly config: ConfigRepositoryService;
   readonly support: ReadonlyMap<ProviderId, TokenAccountSupport>;
@@ -138,6 +147,12 @@ export interface TokenAccountRosterService {
   readonly select: (request: {
     readonly provider: ProviderId;
     readonly accountId: string;
+    readonly expectedRevision: string;
+  }) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | InfrastructureError>;
+  readonly rename: (request: {
+    readonly provider: ProviderId;
+    readonly accountId: string;
+    readonly label: string;
     readonly expectedRevision: string;
   }) => Effect.Effect<TokenAccountRosterDTO, TokenAccountRosterError | InfrastructureError>;
 }
@@ -231,6 +246,63 @@ export const makeTokenAccountRosterService = (
               )
             : Effect.fail(new TokenAccountRosterError("selection-unavailable")),
         ),
+        Effect.map((result) => result.value),
+      ),
+    rename: (request) =>
+      requireSupport(request.provider).pipe(
+        Effect.flatMap((support) => {
+          const label = normalizedRenameLabel(request.label);
+          if (label === undefined) return Effect.fail(new TokenAccountRosterError("invalid-label"));
+          return options.config.modify((config) =>
+            Effect.gen(function* () {
+              if (config === undefined)
+                return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
+              const provider = providerConfig(config, request.provider);
+              const data = provider?.tokenAccounts;
+              if (provider === undefined || data === undefined || data.accounts.length === 0) {
+                return yield* Effect.fail(new TokenAccountRosterError("missing-roster"));
+              }
+              if (
+                data.version !== 2 ||
+                data.accounts.some((account) => hasOwnToken(account)) ||
+                hasDuplicateAccountIds(data.accounts)
+              ) {
+                return yield* Effect.fail(new TokenAccountRosterError("invalid-roster"));
+              }
+              const currentRoster = yield* rosterFor(request.provider, config, support);
+              if (currentRoster.revision !== request.expectedRevision) {
+                return yield* Effect.fail(new TokenAccountRosterError("stale-revision"));
+              }
+              const accountIndex = data.accounts.findIndex(
+                (account) => account.id === request.accountId,
+              );
+              if (accountIndex < 0)
+                return yield* Effect.fail(new TokenAccountRosterError("missing-account"));
+              const accounts = data.accounts.map((account, index) =>
+                index === accountIndex ? { ...account, label } : account,
+              );
+              const nextProvider: PersistedProviderConfig = {
+                ...provider,
+                tokenAccounts: {
+                  version: 2,
+                  accounts,
+                  activeIndex: currentRoster.activeIndex,
+                },
+              };
+              const nextConfig: PersistedCodexBarConfig = {
+                ...config,
+                providers: config.providers.map((entry) =>
+                  entry.id === request.provider ? nextProvider : entry,
+                ),
+              };
+              const roster = yield* rosterFor(request.provider, nextConfig, support);
+              return {
+                config: nextConfig,
+                value: roster,
+              };
+            }),
+          );
+        }),
         Effect.map((result) => result.value),
       ),
   };

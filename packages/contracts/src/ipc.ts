@@ -81,6 +81,10 @@ const TokenAccountId = Schema.String.pipe(
   Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
 );
 const TokenAccountMetadataString = Schema.String.pipe(Schema.check(Schema.isMaxLength(256)));
+const TokenAccountRenameLabel = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  Schema.check(Schema.isPattern(/^(?=.*\S)[^\p{Cc}]+$/u)),
+);
 const TokenAccountSeconds = Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)));
 const TokenAccountRevision = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/)));
 
@@ -297,6 +301,14 @@ export const SelectTokenAccountRequestDTO = Schema.Struct({
   expectedRevision: TokenAccountRevision,
 });
 export type SelectTokenAccountRequestDTO = Schema.Schema.Type<typeof SelectTokenAccountRequestDTO>;
+
+export const RenameTokenAccountRequestDTO = Schema.Struct({
+  provider: ProviderId,
+  accountId: TokenAccountId,
+  label: TokenAccountRenameLabel,
+  expectedRevision: TokenAccountRevision,
+});
+export type RenameTokenAccountRequestDTO = Schema.Schema.Type<typeof RenameTokenAccountRequestDTO>;
 
 /** Explicit, provider-scoped refresh request. The renderer cannot supply endpoints, headers, or secrets. */
 export const RefreshProviderRequestDTO = Schema.Struct({

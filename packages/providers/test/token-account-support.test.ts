@@ -5,12 +5,13 @@ import {
 } from "../src/token-account-support.ts";
 
 describe("provider token account support inventory", () => {
-  it("ports exactly the generic first-party support set and keeps Codex unsupported", () => {
+  it("ports the generic first-party support set and includes Codex selected accounts", () => {
     expect(PROVIDER_TOKEN_ACCOUNT_SUPPORT.map((support) => support.provider)).toEqual([
       "abacus",
       "antigravity",
       "augment",
       "claude",
+      "codex",
       "copilot",
       "cursor",
       "deepinfra",
@@ -37,8 +38,12 @@ describe("provider token account support inventory", () => {
       "venice",
       "zai",
     ]);
-    expect(PROVIDER_TOKEN_ACCOUNT_SUPPORT).toHaveLength(29);
-    expect(tokenAccountSupportForProvider("codex")).toBeUndefined();
+    expect(PROVIDER_TOKEN_ACCOUNT_SUPPORT).toHaveLength(30);
+    expect(tokenAccountSupportForProvider("codex")).toMatchObject({
+      provider: "codex",
+      requiresManualCookieSource: false,
+      runtimeSelectionAvailable: true,
+    });
   });
 
   it("matches Swift persisted manual-cookie selection providers", () => {
@@ -78,6 +83,7 @@ describe("provider token account support inventory", () => {
       "antigravity",
       "augment",
       "claude",
+      "codex",
       "copilot",
       "cursor",
       "deepinfra",

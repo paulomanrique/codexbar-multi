@@ -22,6 +22,7 @@ import {
   ActivateClaudeSwapAccountRequestDTO,
   DefaultBrowserSessionStatusesDTO,
   ListTokenAccountsRequestDTO,
+  RenameTokenAccountRequestDTO,
   SelectTokenAccountRequestDTO,
   TokenAccountMetadataDTO,
   TokenAccountRosterDTO,
@@ -151,6 +152,7 @@ describe("desktop IPC boundary", () => {
 
   it("keeps token-account IPC metadata-only and rejects token-bearing accounts", () => {
     const decodeList = Schema.decodeUnknownSync(ListTokenAccountsRequestDTO);
+    const decodeRename = Schema.decodeUnknownSync(RenameTokenAccountRequestDTO);
     const decodeSelect = Schema.decodeUnknownSync(SelectTokenAccountRequestDTO);
     const decodeAccount = Schema.decodeUnknownSync(TokenAccountMetadataDTO);
     const decodeRoster = Schema.decodeUnknownSync(TokenAccountRosterDTO);
@@ -165,6 +167,43 @@ describe("desktop IPC boundary", () => {
     ).toEqual({ provider: "claude", accountId: "account-1", expectedRevision: "a".repeat(64) });
     expect(() =>
       decodeSelect({ provider: "claude", accountId: "", expectedRevision: "a".repeat(64) }),
+    ).toThrow();
+    expect(
+      decodeRename({
+        provider: "codex",
+        accountId: "account-1",
+        label: "  Work account  ",
+        expectedRevision: "b".repeat(64),
+      }),
+    ).toEqual({
+      provider: "codex",
+      accountId: "account-1",
+      label: "  Work account  ",
+      expectedRevision: "b".repeat(64),
+    });
+    expect(() =>
+      decodeRename({
+        provider: "codex",
+        accountId: "account-1",
+        label: "   ",
+        expectedRevision: "b".repeat(64),
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRename({
+        provider: "codex",
+        accountId: "account-1",
+        label: "bad\nlabel",
+        expectedRevision: "b".repeat(64),
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRename({
+        provider: "codex",
+        accountId: "account-1",
+        label: "x".repeat(257),
+        expectedRevision: "b".repeat(64),
+      }),
     ).toThrow();
     expect(decodeAccount({ id: "account-1", label: "", addedAt: 1.25 })).toEqual({
       id: "account-1",
@@ -263,6 +302,7 @@ describe("desktop IPC boundary", () => {
     expect(DesktopChannels.overviewUpdated).toBe("codexbar-multi:overview-updated");
     expect(DesktopChannels.listTokenAccounts).toBe("codexbar-multi:list-token-accounts");
     expect(DesktopChannels.selectTokenAccount).toBe("codexbar-multi:select-token-account");
+    expect(DesktopChannels.renameTokenAccount).toBe("codexbar-multi:rename-token-account");
     expect(new Set(channels)).toHaveLength(channels.length);
     expect(channels.every((channel) => channel.startsWith("codexbar-multi:"))).toBe(true);
   });

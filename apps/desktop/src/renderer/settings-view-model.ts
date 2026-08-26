@@ -78,3 +78,22 @@ export const optimisticTokenAccountRoster = (
   const activeIndex = roster.accounts.findIndex((account) => account.id === accountId);
   return activeIndex < 0 ? undefined : { ...roster, activeIndex };
 };
+
+/** Renames one metadata row only; account identity, active selection and revision stay host-owned. */
+export const optimisticRenameTokenAccountRoster = (
+  roster: TokenAccountRosterDTO,
+  accountId: string,
+  label: string,
+): TokenAccountRosterDTO | undefined => {
+  const trimmed = label.trim();
+  if (trimmed.length === 0 || trimmed.length > 256) return undefined;
+  if (/\p{Cc}/u.test(trimmed)) return undefined;
+  const accountIndex = roster.accounts.findIndex((account) => account.id === accountId);
+  if (accountIndex < 0) return undefined;
+  return {
+    ...roster,
+    accounts: roster.accounts.map((account, index) =>
+      index === accountIndex ? { ...account, label: trimmed } : account,
+    ),
+  };
+};

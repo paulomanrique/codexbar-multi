@@ -366,15 +366,30 @@ h2 {
   gap: 4px;
   color: #d8dde8;
 }
-.settings-token-account select {
+.settings-token-account-rename {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  margin-top: 7px;
+}
+.settings-token-account-rename label {
+  display: grid;
+  gap: 4px;
+  color: #d8dde8;
+}
+.settings-token-account select,
+.settings-token-account-rename input {
   border: 1px solid #293040;
   border-radius: 7px;
   background: #11141b;
   color: inherit;
   font: inherit;
   padding: 7px 8px;
+  min-width: 0;
 }
-.settings-token-account select:disabled {
+.settings-token-account select:disabled,
+.settings-token-account-rename input:disabled {
   color: #8b93a7;
   cursor: wait;
 }
@@ -565,6 +580,12 @@ select:focus-visible {
   }
   .spend-header button {
     align-self: start;
+  }
+  .settings-token-account-rename {
+    grid-template-columns: 1fr;
+  }
+  .settings-token-account-rename button {
+    justify-self: start;
   }
 }
 .startup-shell {

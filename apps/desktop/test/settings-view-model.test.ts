@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isAvailableProviderSource,
+  optimisticRenameTokenAccountRoster,
   optimisticTokenAccountRoster,
   sessionQuotaNotificationSettingsViewState,
   tokenAccountDetail,
@@ -67,6 +68,17 @@ describe("settings view model", () => {
     expect(optimistic?.activeIndex).toBe(1);
     expect(optimistic?.revision).toBe(roster.revision);
     expect(optimisticTokenAccountRoster(roster, "not-listed")).toBeUndefined();
+
+    const renamed = optimisticRenameTokenAccountRoster(roster, "opaque-2", "  Personal  ");
+    expect(renamed?.accounts[1]?.label).toBe("Personal");
+    expect(renamed?.accounts[0]).toBe(roster.accounts[0]);
+    expect(renamed?.activeIndex).toBe(roster.activeIndex);
+    expect(renamed?.revision).toBe(roster.revision);
+    expect(optimisticRenameTokenAccountRoster(roster, "not-listed", "Personal")).toBeUndefined();
+    expect(optimisticRenameTokenAccountRoster(roster, "opaque-2", "   ")).toBeUndefined();
+    expect(
+      optimisticRenameTokenAccountRoster(roster, "opaque-2", "invalid\nlabel"),
+    ).toBeUndefined();
   });
 
   it("keeps token-account loading, empty, pending and error states local", () => {

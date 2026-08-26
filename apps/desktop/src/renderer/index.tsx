@@ -38,6 +38,7 @@ import {
 } from "./view-model.ts";
 import {
   isAvailableProviderSource,
+  optimisticRenameTokenAccountRoster,
   optimisticTokenAccountRoster,
   sessionQuotaNotificationSettingsViewState,
   tokenAccountDetail,
@@ -455,6 +456,7 @@ function TokenAccountSettings({
   error,
   copy,
   onSelect,
+  onRename,
 }: {
   readonly roster: TokenAccountRosterDTO | undefined;
   readonly loading: boolean;
@@ -463,13 +465,28 @@ function TokenAccountSettings({
   readonly copy: {
     readonly title: string;
     readonly account: string;
+    readonly label: string;
     readonly empty: string;
+    readonly apply: string;
     readonly refreshing: string;
   };
   readonly onSelect: (accountId: string) => void;
+  readonly onRename: (accountId: string, label: string) => void;
 }) {
   const state = tokenAccountSelectionViewState(roster, loading, pending, error);
   const statusId = "codex-token-account-status";
+  const [draftLabel, setDraftLabel] = useState("");
+  const activeLabel = state.active?.label.trim() ?? "";
+  const trimmedDraftLabel = draftLabel.trim();
+  const renameDisabled =
+    state.disabled ||
+    state.active === undefined ||
+    trimmedDraftLabel.length === 0 ||
+    trimmedDraftLabel.length > 256 ||
+    trimmedDraftLabel === activeLabel;
+  useEffect(() => {
+    setDraftLabel(activeLabel);
+  }, [activeLabel, state.activeId]);
   return (
     <section className="settings-token-accounts" aria-labelledby="codex-token-account-heading">
       <h3 id="codex-token-account-heading">{copy.title}</h3>
@@ -497,6 +514,32 @@ function TokenAccountSettings({
           )}
         </label>
       ) : null}
+      {state.active === undefined ? null : (
+        <form
+          className="settings-token-account-rename"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (renameDisabled || state.active === undefined) return;
+            onRename(state.active.id, trimmedDraftLabel);
+          }}
+        >
+          <label>
+            <span>{copy.label}</span>
+            <input
+              aria-describedby={state.status === "ready" ? undefined : statusId}
+              aria-label={copy.label}
+              autoComplete="off"
+              disabled={state.disabled}
+              maxLength={256}
+              value={draftLabel}
+              onChange={(event) => setDraftLabel(event.target.value)}
+            />
+          </label>
+          <button className="secondary" disabled={renameDisabled} type="submit">
+            {copy.apply}
+          </button>
+        </form>
+      )}
       {state.status === "loading" || state.status === "pending" ? (
         <p className="muted" id={statusId}>
           {copy.refreshing}
@@ -935,6 +978,44 @@ function App() {
         setTokenAccountPending(false);
       });
   };
+  const renameTokenAccount = (accountId: string, label: string): void => {
+    const previous = tokenAccountRoster;
+    if (selectedProviderFirstPartyId !== "codex" || previous === undefined) return;
+    const optimistic = optimisticRenameTokenAccountRoster(previous, accountId, label);
+    if (optimistic === undefined) return;
+    const scope = tokenAccountScope.current;
+    setTokenAccountRoster(optimistic);
+    setTokenAccountPending(true);
+    setTokenAccountError(undefined);
+    const rename = window.codexbar.renameTokenAccount({
+      provider: "codex",
+      accountId,
+      label: label.trim(),
+      expectedRevision: previous.revision,
+    });
+    void rename
+      .then(
+        (roster) => {
+          if (tokenAccountScope.current !== scope) return;
+          setTokenAccountRoster(roster);
+        },
+        () => {
+          if (tokenAccountScope.current !== scope) return;
+          setTokenAccountRoster(previous);
+          setTokenAccountError(localization.upstream("Unavailable"));
+          void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+            (roster) => {
+              if (tokenAccountScope.current === scope) setTokenAccountRoster(roster);
+            },
+            () => undefined,
+          );
+        },
+      )
+      .finally(() => {
+        if (tokenAccountScope.current !== scope) return;
+        setTokenAccountPending(false);
+      });
+  };
   const updateSessionQuotaNotificationSettings = (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
   ): void => {
@@ -1318,13 +1399,16 @@ function App() {
                 copy={{
                   title: copy.savedAccounts,
                   account: copy.account,
+                  label: localization.upstream("Label"),
                   empty: copy.noSavedAccounts,
+                  apply: localization.upstream("apply"),
                   refreshing: copy.refreshing,
                 }}
                 error={tokenAccountError}
                 loading={tokenAccountLoading}
                 pending={tokenAccountPending}
                 roster={tokenAccountRoster}
+                onRename={renameTokenAccount}
                 onSelect={selectTokenAccount}
               />
             ) : null}

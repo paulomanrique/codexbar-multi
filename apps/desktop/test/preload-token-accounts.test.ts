@@ -41,8 +41,34 @@ describe("token account preload bridge", () => {
       },
     ]);
 
+    await expect(
+      api.renameTokenAccount({
+        provider: "claude",
+        accountId: "account-1",
+        label: "Renamed",
+        expectedRevision: "a".repeat(64),
+      }),
+    ).resolves.toMatchObject({ provider: "claude" });
+    expect(calls[1]).toEqual({
+      channel: DesktopChannels.renameTokenAccount,
+      input: {
+        provider: "claude",
+        accountId: "account-1",
+        label: "Renamed",
+        expectedRevision: "a".repeat(64),
+      },
+    });
+
     await expect(api.listTokenAccounts({ provider: "fixture-plugin" as never })).rejects.toThrow();
-    expect(calls).toHaveLength(1);
+    await expect(
+      api.renameTokenAccount({
+        provider: "claude",
+        accountId: "account-1",
+        label: "   ",
+        expectedRevision: "a".repeat(64),
+      }),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(2);
   });
 
   it("rejects token-bearing responses before returning to the renderer", async () => {
