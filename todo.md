@@ -77,6 +77,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Share exact `CODEX_HOME` resolution between Codex credential discovery and local cost roots.
     - [x] Recover selected Codex account IDs from direct, namespaced, and organization JWT claims without exposing ID/refresh tokens.
     - [x] Match Swift `auth.json` API-key precedence for ambient and selected Codex credentials.
+    - [x] Share the ambient/vault `auth.json` parser, require a durable access+refresh OAuth pair, keep refresh host-private, and re-resolve A→B selection without stale or ambient credentials.
     - [x] Expose metadata-only Codex account selection in React with host revisions, optimistic rollback, and no renderer credential surface.
     - [x] Add metadata-only Codex account rename with trimmed labels, revision CAS, duplicate-label parity, and no credential mutation.
     - [x] Add Codex account removal with Swift active-row semantics, revision CAS, typed config tombstones, keyring readback verification, and crash recovery.

@@ -23,7 +23,7 @@ import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers
 import { normalizeQoderManualCredential } from "@codexbar/providers/providers/qoder";
 import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
-import { accountIdFromJwt } from "./node-codex-credential.ts";
+import { parseNodeCodexAuthJson } from "./node-codex-credential.ts";
 
 export interface TokenAccountMigrationLock {
   runExclusive<A, E, R>(
@@ -753,50 +753,16 @@ const resolveSelectedMaterial = (
     ),
   );
 
-const selectedCodexString = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
-
-const selectedCodexObject = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-
-const selectedCodexTokenBag = (root: Record<string, unknown>): Record<string, unknown> =>
-  selectedCodexObject(root.tokens) ?? root;
-
 const selectedCodexAccount = (
   accountId: string,
   raw: string,
   metadata: { readonly externalIdentifier?: string | undefined } = {},
 ): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
-  if (raw.includes("\u0000") || new TextEncoder().encode(raw).byteLength > 1024 * 1024) {
+  const parsed = parseNodeCodexAuthJson(raw);
+  if (parsed === undefined) {
     return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
-  }
-  const root = selectedCodexObject(parsed);
-  if (root === undefined) {
-    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
-  }
-  const tokens = selectedCodexTokenBag(root);
-  const apiKey = selectedCodexString(root.OPENAI_API_KEY);
-  const accessToken = apiKey ?? selectedCodexString(tokens.access_token ?? tokens.accessToken);
-  const personalAccessToken = selectedCodexString(
-    root.personal_access_token ?? root.personalAccessToken,
-  );
-  const accountSetting =
-    apiKey === undefined
-      ? (selectedCodexString(tokens.account_id ?? tokens.accountId) ??
-        accountIdFromJwt(selectedCodexString(tokens.id_token ?? tokens.idToken)) ??
-        accountIdFromJwt(accessToken))
-      : undefined;
-  if (accessToken === undefined && personalAccessToken === undefined) {
-    return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
-  }
+  const { accessToken, accountId: accountSetting, personalAccessToken } = parsed.credential;
   const externalIdentifier = sanitizedMetadataValue(metadata.externalIdentifier);
   if (externalIdentifier === "invalid") {
     return Effect.fail(selectedAccountFailure("Selected Codex account metadata is invalid."));

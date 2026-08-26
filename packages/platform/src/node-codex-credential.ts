@@ -68,12 +68,24 @@ export function parseNodeCodexAuthJson(sourceText: string): ParsedNodeCodexAuth 
         ? (root.tokens as Record<string, unknown>)
         : {};
     const apiKey = nonEmptyString(root.OPENAI_API_KEY);
-    const accessToken = nonEmptyString(apiKey ?? tokens.access_token ?? tokens.accessToken);
+    const oauthAccessToken = nonEmptyString(tokens.access_token ?? tokens.accessToken);
+    const oauthRefreshToken = nonEmptyString(tokens.refresh_token ?? tokens.refreshToken);
+    // Match the native Codex parser: OAuth is durable only as an
+    // access+refresh pair. Refresh validates the source but never leaves this
+    // host-side parser or crosses provider/IPC boundaries.
+    const accessToken =
+      apiKey ??
+      (oauthAccessToken !== undefined && oauthRefreshToken !== undefined
+        ? oauthAccessToken
+        : undefined);
     const personalAccessToken = nonEmptyString(
       root.personal_access_token ?? root.personalAccessToken,
     );
     if (accessToken === undefined && personalAccessToken === undefined) return undefined;
-    const idToken = nonEmptyString(tokens.id_token ?? tokens.idToken);
+    const idToken =
+      apiKey === undefined && accessToken !== undefined
+        ? nonEmptyString(tokens.id_token ?? tokens.idToken)
+        : undefined;
     const payload = jwtPayload(idToken);
     const auth =
       payload?.["https://api.openai.com/auth"] !== null &&
@@ -87,7 +99,8 @@ export function parseNodeCodexAuthJson(sourceText: string): ParsedNodeCodexAuth 
       !Array.isArray(payload?.["https://api.openai.com/profile"])
         ? (payload["https://api.openai.com/profile"] as Record<string, unknown>)
         : undefined;
-    const configuredAccount = nonEmptyString(tokens.account_id ?? tokens.accountId);
+    const configuredAccount =
+      accessToken === undefined ? undefined : nonEmptyString(tokens.account_id ?? tokens.accountId);
     const accountId =
       apiKey === undefined
         ? (configuredAccount ?? accountIdFromJwt(idToken) ?? accountIdFromJwt(accessToken))

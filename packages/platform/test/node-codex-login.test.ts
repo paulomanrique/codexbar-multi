@@ -204,7 +204,11 @@ describe("Node Codex account login", () => {
         restrictDirectory: async () => undefined,
         processRunner: successfulRunner(
           JSON.stringify({
-            tokens: { access_token: "access-secret", id_token: idToken },
+            tokens: {
+              access_token: "access-secret",
+              refresh_token: "refresh-secret",
+              id_token: idToken,
+            },
           }),
           (home, spec) => {
             observedHome = home;

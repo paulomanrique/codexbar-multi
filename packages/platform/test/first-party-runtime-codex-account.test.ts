@@ -144,6 +144,112 @@ describe("first-party runtime selected Codex accounts", () => {
     expect(JSON.stringify(outcome)).not.toContain("must-not-escape");
   });
 
+  it("switches selected vault accounts without reusing ambient or stale credentials", async () => {
+    const requests: HttpRequest[] = [];
+    const credentialReads: string[] = [];
+    const accounts = [
+      { id: "codex-a", label: "Account A", addedAt: 0 },
+      { id: "codex-b", label: "Account B", addedAt: 1 },
+    ];
+    const credentialsByKey = new Map([
+      [
+        tokenAccountVaultKey("codex", "codex-a"),
+        JSON.stringify({
+          tokens: {
+            access_token: "oauth-a",
+            refresh_token: "refresh-a-must-not-escape",
+            account_id: "acct-a",
+          },
+        }),
+      ],
+      [
+        tokenAccountVaultKey("codex", "codex-b"),
+        JSON.stringify({
+          tokens: {
+            access_token: "oauth-b",
+            refresh_token: "refresh-b-must-not-escape",
+            account_id: "acct-b",
+          },
+        }),
+      ],
+    ]);
+    let activeIndex = 0;
+    const currentConfig = (): PersistedCodexBarConfig => ({
+      version: 1,
+      providers: [
+        {
+          id: "codex",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex, accounts },
+        },
+      ],
+    });
+    const credentials = {
+      read: (key: string) => {
+        credentialReads.push(key);
+        const value = credentialsByKey.get(key);
+        return value === undefined
+          ? Effect.die(`selected Codex account requested unexpected vault key ${key}`)
+          : Effect.succeed(value);
+      },
+      write: () => Effect.void,
+      remove: () => Effect.void,
+    };
+    const selected = makeFirstPartyProviderRuntime({
+      providers: [codex],
+      settings: {
+        read: (_provider, setting) =>
+          setting === "CODEX_CLI_USER_AGENT"
+            ? Effect.succeed("codex_cli_rs/1.2.3 (Windows 11; x86_64)")
+            : Effect.die(`selected Codex account must suppress ambient setting ${setting}`),
+      },
+      selectedAccounts: {
+        resolve: () =>
+          resolveSelectedFirstPartyAccountFromVault(currentConfig(), credentials, "codex"),
+      },
+      browserSessions: { cookieHeader: () => Effect.die("selected account must not use web") },
+      credentials,
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          return Effect.succeed(
+            response(request, {
+              ...usagePayload,
+              account_id: request.headers?.["ChatGPT-Account-Id"],
+            }),
+          );
+        },
+      },
+      clock,
+    });
+
+    const first = await Effect.runPromise(
+      selected.fetch("codex", { sourceMode: "auto", includeCredits: false }),
+    );
+    activeIndex = 1;
+    const second = await Effect.runPromise(
+      selected.fetch("codex", { sourceMode: "auto", includeCredits: false }),
+    );
+
+    expect(requests.map(({ headers }) => headers?.Authorization)).toEqual([
+      "Bearer oauth-a",
+      "Bearer oauth-b",
+    ]);
+    expect(requests.map(({ headers }) => headers?.["ChatGPT-Account-Id"])).toEqual([
+      "acct-a",
+      "acct-b",
+    ]);
+    expect(credentialReads).toEqual([
+      tokenAccountVaultKey("codex", "codex-a"),
+      tokenAccountVaultKey("codex", "codex-b"),
+    ]);
+    expect([first.snapshot.identity?.accountId, second.snapshot.identity?.accountId]).toEqual([
+      "acct-a",
+      "acct-b",
+    ]);
+    expect(JSON.stringify([first, second])).not.toMatch(/oauth-|refresh-/u);
+  });
+
   it("uses only the selected OAuth credential and account header", async () => {
     const requests: HttpRequest[] = [];
     const outcome = await Effect.runPromise(

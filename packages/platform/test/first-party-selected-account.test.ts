@@ -233,7 +233,11 @@ describe("first-party selected accounts from the token-account vault", () => {
       await expect(
         resolve(config("codex"), "codex", {
           [key]: JSON.stringify({
-            tokens: { access_token: "selected-oauth", id_token: jwt(payload) },
+            tokens: {
+              access_token: "selected-oauth",
+              refresh_token: "selected-refresh",
+              id_token: jwt(payload),
+            },
           }),
         }),
       ).resolves.toMatchObject({ plainSettings: { CODEX_ACCOUNT_ID: accountId } });
@@ -247,6 +251,7 @@ describe("first-party selected accounts from the token-account vault", () => {
         [key]: JSON.stringify({
           tokens: {
             access_token: jwt({ organizations: [{ id: "org-from-access" }] }),
+            refresh_token: "selected-refresh",
             account_id: "acct-explicit",
             id_token: jwt({ chatgpt_account_id: "acct-from-id-token" }),
           },
@@ -257,7 +262,10 @@ describe("first-party selected accounts from the token-account vault", () => {
     await expect(
       resolve(config("codex"), "codex", {
         [key]: JSON.stringify({
-          tokens: { access_token: jwt({ organizations: [{ id: "org-from-access" }] }) },
+          tokens: {
+            access_token: jwt({ organizations: [{ id: "org-from-access" }] }),
+            refresh_token: "selected-refresh",
+          },
         }),
       }),
     ).resolves.toMatchObject({ plainSettings: { CODEX_ACCOUNT_ID: "org-from-access" } });
@@ -269,7 +277,7 @@ describe("first-party selected accounts from the token-account vault", () => {
       resolve(config("codex"), "codex", {
         [key]: JSON.stringify({
           personal_access_token: "  at-selected  ",
-          tokens: { access_token: "oauth-fallback" },
+          tokens: { access_token: "oauth-fallback", refresh_token: "oauth-refresh" },
         }),
       }),
     ).resolves.toEqual({
@@ -310,6 +318,7 @@ describe("first-party selected accounts from the token-account vault", () => {
     "could-be-any-legacy-format",
     "null",
     JSON.stringify({ tokens: { refresh_token: "refresh-only" } }),
+    JSON.stringify({ tokens: { access_token: "access-only" } }),
     JSON.stringify({ tokens: { access_token: "" } }),
     `{"tokens":{"access_token":"${"x".repeat(1024 * 1024)}"}}`,
     `${JSON.stringify({ tokens: { access_token: "selected" } })}\u0000`,

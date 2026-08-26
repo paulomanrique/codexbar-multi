@@ -614,7 +614,9 @@ describe("token-account vault config repository", () => {
     const repository = memoryRepository(v2CodexConfig());
     const credentials = memoryCredentials();
     const lock = memoryLock();
-    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+    });
 
     const saved = await Effect.runPromise(
       addCodexTokenAccountCredentialToVault(repository, credentials, lock, {
@@ -651,7 +653,9 @@ describe("token-account vault config repository", () => {
         addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
           accountId: "codex-account",
           label: "Personal",
-          credentialJson: JSON.stringify({ tokens: { access_token: "selected-oauth" } }),
+          credentialJson: JSON.stringify({
+            tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+          }),
           addedAt: 1,
         }),
       ),
@@ -672,7 +676,9 @@ describe("token-account vault config repository", () => {
         addCodexTokenAccountCredentialToVault(repository, credentials, memoryLock(), {
           accountId: "codex-account",
           label: "Personal",
-          credentialJson: JSON.stringify({ tokens: { access_token: "selected-oauth" } }),
+          credentialJson: JSON.stringify({
+            tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+          }),
           addedAt: 1,
         }),
       ),
@@ -685,7 +691,9 @@ describe("token-account vault config repository", () => {
 
   it("recovers staged Codex metadata after the credential write", async () => {
     const key = tokenAccountVaultKey("codex", "codex-account");
-    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+    });
     const staged: PersistedCodexBarConfig = {
       ...v2CodexConfig(),
       providers: [
@@ -717,7 +725,9 @@ describe("token-account vault config repository", () => {
   });
 
   it("discards an unpublished Codex addition when recovery finds no credential", async () => {
-    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+    });
     const staged: PersistedCodexBarConfig = {
       ...v2CodexConfig(),
       providers: [
@@ -758,7 +768,9 @@ describe("token-account vault config repository", () => {
       },
       modify: underlying.modify,
     };
-    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+    });
     const credentials = memoryCredentials();
 
     await expect(
@@ -793,7 +805,9 @@ describe("token-account vault config repository", () => {
 
   it("recovers when the native store persists a credential before reporting write failure", async () => {
     const repository = memoryRepository(v2CodexConfig());
-    const credentialJson = JSON.stringify({ tokens: { access_token: "selected-oauth" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "selected-oauth", refresh_token: "fixture-refresh" },
+    });
     const credentials = memoryCredentials({}, { persistThenFailWrite: true });
 
     await expect(
@@ -818,7 +832,9 @@ describe("token-account vault config repository", () => {
   });
 
   it("fails closed and retains staged metadata when recovery finds a divergent credential", async () => {
-    const credentialJson = JSON.stringify({ tokens: { access_token: "expected" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "expected", refresh_token: "fixture-refresh" },
+    });
     const key = tokenAccountVaultKey("codex", "codex-account");
     const staged: PersistedCodexBarConfig = {
       ...v2CodexConfig(),
@@ -842,7 +858,11 @@ describe("token-account vault config repository", () => {
       Effect.runPromise(
         makeTokenAccountVaultConfigRepository(
           repository,
-          memoryCredentials({ [key]: JSON.stringify({ tokens: { access_token: "other" } }) }),
+          memoryCredentials({
+            [key]: JSON.stringify({
+              tokens: { access_token: "other", refresh_token: "fixture-refresh" },
+            }),
+          }),
           memoryLock(),
         ).load,
       ),
@@ -852,7 +872,9 @@ describe("token-account vault config repository", () => {
   });
 
   it("retains staged metadata when the native credential store is unavailable", async () => {
-    const credentialJson = JSON.stringify({ tokens: { access_token: "expected" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "expected", refresh_token: "fixture-refresh" },
+    });
     const staged: PersistedCodexBarConfig = {
       ...v2CodexConfig(),
       providers: [
@@ -885,7 +907,9 @@ describe("token-account vault config repository", () => {
   });
 
   it("rejects a provider carrying addition and deletion recovery markers together", async () => {
-    const credentialJson = JSON.stringify({ tokens: { access_token: "expected" } });
+    const credentialJson = JSON.stringify({
+      tokens: { access_token: "expected", refresh_token: "fixture-refresh" },
+    });
     const invalid: PersistedCodexBarConfig = {
       ...v2CodexConfig(),
       providers: [

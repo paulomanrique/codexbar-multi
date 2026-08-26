@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { makeNodeDiscoveredProviderSettings } from "../src/node.ts";
+import { makeNodeDiscoveredProviderSettings, parseNodeCodexAuthJson } from "../src/node.ts";
 
 describe("Node discovered provider settings factory", () => {
   it("re-reads Claude and Codex credentials on every settings.read", async () => {
@@ -87,6 +87,21 @@ describe("Node discovered provider settings factory", () => {
     });
     expect(await Effect.runPromise(unprefixed.read("claude", "CLAUDE_OAUTH_ACCESS_TOKEN"))).toBe(
       "env-claude",
+    );
+  });
+
+  it("preserves explicit Codex environment fallback for an incomplete native OAuth file", async () => {
+    const settings = makeNodeDiscoveredProviderSettings({
+      environment: { CODEX_ACCESS_TOKEN: "explicit-env-codex" },
+      discoverClaudeCredential: () => ({}),
+      discoverCodexCredential: () =>
+        parseNodeCodexAuthJson(
+          JSON.stringify({ tokens: { access_token: "native-without-refresh" } }),
+        )?.credential ?? {},
+    });
+
+    expect(await Effect.runPromise(settings.read("codex", "CODEX_ACCESS_TOKEN"))).toBe(
+      "explicit-env-codex",
     );
   });
 

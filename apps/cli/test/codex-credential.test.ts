@@ -15,6 +15,7 @@ describe("Codex credential discovery", () => {
         return JSON.stringify({
           tokens: {
             access_token: "access",
+            refresh_token: "refresh",
             id_token: jwt({ "https://api.openai.com/auth": { chatgpt_account_id: "account-1" } }),
           },
         });
@@ -29,7 +30,7 @@ describe("Codex credential discovery", () => {
       read: () =>
         JSON.stringify({
           personal_access_token: "  at-personal-token  ",
-          tokens: { access_token: "oauth-access" },
+          tokens: { access_token: "oauth-access", refresh_token: "oauth-refresh" },
         }),
     });
     expect(credential).toEqual({
@@ -46,12 +47,30 @@ describe("Codex credential discovery", () => {
           OPENAI_API_KEY: "  sk-api-key  ",
           tokens: {
             access_token: "oauth-access",
+            refresh_token: "oauth-refresh",
             id_token: jwt({ chatgpt_account_id: "oauth-account" }),
             account_id: "oauth-account",
           },
         }),
     });
     expect(credential).toEqual({ accessToken: "sk-api-key" });
+  });
+
+  it("accepts camel-case OAuth pairs without returning the refresh token", () => {
+    const credential = discoverCodexCredential({
+      environment: { CODEX_HOME: "/isolated/codex" },
+      read: () =>
+        JSON.stringify({
+          tokens: {
+            accessToken: "camel-access",
+            refreshToken: "camel-refresh-must-not-escape",
+            accountId: "camel-account",
+          },
+        }),
+    });
+    expect(credential).toEqual({ accessToken: "camel-access", accountId: "camel-account" });
+    expect(JSON.stringify(credential)).not.toContain("camel-refresh-must-not-escape");
+    expect(Object.keys(credential)).not.toContain("refreshToken");
   });
 
   it("fails closed for malformed or unreadable credential files", () => {
@@ -64,6 +83,23 @@ describe("Codex credential discovery", () => {
     ).toEqual({});
     expect(accountIdFromJwt("not-a-jwt")).toBeUndefined();
     expect(accountIdFromJwt(`header.${Buffer.from("{}").toString("base64url")}`)).toBeUndefined();
+  });
+
+  it("rejects a non-renewable OAuth token while preserving an independent PAT", () => {
+    expect(
+      discoverCodexCredential({
+        read: () => JSON.stringify({ tokens: { access_token: "access-without-refresh" } }),
+      }),
+    ).toEqual({});
+    expect(
+      discoverCodexCredential({
+        read: () =>
+          JSON.stringify({
+            personal_access_token: "at-personal",
+            tokens: { access_token: "access-without-refresh" },
+          }),
+      }),
+    ).toEqual({ personalAccessToken: "at-personal" });
   });
 
   it("matches Swift account claim precedence and organization fallback", () => {
