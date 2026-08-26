@@ -137,13 +137,44 @@ describe("first-party selected accounts from the token-account vault", () => {
   });
 
   it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["minimax", "qoder"] as const) {
+    for (const providerId of ["minimax"] as const) {
       await expect(
         resolve(config(providerId), providerId, {
           [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
         }),
       ).rejects.toMatchObject({ kind: "missing-credential" });
     }
+  });
+
+  it.each([
+    ["sid=selected", "sid=selected", "qoder.com"],
+    ["Cookie: sid=selected", "sid=selected", "qoder.com"],
+    ["curl https://qoder.com.cn -H 'Cookie: sid=selected'", "sid=selected", "qoder.com.cn"],
+  ] as const)(
+    "normalizes a selected Qoder credential from %s",
+    async (material, cookieHeader, site) => {
+      const key = tokenAccountVaultKey("qoder", "account-0");
+      await expect(resolve(config("qoder"), "qoder", { [key]: material })).resolves.toEqual({
+        id: "account-0",
+        secureSettings: { QODER_COOKIE_HEADER: cookieHeader },
+        plainSettings: { QODER_SITE: site },
+      });
+    },
+  );
+
+  it.each([
+    "",
+    "not-a-cookie",
+    "sid=value\u0000suffix",
+    "curl https://example.com -H 'Cookie: sid=value'",
+    "curl https://qoder.com https://qoder.com.cn -H 'Cookie: sid=value'",
+    "x".repeat(1024 * 1024),
+    `sid=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected Qoder material", async (material) => {
+    const key = tokenAccountVaultKey("qoder", "account-0");
+    await expect(resolve(config("qoder"), "qoder", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
   });
 
   it.each([

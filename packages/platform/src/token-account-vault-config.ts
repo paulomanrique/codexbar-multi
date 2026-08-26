@@ -19,6 +19,7 @@ import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-
 import { manusSessionToken } from "@codexbar/providers/providers/manus";
 import { canonicalFactoryManualCredential } from "@codexbar/providers/providers/factory";
 import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers/ollama";
+import { normalizeQoderManualCredential } from "@codexbar/providers/providers/qoder";
 import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
 
@@ -548,7 +549,7 @@ const selectedOllamaAccount = (
   const cookieHeader = normalizeOllamaTokenAccountHeader(raw);
   if (
     raw.includes("\u0000") ||
-    rawBytes > 1024 * 1024 ||
+    rawBytes >= 1024 * 1024 ||
     cookieHeader === undefined ||
     cookieHeader.includes("\u0000") ||
     new TextEncoder().encode(cookieHeader).byteLength > 1024 * 1024
@@ -598,6 +599,28 @@ const selectedFactoryAccount = (
       FACTORY_COOKIE_HEADER: credential,
       FACTORY_API_KEY: null,
     },
+  });
+};
+
+const selectedQoderAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const rawBytes = new TextEncoder().encode(raw).byteLength;
+  const credential = normalizeQoderManualCredential(raw);
+  if (
+    raw.includes("\u0000") ||
+    rawBytes > 1024 * 1024 ||
+    credential === undefined ||
+    credential.cookieHeader.includes("\u0000") ||
+    new TextEncoder().encode(credential.cookieHeader).byteLength >= 1024 * 1024
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected Qoder account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: { QODER_COOKIE_HEADER: credential.cookieHeader },
+    plainSettings: { QODER_SITE: credential.site },
   });
 };
 
@@ -944,6 +967,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "stepfun") return selectedStepFunAccount(account.id, material);
       if (providerId === "ollama") return selectedOllamaAccount(account.id, material);
       if (providerId === "factory") return selectedFactoryAccount(account.id, material);
+      if (providerId === "qoder") return selectedQoderAccount(account.id, material);
       if (providerId === "antigravity") return selectedAntigravityAccount(account.id, material);
       return Effect.fail(
         selectedAccountFailure("Selected account provider mapper is not available."),

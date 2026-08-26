@@ -97,6 +97,7 @@ describe("provider token account support inventory", () => {
       "opencode",
       "opencodego",
       "openrouter",
+      "qoder",
       "stepfun",
       "sub2api",
       "venice",

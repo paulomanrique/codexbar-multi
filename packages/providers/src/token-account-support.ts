@@ -67,6 +67,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
   "opencode",
   "opencodego",
   "openrouter",
+  "qoder",
   "stepfun",
   "sub2api",
   "venice",

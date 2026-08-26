@@ -1029,6 +1029,18 @@ const selectedStrategyAllowed = (
       strategy.id === "factory.web"
     );
   }
+  if (providerId === "qoder") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "QODER_COOKIE_HEADER");
+    const site = ownSetting(selectedAccount.plainSettings, "QODER_SITE");
+    return (
+      cookie.present &&
+      Boolean(cookie.value?.trim()) &&
+      site.present &&
+      (site.value === "qoder.com" || site.value === "qoder.com.cn") &&
+      (context.sourceMode === "auto" || context.sourceMode === "web") &&
+      strategy.id === "qoder.web"
+    );
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

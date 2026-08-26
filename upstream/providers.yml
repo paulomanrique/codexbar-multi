@@ -926,6 +926,8 @@ providers:
         - TestsLinux/*Warp*Tests.swift
       tsGlobs:
         - packages/providers/test/**/*.test.ts
+        - packages/platform/test/first-party-runtime-qoder-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
     fixtures:
       - packages/providers/test/http-wave-b.test.ts
     tsPaths:
@@ -1295,11 +1297,21 @@ providers:
     fixtures:
       - packages/providers/test/provider-extension-parity-wave.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/qoder.ts]
+      expected:
+        - packages/providers/src/providers/qoder.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/qoder.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/provider-extension-parity-wave.test.ts
+      - packages/providers/test/token-account-support.test.ts
+      - packages/platform/test/first-party-runtime-qoder-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
