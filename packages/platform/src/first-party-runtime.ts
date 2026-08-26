@@ -477,12 +477,15 @@ const suppressManagedAuth = (
 ): boolean => {
   const requested = requestOptions.__codexbarSuppressManagedAuth;
   if (requested === undefined) return false;
-  if (
-    requested !== true ||
-    descriptor.id !== "copilot" ||
-    url.origin !== "https://github.com" ||
-    url.pathname !== "/settings/billing/budgets"
-  ) {
+  const allowed =
+    requested === true &&
+    ((descriptor.id === "copilot" &&
+      url.origin === "https://github.com" &&
+      url.pathname === "/settings/billing/budgets") ||
+      (descriptor.id === "ollama" &&
+        url.origin === "https://ollama.com" &&
+        ["/settings", "/api/web_search", "/api/tags"].includes(url.pathname)));
+  if (!allowed) {
     throw failure("permission-denied", "Managed auth suppression is not allowed for this request.");
   }
   return true;
@@ -820,6 +823,36 @@ export const makeFirstPartyProviderRuntime = (
   const byId = new Map(options.providers.map((provider) => [provider.descriptor.id, provider]));
   const keyFor = options.credentialKey ?? credentialKeyFor;
 
+  const autoSecretAvailable = (
+    descriptor: ProviderDescriptor,
+    selectedAccount: FirstPartySelectedAccount | undefined,
+    keys: readonly string[],
+  ): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const secureKeys = new Set(
+        descriptor.settings
+          .filter((setting) => setting.type === "secure")
+          .map((setting) => setting.key),
+      );
+      if (descriptor.auth !== undefined) secureKeys.add(descriptor.auth.secret);
+      for (const key of keys) {
+        if (!secureKeys.has(key)) continue;
+        const selected = ownSetting(selectedAccount?.secureSettings, key);
+        if (selected.present) {
+          if (selected.value?.trim()) return true;
+          continue;
+        }
+        const injected = yield* options.settings
+          .read(descriptor.id, key)
+          .pipe(Effect.orElseSucceed(() => undefined));
+        const stored = yield* options.credentials
+          .read(keyFor(descriptor.id, key))
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if ((stored ?? injected)?.trim()) return true;
+      }
+      return false;
+    });
+
   const strategyFor = (
     providerId: ProviderId,
     context: ProviderFetchContext,
@@ -841,7 +874,14 @@ export const makeFirstPartyProviderRuntime = (
           (strategy): ProviderFetchStrategy => ({
             id: strategy.id,
             source: sourceFor(strategy),
-            isAvailable: () => Effect.succeed(true),
+            isAvailable: () =>
+              context.sourceMode !== "auto" || strategy.autoRequiresAnySecret === undefined
+                ? Effect.succeed(true)
+                : autoSecretAvailable(
+                    provider.descriptor,
+                    selectedAccount,
+                    strategy.autoRequiresAnySecret,
+                  ),
             fetch: () =>
               executeProvider(provider, strategy, context, selectedAccount, options, keyFor),
             shouldFallback: (error, fetchContext) =>
@@ -960,6 +1000,20 @@ const selectedStrategyAllowed = (
   if (providerId === "stepfun") {
     const token = ownSetting(selectedAccount.secureSettings, "STEPFUN_TOKEN");
     return token.present && Boolean(token.value?.trim()) && strategy.id === "stepfun.web";
+  }
+  if (providerId === "ollama") {
+    const cookie = ownSetting(selectedAccount.secureSettings, "OLLAMA_COOKIE");
+    const apiKey = ownSetting(selectedAccount.secureSettings, "OLLAMA_API_KEY");
+    const legacyKey = ownSetting(selectedAccount.secureSettings, "OLLAMA_KEY");
+    return (
+      cookie.present &&
+      Boolean(cookie.value?.trim()) &&
+      apiKey.present &&
+      apiKey.value === undefined &&
+      legacyKey.present &&
+      legacyKey.value === undefined &&
+      strategy.id === "ollama.web"
+    );
   }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
@@ -1177,7 +1231,9 @@ const executeProvider = (
           url,
           requestOptions,
         );
-        if (authSuppressed) withoutHeader(headers, "Authorization");
+        if (authSuppressed && auth?.type !== "provider-managed") {
+          withoutHeader(headers, "Authorization");
+        }
         if (auth !== undefined && !authSuppressed) {
           const secretName = managementAuthSecret ?? auth.secret;
           const secret = secrets.get(secretName) ?? settings.get(secretName);

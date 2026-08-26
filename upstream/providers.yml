@@ -792,15 +792,28 @@ providers:
         - Tests/CodexBarTests/*Ollama*Tests.swift
         - TestsLinux/*Ollama*Tests.swift
       tsGlobs:
+        - packages/platform/test/first-party-runtime-ollama-account.test.ts
+        - packages/platform/test/first-party-selected-account.test.ts
         - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
+        - packages/providers/test/token-account-support.test.ts
     fixtures:
       - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/ollama.ts]
+      expected:
+        - packages/providers/src/providers/ollama.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/ollama.ts
+        - packages/providers/src/token-account-support.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
+      - packages/platform/test/first-party-runtime-ollama-account.test.ts
+      - packages/platform/test/first-party-selected-account.test.ts
       - packages/providers/test/ollama-windsurf-mimo-parity.test.ts
+      - packages/providers/test/token-account-support.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

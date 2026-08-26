@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { mimo } from "../src/providers/mimo.ts";
-import { ollama } from "../src/providers/ollama.ts";
+import { normalizeOllamaTokenAccountHeader, ollama } from "../src/providers/ollama.ts";
 import { windsurf } from "../src/providers/windsurf.ts";
 import type { ProviderContext, ProviderResponse } from "../src/types.ts";
 
@@ -25,6 +25,7 @@ const context = (
     settings: { get: (key) => settings[key], getSecret: (key) => settings[key] },
     http: {
       get: (url, options) => request("GET", url, options),
+      post: (url, options) => request("POST", url, options),
       getJSON: async (url, options) => {
         const result = await request("GET", url, options);
         return { ...result, json: JSON.parse(result.bodyText) as unknown };
@@ -74,7 +75,43 @@ describe("Ollama, Windsurf, and MiMo Swift-derived provider parity", () => {
     ]);
     for (const provider of [ollama, windsurf, mimo])
       expect(provider.descriptor.capabilities).toEqual(["browser-cookies"]);
+    expect(ollama.strategies?.map(({ id, kind }) => [id, kind])).toEqual([
+      ["ollama.web", "web"],
+      ["ollama.api", "api"],
+    ]);
   });
+  it.each([
+    ["opaque-session", "__Secure-session=opaque-session"],
+    [" \n opaque-session== \t", "__Secure-session=opaque-session=="],
+    ["opaque-session==", "__Secure-session=opaque-session=="],
+    ["foo=bar", "__Secure-session=foo=bar"],
+    ["__secure-session=abc", "__Secure-session=abc"],
+    ["session=abc", "session=abc"],
+    ["ollama_session=abc", "ollama_session=abc"],
+    ["__Host-ollama_session=abc", "__Host-ollama_session=abc"],
+    ["wos-session=abc; theme=dark", "wos-session=abc; theme=dark"],
+    [
+      "__Secure-next-auth.session-token.0=zero; __Secure-next-auth.session-token.1=one",
+      "__Secure-next-auth.session-token.0=zero; __Secure-next-auth.session-token.1=one",
+    ],
+    [
+      "next-auth.session-token.0=zero; next-auth.session-token.1=one",
+      "next-auth.session-token.0=zero; next-auth.session-token.1=one",
+    ],
+    ["theme=dark; locale=en", "theme=dark; locale=en"],
+    ["Cookie: __Secure-session=abc", "__Secure-session=abc"],
+    ["Cookie: opaque-value", "__Secure-session=opaque-value"],
+    ["curl https://ollama.com -H 'Cookie: __Secure-session=abc'", "__Secure-session=abc"],
+    ["curl https://ollama.com -H Cookie:__Secure-session=abc", "__Secure-session=abc"],
+    ["curl https://ollama.com --cookie '__Secure-session=abc'", "__Secure-session=abc"],
+    ["curl https://ollama.com -b'__Secure-session=abc'", "__Secure-session=abc"],
+  ] as const)("normalizes Ollama token account material %s", (material, expected) => {
+    expect(normalizeOllamaTokenAccountHeader(material)).toBe(expected);
+  });
+  it.each(["", " \t\n ", "abc\r\nInjected: yes", "curl https://ollama.com/settings"])(
+    "rejects invalid Ollama token material %s",
+    (material) => expect(normalizeOllamaTokenAccountHeader(material)).toBeUndefined(),
+  );
   it("parses Ollama settings HTML session and weekly windows", async () => {
     const raw = await ollama.fetchUsage(
       context(
@@ -91,6 +128,101 @@ describe("Ollama, Windsurf, and MiMo Swift-derived provider parity", () => {
       secondary: { usedPercent: 0.7, windowMinutes: 10_080 },
       identity: { loginMethod: "free", accountEmail: "user@example.com" },
     });
+  });
+  it("validates the Ollama API key with POST before reading tags", async () => {
+    const requests: Request[] = [];
+    const base = context(
+      (request) => {
+        requests.push(request);
+        return request.url.pathname.endsWith("/web_search")
+          ? { status: 400, bodyText: "validation reached" }
+          : json({ models: [{ name: "fixture" }] });
+      },
+      { OLLAMA_API_KEY: " 'api-key' " },
+    );
+    const raw = await ollama.fetchUsage({
+      ...base,
+      sourceMode: "api",
+      browser: {
+        cookieHeader: async () => {
+          throw new Error("explicit API mode must not read browser cookies");
+        },
+      },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      options: {
+        body: { query: "" },
+        timeoutSeconds: 20,
+        headers: {
+          Authorization: "Bearer api-key",
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "CodexBar/1.0",
+        },
+      },
+    });
+    expect(requests[1]).toMatchObject({
+      method: "GET",
+      options: { timeoutSeconds: 20 },
+    });
+    expect(raw).toEqual({ identity: { loginMethod: "API key" } });
+  });
+  it.each([401, 403] as const)(
+    "classifies Ollama validation HTTP %i as expired auth",
+    async (code) => {
+      const strategy = ollama.strategies?.find(({ id }) => id === "ollama.api");
+      await expect(
+        strategy!.fetchUsage(
+          context(() => ({ status: code, bodyText: "rejected" }), {
+            OLLAMA_API_KEY: "api-key",
+          }),
+        ),
+      ).rejects.toThrow("authentication-expired:");
+    },
+  );
+  it("classifies other Ollama validation failures as network errors", async () => {
+    const strategy = ollama.strategies?.find(({ id }) => id === "ollama.api");
+    await expect(
+      strategy!.fetchUsage(
+        context(() => ({ status: 500, bodyText: "unavailable" }), {
+          OLLAMA_API_KEY: "api-key",
+        }),
+      ),
+    ).rejects.toThrow("network-failure:");
+  });
+  it.each([
+    [401, "authentication-expired"],
+    [403, "authentication-expired"],
+    [500, "network-failure"],
+  ] as const)("classifies Ollama tags HTTP %i as %s", async (code, kind) => {
+    const strategy = ollama.strategies?.find(({ id }) => id === "ollama.api");
+    await expect(
+      strategy!.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname.endsWith("/web_search")
+              ? { status: 200, bodyText: "accepted" }
+              : json({}, code),
+          { OLLAMA_API_KEY: "api-key" },
+        ),
+      ),
+    ).rejects.toThrow(`${kind}:`);
+  });
+  it("rejects Ollama tags payloads without a models array", async () => {
+    const strategy = ollama.strategies?.find(({ id }) => id === "ollama.api");
+    await expect(
+      strategy!.fetchUsage(
+        context(
+          (request) =>
+            request.url.pathname.endsWith("/web_search")
+              ? { status: 400, bodyText: "accepted" }
+              : json({ models: "invalid" }),
+          { OLLAMA_API_KEY: "api-key" },
+        ),
+      ),
+    ).rejects.toThrow("parse-failure:");
   });
   it("preserves Windsurf session headers and daily/weekly response mapping", async () => {
     let request: Request | undefined;

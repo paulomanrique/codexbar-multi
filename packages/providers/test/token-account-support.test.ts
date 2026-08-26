@@ -91,6 +91,7 @@ describe("provider token account support inventory", () => {
       "manus",
       "mistral",
       "neuralwatt",
+      "ollama",
       "openai",
       "opencode",
       "opencodego",

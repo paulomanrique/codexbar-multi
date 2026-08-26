@@ -137,13 +137,61 @@ describe("first-party selected accounts from the token-account vault", () => {
   });
 
   it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["factory", "minimax", "ollama", "qoder"] as const) {
+    for (const providerId of ["factory", "minimax", "qoder"] as const) {
       await expect(
         resolve(config(providerId), providerId, {
           [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
         }),
       ).rejects.toMatchObject({ kind: "missing-credential" });
     }
+  });
+
+  it.each([
+    ["opaque-session", "__Secure-session=opaque-session"],
+    ["foo=bar", "__Secure-session=foo=bar"],
+    ["__secure-session=current", "__Secure-session=current"],
+    ["wos-session=workos; theme=dark", "wos-session=workos; theme=dark"],
+    [
+      "next-auth.session-token.0=chunk-zero; next-auth.session-token.1=chunk-one",
+      "next-auth.session-token.0=chunk-zero; next-auth.session-token.1=chunk-one",
+    ],
+    ["theme=dark; locale=en", "theme=dark; locale=en"],
+    [
+      "curl https://ollama.com -H 'Cookie: aid=aux; __Secure-session=curl-session'",
+      "aid=aux; __Secure-session=curl-session",
+    ],
+    [
+      "curl https://ollama.com --cookie '__Secure-session=option-session'",
+      "__Secure-session=option-session",
+    ],
+    [
+      "curl https://ollama.com -b'__Secure-session=short-session'",
+      "__Secure-session=short-session",
+    ],
+  ] as const)("normalizes a selected Ollama session from %s", async (material, expected) => {
+    const key = tokenAccountVaultKey("ollama", "account-0");
+    await expect(resolve(config("ollama"), "ollama", { [key]: material })).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        OLLAMA_COOKIE: expected,
+        OLLAMA_API_KEY: null,
+        OLLAMA_KEY: null,
+      },
+    });
+  });
+
+  it.each([
+    "",
+    "curl https://ollama.com/settings",
+    "opaque\r\nInjected: yes",
+    "opaque\u0000suffix",
+    "x".repeat(1024 * 1024),
+    `__Secure-session=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected Ollama material", async (material) => {
+    const key = tokenAccountVaultKey("ollama", "account-0");
+    await expect(resolve(config("ollama"), "ollama", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
   });
 
   it.each([

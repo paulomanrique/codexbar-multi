@@ -17,6 +17,7 @@ import {
 } from "@codexbar/providers/providers/antigravity";
 import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-code-cookie";
 import { manusSessionToken } from "@codexbar/providers/providers/manus";
+import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers/ollama";
 import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
 
@@ -538,6 +539,31 @@ const selectedStepFunAccount = (
   return Effect.succeed({ id: accountId, secureSettings: { STEPFUN_TOKEN: token } });
 };
 
+const selectedOllamaAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const rawBytes = new TextEncoder().encode(raw).byteLength;
+  const cookieHeader = normalizeOllamaTokenAccountHeader(raw);
+  if (
+    raw.includes("\u0000") ||
+    rawBytes > 1024 * 1024 ||
+    cookieHeader === undefined ||
+    cookieHeader.includes("\u0000") ||
+    new TextEncoder().encode(cookieHeader).byteLength > 1024 * 1024
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected Ollama account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: {
+      OLLAMA_COOKIE: cookieHeader,
+      OLLAMA_API_KEY: null,
+      OLLAMA_KEY: null,
+    },
+  });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -879,6 +905,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "opencodego") return selectedOpenCodeGoAccount(account.id, material);
       if (providerId === "manus") return selectedManusAccount(account.id, material);
       if (providerId === "stepfun") return selectedStepFunAccount(account.id, material);
+      if (providerId === "ollama") return selectedOllamaAccount(account.id, material);
       if (providerId === "antigravity") return selectedAntigravityAccount(account.id, material);
       return Effect.fail(
         selectedAccountFailure("Selected account provider mapper is not available."),
