@@ -59,7 +59,8 @@ export function discoverNodeCodexCredential(
       typeof source.tokens === "object" && source.tokens !== null && !Array.isArray(source.tokens)
         ? (source.tokens as Record<string, unknown>)
         : {};
-    const access = tokens.access_token ?? tokens.accessToken ?? source.OPENAI_API_KEY;
+    const apiKey = nonEmptyString(source.OPENAI_API_KEY);
+    const access = apiKey ?? tokens.access_token ?? tokens.accessToken;
     const idToken = tokens.id_token ?? tokens.idToken;
     const configuredAccount = tokens.account_id ?? tokens.accountId;
     const accessToken = nonEmptyString(access);
@@ -67,9 +68,11 @@ export function discoverNodeCodexCredential(
       source.personal_access_token ?? source.personalAccessToken,
     );
     const accountId =
-      nonEmptyString(configuredAccount) ??
-      accountIdFromJwt(typeof idToken === "string" ? idToken : undefined) ??
-      accountIdFromJwt(accessToken);
+      apiKey === undefined
+        ? (nonEmptyString(configuredAccount) ??
+          accountIdFromJwt(typeof idToken === "string" ? idToken : undefined) ??
+          accountIdFromJwt(accessToken))
+        : undefined;
     return {
       ...(accessToken === undefined ? {} : { accessToken }),
       ...(accountId === undefined ? {} : { accountId }),

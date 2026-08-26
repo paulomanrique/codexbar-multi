@@ -389,14 +389,17 @@ const selectedCodexAccount = (
     return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
   }
   const tokens = selectedCodexTokenBag(root);
-  const accessToken = selectedCodexString(tokens.access_token ?? tokens.accessToken);
+  const apiKey = selectedCodexString(root.OPENAI_API_KEY);
+  const accessToken = apiKey ?? selectedCodexString(tokens.access_token ?? tokens.accessToken);
   const personalAccessToken = selectedCodexString(
     root.personal_access_token ?? root.personalAccessToken,
   );
   const accountSetting =
-    selectedCodexString(tokens.account_id ?? tokens.accountId) ??
-    accountIdFromJwt(selectedCodexString(tokens.id_token ?? tokens.idToken)) ??
-    accountIdFromJwt(accessToken);
+    apiKey === undefined
+      ? (selectedCodexString(tokens.account_id ?? tokens.accountId) ??
+        accountIdFromJwt(selectedCodexString(tokens.id_token ?? tokens.idToken)) ??
+        accountIdFromJwt(accessToken))
+      : undefined;
   if (accessToken === undefined && personalAccessToken === undefined) {
     return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
   }

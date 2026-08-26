@@ -219,6 +219,29 @@ describe("first-party selected accounts from the token-account vault", () => {
     });
   });
 
+  it("matches Swift selected Codex API-key precedence over OAuth tokens", async () => {
+    const key = tokenAccountVaultKey("codex", "account-0");
+    await expect(
+      resolve(config("codex"), "codex", {
+        [key]: JSON.stringify({
+          OPENAI_API_KEY: "  sk-api-key  ",
+          tokens: {
+            access_token: "oauth-access",
+            id_token: jwt({ chatgpt_account_id: "oauth-account" }),
+            account_id: "oauth-account",
+          },
+        }),
+      }),
+    ).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        CODEX_ACCESS_TOKEN: "sk-api-key",
+        CODEX_PERSONAL_ACCESS_TOKEN: null,
+      },
+      plainSettings: { CODEX_ACCOUNT_ID: null },
+    });
+  });
+
   it.each([
     "",
     "could-be-any-legacy-format",

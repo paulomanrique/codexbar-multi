@@ -38,6 +38,22 @@ describe("Codex credential discovery", () => {
     });
   });
 
+  it("matches Swift auth.json API-key precedence over OAuth tokens", () => {
+    const credential = discoverCodexCredential({
+      environment: { CODEX_HOME: "/isolated/codex" },
+      read: () =>
+        JSON.stringify({
+          OPENAI_API_KEY: "  sk-api-key  ",
+          tokens: {
+            access_token: "oauth-access",
+            id_token: jwt({ chatgpt_account_id: "oauth-account" }),
+            account_id: "oauth-account",
+          },
+        }),
+    });
+    expect(credential).toEqual({ accessToken: "sk-api-key" });
+  });
+
   it("fails closed for malformed or unreadable credential files", () => {
     expect(
       discoverCodexCredential({
