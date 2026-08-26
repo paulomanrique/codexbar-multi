@@ -85,6 +85,7 @@ import {
   resolveNodeClaudeOAuthHistoryOwner,
   resolveNodeCodexLoginExecutable,
   runNodeCodexLogin,
+  verifyNodeCodexLoginExecutable,
   type NodeSqliteWorkerPersistence,
 } from "@codexbar/platform/node";
 import {
@@ -942,7 +943,14 @@ void desktopReady?.then(async () => {
     codexAccountLogin = new DesktopCodexAccountLoginController({
       cleanupStaleHomes: () => Effect.runPromise(cleanupStaleNodeCodexLoginHomes(codexLoginRoot)),
       login: async (signal) => {
-        const command = await resolveNodeCodexLoginExecutable(process.env);
+        const command = await resolveNodeCodexLoginExecutable(process.env, {
+          cancelled: () => signal.aborted,
+          verify: (candidate) =>
+            Effect.runPromise(
+              verifyNodeCodexLoginExecutable(candidate, processRunner, process.env),
+              { signal },
+            ),
+        });
         if (command === undefined) throw new Error("Codex login is unavailable");
         return Effect.runPromise(
           runNodeCodexLogin({

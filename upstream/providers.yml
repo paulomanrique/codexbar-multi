@@ -27,6 +27,8 @@ providers:
         - packages/platform/test/first-party-selected-account.test.ts
         - packages/platform/test/node-codex-home.test.ts
         - packages/platform/test/node-codex-login.test.ts
+        - apps/desktop/test/codex-account-login.test.ts
+        - apps/desktop/test/ipc-contract.test.ts
         - apps/desktop/test/preload-token-accounts.test.ts
         - apps/desktop/test/renderer-token-accounts.test.ts
         - apps/desktop/test/settings-view-model.test.ts
@@ -52,6 +54,8 @@ providers:
         - packages/core/src/config.ts
         - packages/contracts/src/config.ts
         - apps/desktop/src/preload/token-accounts-api.ts
+        - apps/desktop/src/main/codex-account-login.ts
+        - apps/desktop/src/ipc/api.ts
         - apps/desktop/src/main/token-account-removal.ts
         - apps/desktop/src/renderer/index.tsx
         - apps/desktop/src/renderer/settings-view-model.ts
@@ -68,6 +72,8 @@ providers:
         - packages/core/src/config.ts
         - packages/contracts/src/config.ts
         - apps/desktop/src/preload/token-accounts-api.ts
+        - apps/desktop/src/main/codex-account-login.ts
+        - apps/desktop/src/ipc/api.ts
         - apps/desktop/src/main/token-account-removal.ts
         - apps/desktop/src/renderer/index.tsx
         - apps/desktop/src/renderer/settings-view-model.ts
@@ -79,6 +85,8 @@ providers:
       - packages/platform/test/first-party-selected-account.test.ts
       - packages/platform/test/node-codex-home.test.ts
       - packages/platform/test/node-codex-login.test.ts
+      - apps/desktop/test/codex-account-login.test.ts
+      - apps/desktop/test/ipc-contract.test.ts
       - apps/desktop/test/preload-token-accounts.test.ts
       - apps/desktop/test/renderer-token-accounts.test.ts
       - apps/desktop/test/settings-view-model.test.ts

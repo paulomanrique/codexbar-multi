@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
-import { basename, delimiter, extname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  basename,
+  delimiter,
+  extname,
+  isAbsolute,
+  join,
+  posix as posixPath,
+  relative,
+  resolve,
+  win32 as win32Path,
+} from "node:path";
 import { Effect } from "effect";
 import { InfrastructureError, type ProcessRunnerService } from "@codexbar/core";
 import { parseNodeCodexAuthJson, type ParsedNodeCodexAuth } from "./node-codex-credential.ts";
@@ -56,6 +66,13 @@ export interface NodeCodexLoginOptions {
   readonly restrictDirectory?: (path: string) => Promise<void>;
 }
 
+export interface NodeCodexExecutableResolutionOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: NodeJS.Architecture;
+  readonly verify?: (command: string) => Promise<boolean>;
+  readonly cancelled?: () => boolean;
+}
+
 const loginError = (operation: string): InfrastructureError =>
   new InfrastructureError(
     operation,
@@ -72,21 +89,84 @@ const safeChild = (rootDirectory: string, childPath: string): boolean => {
   );
 };
 
-/** Resolves one concrete Codex executable before the isolated login starts. */
-export const resolveNodeCodexLoginExecutable = async (
+/** Lists only native executable locations; npm shell shims are never launched. */
+export const nodeCodexLoginExecutableCandidates = (
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,
-): Promise<string | undefined> => {
+  architecture: NodeJS.Architecture = process.arch,
+): ReadonlyArray<string> => {
+  const pathApi = platform === "win32" ? win32Path : posixPath;
+  const pathDelimiter = platform === "win32" ? ";" : delimiter;
   const explicit = environment.CODEX_CLI_PATH?.trim();
-  const names = platform === "win32" ? ["codex.exe"] : ["codex"];
-  const candidates =
-    explicit === undefined || explicit === ""
-      ? (environment.PATH ?? "")
-          .split(delimiter)
-          .filter((entry) => entry !== "")
-          .flatMap((entry) => names.map((name) => join(entry, name)))
-      : [explicit];
+  const pathRoots = (environment.PATH ?? "")
+    .split(pathDelimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  const candidates = explicit === undefined || explicit === "" ? [] : [explicit];
+  if (platform === "win32") {
+    const target =
+      architecture === "arm64"
+        ? { packageName: "codex-win32-arm64", triple: "aarch64-pc-windows-msvc" }
+        : architecture === "x64"
+          ? { packageName: "codex-win32-x64", triple: "x86_64-pc-windows-msvc" }
+          : undefined;
+    if (target !== undefined) {
+      const npmRoots = new Set([
+        ...(environment.APPDATA === undefined ? [] : [pathApi.join(environment.APPDATA, "npm")]),
+        ...pathRoots,
+      ]);
+      for (const npmRoot of npmRoots) {
+        const globalOpenAi = pathApi.join(npmRoot, "node_modules", "@openai");
+        for (const packageRoot of [
+          pathApi.join(globalOpenAi, "codex", "node_modules", "@openai", target.packageName),
+          pathApi.join(globalOpenAi, target.packageName),
+        ]) {
+          const vendorRoot = pathApi.join(packageRoot, "vendor", target.triple);
+          candidates.push(
+            pathApi.join(vendorRoot, "bin", "codex.exe"),
+            pathApi.join(vendorRoot, "codex", "codex.exe"),
+          );
+        }
+      }
+    }
+    if (environment.USERPROFILE !== undefined) {
+      candidates.push(
+        pathApi.join(
+          environment.USERPROFILE,
+          ".codex",
+          "packages",
+          "standalone",
+          "current",
+          "bin",
+          "codex.exe",
+        ),
+      );
+    }
+    if (environment.LOCALAPPDATA !== undefined) {
+      candidates.push(
+        pathApi.join(environment.LOCALAPPDATA, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
+      );
+    }
+    candidates.push(...pathRoots.map((entry) => pathApi.join(entry, "codex.exe")));
+  } else {
+    candidates.push(...pathRoots.map((entry) => pathApi.join(entry, "codex")));
+  }
+  return [...new Set(candidates)];
+};
+
+/** Resolves and optionally probes one concrete Codex executable before login. */
+export const resolveNodeCodexLoginExecutable = async (
+  environment: Readonly<Record<string, string | undefined>>,
+  options: NodeCodexExecutableResolutionOptions = {},
+): Promise<string | undefined> => {
+  const platform = options.platform ?? process.platform;
+  const candidates = nodeCodexLoginExecutableCandidates(
+    environment,
+    platform,
+    options.architecture ?? process.arch,
+  );
   for (const candidate of candidates) {
+    if (options.cancelled?.() === true) return undefined;
     if (!isAbsolute(candidate)) continue;
     try {
       const resolved = await realpath(candidate);
@@ -97,6 +177,8 @@ export const resolveNodeCodexLoginExecutable = async (
       } else {
         await access(resolved, constants.X_OK);
       }
+      if (options.verify !== undefined && !(await options.verify(resolved))) continue;
+      if (options.cancelled?.() === true) return undefined;
       return resolved;
     } catch {
       // Try the next host-owned candidate.
@@ -104,6 +186,29 @@ export const resolveNodeCodexLoginExecutable = async (
   }
   return undefined;
 };
+
+/** Executes only `--version` in the scrubbed host environment. */
+export const verifyNodeCodexLoginExecutable = (
+  command: string,
+  processRunner: ProcessRunnerService,
+  environment: Readonly<Record<string, string | undefined>>,
+): Effect.Effect<boolean> =>
+  processRunner
+    .run({
+      command,
+      args: ["--version"],
+      env: nodeCodexLoginBaseEnvironment(environment),
+      inheritEnvironment: false,
+      timeoutMs: 5_000,
+    })
+    .pipe(
+      Effect.map((result) => {
+        if (result.exitCode !== 0 || result.signal !== undefined) return false;
+        const output = new TextDecoder().decode(result.stdout).trim();
+        return /\bcodex(?:-cli)?\s+\d+\.\d+\.\d+\b/iu.test(output);
+      }),
+      Effect.orElseSucceed(() => false),
+    );
 
 const createPrivateLoginHome = (
   options: NodeCodexLoginOptions,

@@ -82,7 +82,8 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [ ] Add host-owned Codex account creation/login without credential material crossing renderer IPC.
       - [x] Add the isolated `codex login` host primitive plus marker-first vault publication and crash recovery.
       - [x] Wire the dedicated desktop controller, typed IPC/preload API, and cancellation without renderer credential material.
-      - [ ] Add the React account action and live Windows smoke for `codex login`.
+      - [x] Add the localized React account action with explicit start/cancel states.
+      - [ ] Complete a live Windows smoke for `codex login` with a native Codex CLI installation.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
 - [x] Add bounded desktop history/cost query/export APIs and build overview from persisted snapshots.

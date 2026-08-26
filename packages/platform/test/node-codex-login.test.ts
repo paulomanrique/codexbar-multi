@@ -1,14 +1,16 @@
 import { chmod, mkdtemp, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { Effect } from "effect";
 import { InfrastructureError, type ProcessRunnerService, type ProcessSpec } from "@codexbar/core";
 import {
   cleanupStaleNodeCodexLoginHomes,
+  nodeCodexLoginExecutableCandidates,
   nodeCodexLoginBaseEnvironment,
   resolveNodeCodexLoginExecutable,
   runNodeCodexLogin,
+  verifyNodeCodexLoginExecutable,
 } from "../src/node-codex-login.ts";
 
 const jwt = (payload: unknown): string =>
@@ -63,6 +65,119 @@ describe("Node Codex account login", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("discovers native Windows npm and standalone binaries without shell shims", () => {
+    const candidates = nodeCodexLoginExecutableCandidates(
+      {
+        PATH: "C:\\Users\\Person\\AppData\\Roaming\\npm;C:\\Tools",
+        APPDATA: "C:\\Users\\Person\\AppData\\Roaming",
+        USERPROFILE: "C:\\Users\\Person",
+        LOCALAPPDATA: "C:\\Users\\Person\\AppData\\Local",
+      },
+      "win32",
+      "x64",
+    );
+
+    expect(candidates).toContain("C:\\Tools\\codex.exe");
+    expect(candidates).toContain(
+      "C:\\Users\\Person\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe",
+    );
+    expect(candidates).toContain(
+      "C:\\Users\\Person\\.codex\\packages\\standalone\\current\\bin\\codex.exe",
+    );
+    expect(candidates).toContain(
+      "C:\\Users\\Person\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe",
+    );
+    expect(
+      candidates.indexOf(
+        "C:\\Users\\Person\\.codex\\packages\\standalone\\current\\bin\\codex.exe",
+      ),
+    ).toBeLessThan(candidates.indexOf("C:\\Tools\\codex.exe"));
+    expect(candidates.every((candidate) => !/\.(?:cmd|bat|ps1)$/iu.test(candidate))).toBe(true);
+  });
+
+  it("probes a candidate with a scrubbed bounded version command", async () => {
+    let observed: ProcessSpec | undefined;
+    const runner: ProcessRunnerService = {
+      run: (spec) => {
+        observed = spec;
+        return Effect.succeed({
+          exitCode: 0,
+          signal: undefined,
+          stdout: new Uint8Array(Buffer.from("codex-cli 1.2.3\n")),
+          stderr: new Uint8Array(),
+        });
+      },
+    };
+
+    await expect(
+      Effect.runPromise(
+        verifyNodeCodexLoginExecutable("/usr/bin/codex", runner, {
+          PATH: "/usr/bin",
+          OPENAI_API_KEY: "must-not-inherit",
+          NODE_OPTIONS: "--require=malicious.js",
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(observed).toEqual({
+      command: "/usr/bin/codex",
+      args: ["--version"],
+      env: { PATH: "/usr/bin" },
+      inheritEnvironment: false,
+      timeoutMs: 5_000,
+    });
+  });
+
+  it("skips a native candidate that fails the host probe", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+    const firstRoot = join(root, "first");
+    const secondRoot = join(root, "second");
+    await mkdir(firstRoot);
+    await mkdir(secondRoot);
+    const first = join(firstRoot, "codex");
+    const second = join(secondRoot, "codex");
+    await writeFile(first, "#!/bin/sh\nexit 0\n");
+    await writeFile(second, "#!/bin/sh\nexit 0\n");
+    await chmod(first, 0o700);
+    await chmod(second, 0o700);
+
+    await expect(
+      resolveNodeCodexLoginExecutable(
+        { PATH: `${firstRoot}${delimiter}${secondRoot}` },
+        { verify: async (candidate) => candidate === second },
+      ),
+    ).resolves.toBe(second);
+  });
+
+  it("stops candidate iteration when login is cancelled during a probe", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
+    const firstRoot = join(root, "first");
+    const secondRoot = join(root, "second");
+    await mkdir(firstRoot);
+    await mkdir(secondRoot);
+    for (const directory of [firstRoot, secondRoot]) {
+      const executable = join(directory, "codex");
+      await writeFile(executable, "#!/bin/sh\nexit 0\n");
+      await chmod(executable, 0o700);
+    }
+    let cancelled = false;
+    let probes = 0;
+
+    await expect(
+      resolveNodeCodexLoginExecutable(
+        { PATH: `${firstRoot}${delimiter}${secondRoot}` },
+        {
+          cancelled: () => cancelled,
+          verify: async () => {
+            probes += 1;
+            cancelled = true;
+            return false;
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+    expect(probes).toBe(1);
+  });
+
   it("reads a successful isolated login and removes the transient home", async () => {
     const root = await mkdtemp(join(tmpdir(), "codexbar-login-test-"));
     const idToken = jwt({
@@ -101,6 +216,7 @@ describe("Node Codex account login", () => {
 
     expect(observedHome).toBe(join(root, "operation-1"));
     expect(observedSpec?.inheritEnvironment).toBe(false);
+    expect(observedSpec?.args).toEqual(["login"]);
     expect(observedSpec?.env).toEqual({
       PATH: "/bin",
       HOME: "/home/person",
