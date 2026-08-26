@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type {
   CostUsageQueryResultDTO,
@@ -11,6 +11,7 @@ import type {
   UpdateSessionQuotaNotificationSettingsRequestDTO,
   SpendDashboardDTO,
   SpendOverviewDTO,
+  TokenAccountRosterDTO,
   UpdateProviderSettingsRequestDTO,
   LegacyImportExecutionResultDTO,
   LegacyImportInspectionResultDTO,
@@ -37,7 +38,11 @@ import {
 } from "./view-model.ts";
 import {
   isAvailableProviderSource,
+  optimisticTokenAccountRoster,
   sessionQuotaNotificationSettingsViewState,
+  tokenAccountDetail,
+  tokenAccountLabel,
+  tokenAccountSelectionViewState,
 } from "./settings-view-model.ts";
 import { SpendDashboard } from "./spend-dashboard.tsx";
 import "./styles.css";
@@ -350,6 +355,7 @@ function SettingsPanel({
   pending,
   error,
   onUpdate,
+  children,
 }: {
   readonly provider: DashboardProviderDTO;
   readonly settings: ProviderSettingsDTO | undefined;
@@ -366,6 +372,7 @@ function SettingsPanel({
   readonly pending: boolean;
   readonly error: string | undefined;
   readonly onUpdate: (request: UpdateProviderSettingsRequestDTO) => void;
+  readonly children?: ReactNode;
 }) {
   const providerId = settings?.provider ?? firstPartyProviderId(provider.id);
   const disabled = providerId === undefined || settings === undefined || pending;
@@ -412,6 +419,7 @@ function SettingsPanel({
           ))}
         </select>
       </label>
+      {children}
       {pending ? <p className="muted">{copy.refreshing}</p> : null}
       {error === undefined ? null : (
         <p className="error" role="alert">
@@ -437,6 +445,74 @@ function SettingsPanel({
         </div>
       </dl>
     </>
+  );
+}
+
+function TokenAccountSettings({
+  roster,
+  loading,
+  pending,
+  error,
+  copy,
+  onSelect,
+}: {
+  readonly roster: TokenAccountRosterDTO | undefined;
+  readonly loading: boolean;
+  readonly pending: boolean;
+  readonly error: string | undefined;
+  readonly copy: {
+    readonly title: string;
+    readonly account: string;
+    readonly empty: string;
+    readonly refreshing: string;
+  };
+  readonly onSelect: (accountId: string) => void;
+}) {
+  const state = tokenAccountSelectionViewState(roster, loading, pending, error);
+  const statusId = "codex-token-account-status";
+  return (
+    <section className="settings-token-accounts" aria-labelledby="codex-token-account-heading">
+      <h3 id="codex-token-account-heading">{copy.title}</h3>
+      {roster !== undefined && roster.accounts.length > 0 ? (
+        <label className="settings-token-account">
+          <span>{copy.account}</span>
+          <select
+            aria-describedby={state.status === "ready" ? undefined : statusId}
+            aria-label={copy.account}
+            disabled={state.disabled}
+            value={state.activeId}
+            onChange={(event) => {
+              if (event.target.value === state.activeId) return;
+              onSelect(event.target.value);
+            }}
+          >
+            {roster.accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {tokenAccountLabel(account, copy.account)}
+              </option>
+            ))}
+          </select>
+          {tokenAccountDetail(state.active) === undefined ? null : (
+            <small className="token-account-detail">{tokenAccountDetail(state.active)}</small>
+          )}
+        </label>
+      ) : null}
+      {state.status === "loading" || state.status === "pending" ? (
+        <p className="muted" id={statusId}>
+          {copy.refreshing}
+        </p>
+      ) : null}
+      {state.status === "empty" ? (
+        <p className="muted" id={statusId}>
+          {copy.empty}
+        </p>
+      ) : null}
+      {state.status === "error" ? (
+        <p className="error" id={statusId} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -596,6 +672,11 @@ function App() {
     readonly provider: string;
     readonly message: string;
   }>();
+  const [tokenAccountRoster, setTokenAccountRoster] = useState<TokenAccountRosterDTO>();
+  const [tokenAccountLoading, setTokenAccountLoading] = useState(false);
+  const [tokenAccountPending, setTokenAccountPending] = useState(false);
+  const [tokenAccountError, setTokenAccountError] = useState<string>();
+  const tokenAccountScope = useRef(0);
   const [savingSessionQuotaNotificationSettings, setSavingSessionQuotaNotificationSettings] =
     useState(false);
   const [sessionQuotaNotificationSettingsError, setSessionQuotaNotificationSettingsError] =
@@ -725,6 +806,29 @@ function App() {
     void loadSpend();
   }, []);
   useEffect(() => {
+    const scope = ++tokenAccountScope.current;
+    setTokenAccountRoster(undefined);
+    setTokenAccountError(undefined);
+    setTokenAccountPending(false);
+    if (selectedProviderFirstPartyId !== "codex") {
+      setTokenAccountLoading(false);
+      return;
+    }
+    setTokenAccountLoading(true);
+    void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+      (roster) => {
+        if (tokenAccountScope.current !== scope) return;
+        setTokenAccountRoster(roster);
+        setTokenAccountLoading(false);
+      },
+      () => {
+        if (tokenAccountScope.current !== scope) return;
+        setTokenAccountError(localization.upstream("Unavailable"));
+        setTokenAccountLoading(false);
+      },
+    );
+  }, [activityVersion, localization, selectedProviderFirstPartyId]);
+  useEffect(() => {
     if (selectedProviderFirstPartyId === undefined) {
       setHistory(undefined);
       setCosts(undefined);
@@ -790,6 +894,46 @@ function App() {
         }),
       )
       .finally(() => setSavingProviderId(undefined));
+  };
+  const selectTokenAccount = (accountId: string): void => {
+    const previous = tokenAccountRoster;
+    if (selectedProviderFirstPartyId !== "codex" || previous === undefined) return;
+    const optimistic = optimisticTokenAccountRoster(previous, accountId);
+    if (optimistic === undefined || optimistic.activeIndex === previous.activeIndex) return;
+    const scope = tokenAccountScope.current;
+    setTokenAccountRoster(optimistic);
+    setTokenAccountPending(true);
+    setTokenAccountError(undefined);
+    const selection = window.codexbar.selectTokenAccount({
+      provider: "codex",
+      accountId,
+      expectedRevision: previous.revision,
+    });
+    void selection
+      .then(
+        (roster) => {
+          if (tokenAccountScope.current !== scope) return;
+          setTokenAccountRoster(roster);
+          void loadOverview()
+            .then(() => setActivityVersion((version) => version + 1))
+            .catch(() => setError(localization.upstream("Unavailable")));
+        },
+        () => {
+          if (tokenAccountScope.current !== scope) return;
+          setTokenAccountRoster(previous);
+          setTokenAccountError(localization.upstream("Unavailable"));
+          void window.codexbar.listTokenAccounts({ provider: "codex" }).then(
+            (roster) => {
+              if (tokenAccountScope.current === scope) setTokenAccountRoster(roster);
+            },
+            () => undefined,
+          );
+        },
+      )
+      .finally(() => {
+        if (tokenAccountScope.current !== scope) return;
+        setTokenAccountPending(false);
+      });
   };
   const updateSessionQuotaNotificationSettings = (
     request: UpdateSessionQuotaNotificationSettingsRequestDTO,
@@ -879,6 +1023,9 @@ function App() {
     dailyEstimatedSpend: localization.upstream("Daily estimated spend"),
     stale: localization.upstream("stale data"),
     partial: localization.upstream("Partial estimate"),
+    savedAccounts: localization.upstream("Saved accounts"),
+    account: localization.upstream("Account"),
+    noSavedAccounts: localization.upstream("No saved accounts"),
   };
   const loginCopy = {
     waiting: localization.t("loginWaiting"),
@@ -1165,7 +1312,23 @@ function App() {
             }
             pending={savingProviderId === selectedProvider.id}
             onUpdate={updateProviderSettings}
-          />
+          >
+            {selectedProviderFirstPartyId === "codex" ? (
+              <TokenAccountSettings
+                copy={{
+                  title: copy.savedAccounts,
+                  account: copy.account,
+                  empty: copy.noSavedAccounts,
+                  refreshing: copy.refreshing,
+                }}
+                error={tokenAccountError}
+                loading={tokenAccountLoading}
+                pending={tokenAccountPending}
+                roster={tokenAccountRoster}
+                onSelect={selectTokenAccount}
+              />
+            ) : null}
+          </SettingsPanel>
         )}
       </section>
       <section

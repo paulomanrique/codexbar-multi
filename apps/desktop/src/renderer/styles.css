@@ -351,6 +351,43 @@ h2 {
   font: inherit;
   padding: 7px 8px;
 }
+.settings-token-accounts {
+  margin: 16px 0 4px;
+  padding-top: 14px;
+  border-top: 1px solid #202532;
+}
+.settings-token-accounts h3 {
+  margin: 0 0 8px;
+  color: #e5e7eb;
+  font-size: 13px;
+}
+.settings-token-account {
+  display: grid;
+  gap: 4px;
+  color: #d8dde8;
+}
+.settings-token-account select {
+  border: 1px solid #293040;
+  border-radius: 7px;
+  background: #11141b;
+  color: inherit;
+  font: inherit;
+  padding: 7px 8px;
+}
+.settings-token-account select:disabled {
+  color: #8b93a7;
+  cursor: wait;
+}
+.token-account-detail {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+select:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 2px;
+}
 .settings-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
