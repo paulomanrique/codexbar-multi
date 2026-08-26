@@ -25,13 +25,29 @@
       "tsTest": "packages/testkit/test/testkit.test.ts",
       "providers": ["qwencloud"],
       "status": "parity"
+    },
+    {
+      "id": "moonshot-balance",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Moonshot/balance-deficit.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["moonshot"],
+      "status": "parity"
+    },
+    {
+      "id": "moonshot-settings",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Moonshot/settings-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["moonshot"],
+      "status": "parity"
     }
   ],
   "entries": [
     {
       "id": "provider-response-fixtures",
       "pathGlobs": ["Tests/CodexBarTests/Fixtures/Providers/**/*"],
-      "observedCount": 16,
+      "observedCount": 18,
       "testGlobs": [
         "Tests/CodexBarTests/*Provider*Tests.swift",
         "Tests/CodexBarTests/ProviderQuotaFixtureContractTests.swift"

@@ -860,6 +860,7 @@ providers:
   - id: moonshot
     swiftGlobs:
       - Sources/CodexBar/Providers/Moonshot/**/*.swift
+      - Sources/CodexBarCore/Providers/Moonshot/**/*.swift
     tests:
       swiftGlobs:
         - Tests/CodexBarTests/*Moonshot*Tests.swift
@@ -867,8 +868,9 @@ providers:
       tsGlobs:
         - packages/providers/test/http-wave.test.ts
         - packages/providers/test/http-parity-wave-two.test.ts
+        - packages/testkit/test/testkit.test.ts
     fixtures:
-      - packages/providers/test/http-wave.test.ts
+      - Tests/CodexBarTests/Fixtures/Providers/Moonshot/*.json
     tsPaths:
       expected: [packages/providers/src/providers/moonshot.ts]
       real:
@@ -876,6 +878,7 @@ providers:
     tsTestGlobs:
       - packages/providers/test/http-wave.test.ts
       - packages/providers/test/http-parity-wave-two.test.ts
+      - packages/testkit/test/testkit.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

@@ -17,6 +17,8 @@ export const SWIFT_ORACLE_BASELINE_COMMIT = "453174fe13eebdf403cc0776268eb2b101f
 export const OFFLINE_SWIFT_ORACLE_CASES = [
   "snapshot-serialization",
   "qwencloud-flat-subscription",
+  "moonshot-balance",
+  "moonshot-settings",
 ] as const;
 export type OfflineSwiftOracleCase = (typeof OFFLINE_SWIFT_ORACLE_CASES)[number];
 

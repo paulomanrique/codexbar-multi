@@ -70,6 +70,7 @@ describe("HTTP provider wave fixtures", () => {
       context(
         {
           code: 0,
+          scode: "0x0",
           status: true,
           data: { available_balance: 49.58, voucher_balance: 50, cash_balance: 12.34 },
         },

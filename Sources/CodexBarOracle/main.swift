@@ -9,6 +9,8 @@ import Darwin
 private enum OracleCase: String {
     case snapshotSerialization = "snapshot-serialization"
     case qwenCloudFlatSubscription = "qwencloud-flat-subscription"
+    case moonshotBalance = "moonshot-balance"
+    case moonshotSettings = "moonshot-settings"
 
     var fixture: String {
         switch self {
@@ -16,6 +18,10 @@ private enum OracleCase: String {
             "Tests/CodexBarTests/Fixtures/usage-snapshot-current.json"
         case .qwenCloudFlatSubscription:
             "Tests/CodexBarTests/Fixtures/QwenCloud/flat_subscription_summary.json"
+        case .moonshotBalance:
+            "Tests/CodexBarTests/Fixtures/Providers/Moonshot/balance-deficit.json"
+        case .moonshotSettings:
+            "Tests/CodexBarTests/Fixtures/Providers/Moonshot/settings-cases.json"
         }
     }
 }
@@ -29,7 +35,7 @@ private enum OracleError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidInvocation:
-            "usage: CodexBarOracle <snapshot-serialization|qwencloud-flat-subscription>"
+            "usage: CodexBarOracle <snapshot-serialization|qwencloud-flat-subscription|moonshot-balance|moonshot-settings>"
         case .unsafeFixturePath:
             "oracle fixture path is unsafe"
         case .fixtureTooLarge:
@@ -41,6 +47,26 @@ private enum OracleError: LocalizedError {
 }
 
 private let maximumFixtureBytes = 1_024 * 1_024
+
+private struct MoonshotSettingsFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let environment: [String: String]
+        let requestedRegion: String
+    }
+
+    let cases: [Case]
+}
+
+private struct MoonshotSettingsResult: Encodable {
+    let id: String
+    let detectedRegion: String
+    let resolvedMarker: String?
+}
+
+private struct MoonshotSettingsResults: Encodable {
+    let cases: [MoonshotSettingsResult]
+}
 
 private func isSymlink(_ url: URL) throws -> Bool {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -101,6 +127,31 @@ private func run(case oracleCase: OracleCase, root: URL) throws -> Data {
             from: readFixture(root: root, relativePath: oracleCase.fixture),
             now: Date(timeIntervalSince1970: 1_700_000_000))
         return try encodeJSON(parsed.toUsageSnapshot())
+    case .moonshotBalance:
+        let parsed = try MoonshotUsageFetcher._parseSummaryForTesting(
+            readFixture(root: root, relativePath: oracleCase.fixture))
+        let deterministic = MoonshotUsageSummary(
+            availableBalance: parsed.availableBalance,
+            voucherBalance: parsed.voucherBalance,
+            cashBalance: parsed.cashBalance,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        return try encodeJSON(deterministic.toUsageSnapshot())
+    case .moonshotSettings:
+        let fixture = try JSONDecoder().decode(
+            MoonshotSettingsFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let results = try fixture.cases.map { entry in
+            guard let requestedRegion = MoonshotRegion(rawValue: entry.requestedRegion) else {
+                throw OracleError.invalidInvocation
+            }
+            return MoonshotSettingsResult(
+                id: entry.id,
+                detectedRegion: MoonshotSettingsReader.region(environment: entry.environment).rawValue,
+                resolvedMarker: MoonshotSettingsReader.apiKey(
+                    for: requestedRegion,
+                    environment: entry.environment))
+        }
+        return try encodeJSON(MoonshotSettingsResults(cases: results))
     }
 }
 

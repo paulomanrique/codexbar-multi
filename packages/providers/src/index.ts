@@ -195,7 +195,7 @@ export { longcat } from "./providers/longcat.ts";
 export { manus } from "./providers/manus.ts";
 export { mimo } from "./providers/mimo.ts";
 export { mistral } from "./providers/mistral.ts";
-export { moonshot } from "./providers/moonshot.ts";
+export { moonshot, resolveMoonshotAPIKey, resolveMoonshotRegion } from "./providers/moonshot.ts";
 export { minimax } from "./providers/minimax.ts";
 export { neuralwatt } from "./providers/neuralwatt.ts";
 export { notion } from "./providers/notion.ts";

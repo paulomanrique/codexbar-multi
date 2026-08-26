@@ -362,6 +362,7 @@ describe("Swift-derived HTTP provider parity wave two", () => {
     expect(requests[0]?.url.toString()).toBe("https://api.moonshot.cn/v1/users/me/balance");
     expect(requests[0]?.options).toMatchObject({
       headers: { Authorization: "Bearer fixture-key", Accept: "application/json" },
+      timeoutSeconds: 15,
     });
     expect(snapshot).toEqual({
       identity: { loginMethod: "Balance: $49.58 · $0.42 in deficit" },
@@ -378,6 +379,130 @@ describe("Swift-derived HTTP provider parity wave two", () => {
       ),
     ).rejects.toThrow("parse-failure:");
   });
+
+  it("matches Moonshot setting aliases, quote rules and region-bound config precedence", async () => {
+    const requests: Request[] = [];
+    await moonshot.fetchUsage(
+      context(
+        () =>
+          json({
+            code: 0,
+            data: { available_balance: 1, voucher_balance: 2, cash_balance: 3 },
+            scode: "0x0",
+            status: true,
+          }),
+        {
+          settings: {
+            MOONSHOT_API_KEY: "primary-token",
+            MOONSHOT_KEY: "fallback-token",
+            MOONSHOT_REGION: '"china"',
+            CODEXBAR_MOONSHOT_API_KEY: "'config-token'",
+            CODEXBAR_MOONSHOT_API_KEY_REGION: '"china"',
+          },
+          requests,
+        },
+      ),
+    );
+    expect(requests[0]?.url.hostname).toBe("api.moonshot.cn");
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer config-token" },
+    });
+
+    const swiftOrderedCleaning: Request[] = [];
+    await moonshot.fetchUsage(
+      context(
+        () =>
+          json({
+            code: 0,
+            data: { available_balance: 1, voucher_balance: 2, cash_balance: 3 },
+            scode: "0x0",
+            status: true,
+          }),
+        {
+          settings: { MOONSHOT_KEY: "'fallback-token'", MOONSHOT_REGION: ' "china" ' },
+          requests: swiftOrderedCleaning,
+        },
+      ),
+    );
+    expect(swiftOrderedCleaning[0]?.url.hostname).toBe("api.moonshot.ai");
+    expect(swiftOrderedCleaning[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer fallback-token" },
+    });
+
+    await expect(
+      moonshot.fetchUsage(
+        context(() => json({}), {
+          settings: {
+            CODEXBAR_MOONSHOT_API_KEY: "china-token",
+            CODEXBAR_MOONSHOT_API_KEY_REGION: "china",
+          },
+        }),
+      ),
+    ).rejects.toThrow("missing-credential:");
+  });
+
+  it("preserves Moonshot API error details and strict required numeric fields", async () => {
+    await expect(
+      moonshot.fetchUsage(
+        context(
+          () =>
+            json({
+              code: 401,
+              data: { available_balance: 0, voucher_balance: 0, cash_balance: 0 },
+              scode: "unauthorized",
+              status: false,
+            }),
+          { settings: { MOONSHOT_API_KEY: "fixture-key" } },
+        ),
+      ),
+    ).rejects.toThrow("api-failure: code 401, scode unauthorized");
+
+    await expect(
+      moonshot.fetchUsage(
+        context(
+          () =>
+            json({
+              code: 0,
+              data: { available_balance: "49.58", voucher_balance: 50, cash_balance: 12.34 },
+              scode: "0x0",
+              status: true,
+            }),
+          { settings: { MOONSHOT_API_KEY: "fixture-key" } },
+        ),
+      ),
+    ).rejects.toThrow("parse-failure:");
+  });
+
+  it.each([201, 401, 403, 429, 500])(
+    "matches Moonshot's exact HTTP 200 requirement for status %i without exposing the body",
+    async (statusCode) => {
+      await expect(
+        moonshot.fetchUsage(
+          context(
+            () => ({
+              status: statusCode,
+              headers: {},
+              bodyText: JSON.stringify({ secret: "must-not-appear" }),
+            }),
+            { settings: { MOONSHOT_API_KEY: "fixture-key" } },
+          ),
+        ),
+      ).rejects.toThrow(`api-failure: Moonshot API returned HTTP ${statusCode}.`);
+
+      await expect(
+        moonshot.fetchUsage(
+          context(
+            () => ({
+              status: statusCode,
+              headers: {},
+              bodyText: JSON.stringify({ secret: "must-not-appear" }),
+            }),
+            { settings: { MOONSHOT_API_KEY: "fixture-key" } },
+          ),
+        ),
+      ).rejects.not.toThrow("must-not-appear");
+    },
+  );
 
   it("matches DeepInfra prepaid balance, monthly cents and suspended detail", async () => {
     const requests: Request[] = [];

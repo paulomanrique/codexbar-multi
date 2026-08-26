@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "id": "primary-precedence",
+      "environment": {
+        "MOONSHOT_API_KEY": " primary-marker ",
+        "MOONSHOT_KEY": "fallback-marker"
+      },
+      "requestedRegion": "international"
+    },
+    {
+      "id": "quoted-fallback",
+      "environment": {
+        "MOONSHOT_KEY": "\"quoted-marker\""
+      },
+      "requestedRegion": "international"
+    },
+    {
+      "id": "region-bound-config",
+      "environment": {
+        "MOONSHOT_REGION": "china",
+        "CODEXBAR_MOONSHOT_API_KEY": "'config-marker'",
+        "CODEXBAR_MOONSHOT_API_KEY_REGION": "\"china\""
+      },
+      "requestedRegion": "china"
+    },
+    {
+      "id": "mismatched-config",
+      "environment": {
+        "CODEXBAR_MOONSHOT_API_KEY": "config-marker",
+        "CODEXBAR_MOONSHOT_API_KEY_REGION": "china"
+      },
+      "requestedRegion": "international"
+    },
+    {
+      "id": "mismatched-environment-region",
+      "environment": {
+        "MOONSHOT_API_KEY": "china-marker",
+        "MOONSHOT_REGION": "china"
+      },
+      "requestedRegion": "international"
+    },
+    {
+      "id": "quote-order-defaults-international",
+      "environment": {
+        "MOONSHOT_KEY": "'fallback-marker'",
+        "MOONSHOT_REGION": " \"china\" "
+      },
+      "requestedRegion": "international"
+    }
+  ]
+}

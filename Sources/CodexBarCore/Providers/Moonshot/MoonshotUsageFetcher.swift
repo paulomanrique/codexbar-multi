@@ -136,7 +136,8 @@ public struct MoonshotUsageFetcher: Sendable {
         region.balanceURL
     }
 
-    static func _parseSummaryForTesting(_ data: Data) throws -> MoonshotUsageSummary {
+    /// Fixture-only parser hook shared by XCTest and the bounded offline parity oracle.
+    public static func _parseSummaryForTesting(_ data: Data) throws -> MoonshotUsageSummary {
         try self.parseSummary(data: data)
     }
 

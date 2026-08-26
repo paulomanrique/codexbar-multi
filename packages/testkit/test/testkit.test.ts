@@ -1,10 +1,18 @@
 import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vite-plus/test";
-import { qwencloud } from "@codexbar/providers";
+import {
+  mapProviderSnapshot,
+  moonshot,
+  qwencloud,
+  resolveMoonshotAPIKey,
+  resolveMoonshotRegion,
+} from "@codexbar/providers";
 import {
   compareWithOracle,
   OFFLINE_SWIFT_ORACLE_CASES,
@@ -17,7 +25,10 @@ import {
   usageSnapshotParityEqual,
   validateFixtureManifest,
   type FixtureManifest,
+  type OracleExecutor,
 } from "../src/index.ts";
+
+const executeFile = promisify(execFile);
 
 const baselineCommit = "453174fe13eebdf403cc0776268eb2b101fd9553";
 type ProviderContext = Parameters<typeof qwencloud.fetchUsage>[0];
@@ -32,7 +43,10 @@ const providerResponse = (json: unknown): ProviderResponse => ({
   status: 200,
   bodyText: JSON.stringify(json),
 });
-const providerContext = (callback: (request: Request) => ProviderResponse): ProviderContext => {
+const providerContext = (
+  callback: (request: Request) => ProviderResponse,
+  settings: Readonly<Record<string, string>> = { QWEN_CLOUD_COOKIE: "sid=fixture" },
+): ProviderContext => {
   const request = async (
     method: "GET" | "POST",
     url: string,
@@ -48,8 +62,8 @@ const providerContext = (callback: (request: Request) => ProviderResponse): Prov
   const failure = (kind: string) => (message: string) => new Error(`${kind}: ${message}`);
   return {
     settings: {
-      get: (key) => (key === "QWEN_CLOUD_COOKIE" ? "sid=fixture" : undefined),
-      getSecret: (key) => (key === "QWEN_CLOUD_COOKIE" ? "sid=fixture" : undefined),
+      get: (key) => settings[key],
+      getSecret: (key) => settings[key],
     },
     http: {
       get: (url, options) => request("GET", url, options),
@@ -130,6 +144,59 @@ async function qwenCloudFlatSnapshot(): Promise<Record<string, unknown>> {
       return providerResponse(fixture);
     }),
   );
+}
+
+async function moonshotBalanceSnapshot() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Moonshot/balance-deficit.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as unknown;
+  const raw = await moonshot.fetchUsage(
+    providerContext(() => providerResponse(fixture), { MOONSHOT_API_KEY: "fixture-token" }),
+  );
+  return normalizeUsageSnapshotJson(
+    mapProviderSnapshot(raw, "moonshot", new Date("2023-11-14T22:13:20Z")),
+  );
+}
+
+async function moonshotSettingsResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Moonshot/settings-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly {
+      readonly id: string;
+      readonly environment: Readonly<Record<string, string>>;
+      readonly requestedRegion: string;
+    }[];
+  };
+  return {
+    cases: fixture.cases.map((entry) => {
+      if (entry.requestedRegion !== "international" && entry.requestedRegion !== "china") {
+        throw new Error("Moonshot settings fixture contains an invalid requested region");
+      }
+      const settings = {
+        get: (key: string) => entry.environment[key],
+        getSecret: (key: string) => entry.environment[key],
+      };
+      const resolvedMarker = resolveMoonshotAPIKey(settings, entry.requestedRegion);
+      return {
+        id: entry.id,
+        detectedRegion: resolveMoonshotRegion(settings),
+        ...(resolvedMarker === undefined ? {} : { resolvedMarker }),
+      };
+    }),
+  };
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -294,10 +361,127 @@ describe("parity testkit", () => {
     });
   });
 
+  it("proves the Moonshot deficit fixture reaches the shared TypeScript provider without network access", async () => {
+    await expect(moonshotBalanceSnapshot()).resolves.toMatchObject({
+      identity: {
+        providerID: "moonshot",
+        loginMethod: "Balance: $49.58 · $0.42 in deficit",
+      },
+    });
+  });
+
+  it("proves the Moonshot settings fixture reaches the shared resolver without credentials", async () => {
+    await expect(moonshotSettingsResults()).resolves.toEqual({
+      cases: [
+        {
+          id: "primary-precedence",
+          detectedRegion: "international",
+          resolvedMarker: "primary-marker",
+        },
+        {
+          id: "quoted-fallback",
+          detectedRegion: "international",
+          resolvedMarker: "quoted-marker",
+        },
+        { id: "region-bound-config", detectedRegion: "china", resolvedMarker: "config-marker" },
+        { id: "mismatched-config", detectedRegion: "international" },
+        { id: "mismatched-environment-region", detectedRegion: "china" },
+        {
+          id: "quote-order-defaults-international",
+          detectedRegion: "international",
+          resolvedMarker: "fallback-marker",
+        },
+      ],
+    });
+  });
+
   const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
   const builtOracle = join(repositoryRoot, ".build", "debug", "CodexBarOracle");
-  it.skipIf(!existsSync(builtOracle))(
-    "executes the prebuilt Swift snapshot and Qwen fixture oracle without credentials or network",
+  const builtOracleRunnable =
+    existsSync(builtOracle) &&
+    spawnSync(builtOracle, ["snapshot-serialization"], {
+      cwd: repositoryRoot,
+      env: {
+        PATH: "",
+        HOME: tmpdir(),
+        TMPDIR: tmpdir(),
+        LANG: "C",
+        LC_ALL: "C",
+        NO_PROXY: "*",
+        no_proxy: "*",
+        http_proxy: "",
+        https_proxy: "",
+        HTTP_PROXY: "",
+        HTTPS_PROXY: "",
+        CODEXBAR_ORACLE_ROOT: repositoryRoot,
+        CODEXBAR_ORACLE_NETWORK: "0",
+        CODEXBAR_ORACLE_CREDENTIALS: "0",
+      },
+      stdio: "ignore",
+    }).status === 0;
+  const oracleContainerImage = process.env.CODEXBAR_SWIFT_ORACLE_CONTAINER_IMAGE;
+  if (
+    oracleContainerImage !== undefined &&
+    !/^swift@sha256:[0-9a-f]{64}$/u.test(oracleContainerImage)
+  ) {
+    throw new Error("CODEXBAR_SWIFT_ORACLE_CONTAINER_IMAGE must pin an exact Swift image digest");
+  }
+  const containerOracleExecutor: OracleExecutor | undefined =
+    !builtOracleRunnable && oracleContainerImage !== undefined && existsSync(builtOracle)
+      ? async (request) => {
+          if (request.cwd === undefined) throw new Error("Container oracle requires a fixed cwd");
+          const executable = `/oracle/${relative(request.cwd, request.executable)}`;
+          const environment = {
+            ...request.environment,
+            CODEXBAR_ORACLE_ROOT: "/oracle",
+            HOME: "/tmp",
+            TMPDIR: "/tmp",
+          };
+          const args = [
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--pids-limit=64",
+            "--memory=512m",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=16m",
+            "-v",
+            `${request.cwd}:/oracle:ro`,
+            "-w",
+            "/oracle",
+          ];
+          for (const [key, value] of Object.entries(environment)) {
+            args.push("-e", `${key}=${value}`);
+          }
+          args.push(oracleContainerImage, executable, ...request.args);
+          const result = await executeFile("docker", args, {
+            timeout: request.timeoutMs,
+            maxBuffer: 1024 * 1024,
+            encoding: "utf8",
+          });
+          return { stdout: result.stdout, stderr: result.stderr };
+        }
+      : undefined;
+  const compareWithBuiltOracle = (
+    oracleCase: Parameters<typeof runOfflineSwiftOracleParity>[0]["oracleCase"],
+    typescript: unknown,
+  ) =>
+    containerOracleExecutor === undefined
+      ? runOfflineSwiftOracleParity(
+          { repositoryRoot, executable: builtOracle, oracleCase },
+          typescript,
+        )
+      : runOfflineSwiftOracleParity(
+          { repositoryRoot, executable: builtOracle, oracleCase },
+          typescript,
+          containerOracleExecutor,
+        );
+  it.skipIf(!builtOracleRunnable && containerOracleExecutor === undefined)(
+    "executes the prebuilt Swift snapshot, Qwen, and Moonshot fixture oracles without credentials or network",
     async () => {
       const snapshotFixture = JSON.parse(
         await readFile(
@@ -308,8 +492,8 @@ describe("parity testkit", () => {
           "utf8",
         ),
       ) as unknown;
-      const snapshot = await runOfflineSwiftOracleParity(
-        { repositoryRoot, executable: builtOracle, oracleCase: "snapshot-serialization" },
+      const snapshot = await compareWithBuiltOracle(
+        "snapshot-serialization",
         normalizeUsageSnapshotJson(snapshotFixture),
       );
       expect(snapshot.comparison.equal).toBe(true);
@@ -323,10 +507,7 @@ describe("parity testkit", () => {
         updatedAt: "2023-11-14T22:13:20Z",
         identity: { providerID: "qwencloud", ...objectValue(qwenProviderOutput.identity) },
       });
-      const qwen = await runOfflineSwiftOracleParity(
-        { repositoryRoot, executable: builtOracle, oracleCase: "qwencloud-flat-subscription" },
-        qwenSnapshot,
-      );
+      const qwen = await compareWithBuiltOracle("qwencloud-flat-subscription", qwenSnapshot);
       expect(qwen.comparison.equal).toBe(true);
       expect(qwen.comparison.oracle).toMatchObject({
         identity: { loginMethod: "TOKEN PLAN" },
@@ -334,6 +515,19 @@ describe("parity testkit", () => {
       expect(qwen.comparison.typescript).toMatchObject({
         identity: { loginMethod: "TOKEN PLAN" },
       });
+
+      const moonshotSnapshot = await moonshotBalanceSnapshot();
+      const moonshotResult = await compareWithBuiltOracle("moonshot-balance", moonshotSnapshot);
+      expect(moonshotResult.comparison.equal).toBe(true);
+      expect(moonshotResult.comparison.oracle).toMatchObject({
+        identity: { providerID: "moonshot", loginMethod: "Balance: $49.58 · $0.42 in deficit" },
+      });
+
+      const moonshotSettings = await compareWithBuiltOracle(
+        "moonshot-settings",
+        await moonshotSettingsResults(),
+      );
+      expect(moonshotSettings.comparison.equal).toBe(true);
     },
   );
 
