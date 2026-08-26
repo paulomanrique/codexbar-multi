@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { devin } from "../src/providers/devin.ts";
-import { factory } from "../src/providers/factory.ts";
+import { factory, factoryManualCredentials } from "../src/providers/factory.ts";
 import { kimi } from "../src/providers/kimi.ts";
 import type { ProviderContext, ProviderResponse } from "../src/types.ts";
 
@@ -91,6 +91,92 @@ describe("Swift-derived Devin, Factory and Kimi parity", () => {
       "auth.factory.ai",
       "api.factory.ai",
     ]);
+  });
+
+  it.each([
+    ["session=abc", { cookieHeader: "session=abc" }],
+    ["Cookie: session=abc", { cookieHeader: "session=abc" }],
+    ["curl https://app.factory.ai -H 'Cookie: session=abc'", { cookieHeader: "session=abc" }],
+    ["curl https://app.factory.ai --cookie 'session=abc'", { cookieHeader: "session=abc" }],
+    ["curl https://app.factory.ai -bsession=abc", { cookieHeader: "session=abc" }],
+    [
+      "access-token=header.payload.signature; session=abc",
+      {
+        cookieHeader: "access-token=header.payload.signature; session=abc",
+        bearerToken: "header.payload.signature",
+      },
+    ],
+    ["Authorization: Bearer factory-token", { bearerToken: "factory-token" }],
+    ["Bearer factory-token", { bearerToken: "factory-token" }],
+    ["header.payload.signature", { bearerToken: "header.payload.signature" }],
+    [
+      `Cookie: session=abc\nAuthorization: Bearer factory-token`,
+      { cookieHeader: "session=abc", bearerToken: "factory-token" },
+    ],
+  ] as const)("normalizes Factory manual credential %s", (raw, expected) => {
+    expect(factoryManualCredentials(raw)).toEqual(expected);
+  });
+
+  it.each([undefined, "", "short-token", "definitely not a cookie or bearer", "theme-only"])(
+    "rejects malformed Factory manual credential %s",
+    (raw) => {
+      expect(factoryManualCredentials(raw)).toBeUndefined();
+    },
+  );
+
+  it("retries a stale manual cookie with its separate bearer token", async () => {
+    const requests: Request[] = [];
+    const snapshot = await factory.fetchUsage(
+      context(
+        (request) => {
+          if (request.url.pathname === "/api/app/auth/me") {
+            const headers = request.options?.headers as
+              | Readonly<Record<string, string>>
+              | undefined;
+            if (headers?.Cookie) return response({}, 401);
+            return response({ userProfile: { id: "selected-user" } });
+          }
+          if (request.url.pathname === "/api/billing/limits") return response({}, 404);
+          return response({
+            usage: {
+              standard: { userTokens: 10, totalAllowance: 100 },
+              premium: { userTokens: 20, totalAllowance: 100 },
+            },
+          });
+        },
+        {
+          FACTORY_COOKIE_HEADER:
+            "Cookie: session=stale\nAuthorization: Bearer factory-access-token",
+        },
+        "",
+        requests,
+      ),
+    );
+    expect(snapshot).toMatchObject({
+      primary: { usedPercent: 10 },
+      secondary: { usedPercent: 20 },
+    });
+    expect(requests.map((request) => request.url.hostname)).toEqual([
+      "app.factory.ai",
+      "auth.factory.ai",
+      "api.factory.ai",
+      "api.factory.ai",
+      "api.factory.ai",
+      "api.factory.ai",
+    ]);
+    for (const request of requests.slice(0, 3)) {
+      expect(request.options?.headers).toMatchObject({
+        Cookie: "session=stale",
+        Authorization: "Bearer factory-access-token",
+      });
+    }
+    for (const request of requests.slice(3)) {
+      const headers = request.options?.headers as Readonly<Record<string, string>> | undefined;
+      expect(headers).toMatchObject({
+        Authorization: "Bearer factory-access-token",
+      });
+      expect(headers?.Cookie).toBeUndefined();
+    }
   });
 
   it("normalizes Devin organization paths and returns daily, weekly and overage windows", async () => {

@@ -17,6 +17,7 @@ import {
 } from "@codexbar/providers/providers/antigravity";
 import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-code-cookie";
 import { manusSessionToken } from "@codexbar/providers/providers/manus";
+import { canonicalFactoryManualCredential } from "@codexbar/providers/providers/factory";
 import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers/ollama";
 import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
 import type { FirstPartySelectedAccount } from "./first-party-runtime.ts";
@@ -564,6 +565,42 @@ const selectedOllamaAccount = (
   });
 };
 
+const selectedFactoryAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const rawBytes = new TextEncoder().encode(raw).byteLength;
+  const credential = canonicalFactoryManualCredential(raw);
+  const normalizedLines = raw.replaceAll("\r\n", "\n");
+  const lines = normalizedLines
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const lineBreaksAreSafe = !normalizedLines.includes("\r");
+  const recognizedHeaderLines =
+    lines.length <= 1 ||
+    (lines.length === 2 &&
+      lines.every((line) => /^(?:cookie\s*:|authorization\s*:\s*bearer\b)/iu.test(line)));
+  if (
+    raw.includes("\u0000") ||
+    rawBytes > 1024 * 1024 ||
+    !lineBreaksAreSafe ||
+    !recognizedHeaderLines ||
+    credential === undefined ||
+    credential.includes("\u0000") ||
+    new TextEncoder().encode(credential).byteLength > 1024 * 1024
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected Factory account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: {
+      FACTORY_COOKIE_HEADER: credential,
+      FACTORY_API_KEY: null,
+    },
+  });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -906,6 +943,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "manus") return selectedManusAccount(account.id, material);
       if (providerId === "stepfun") return selectedStepFunAccount(account.id, material);
       if (providerId === "ollama") return selectedOllamaAccount(account.id, material);
+      if (providerId === "factory") return selectedFactoryAccount(account.id, material);
       if (providerId === "antigravity") return selectedAntigravityAccount(account.id, material);
       return Effect.fail(
         selectedAccountFailure("Selected account provider mapper is not available."),

@@ -396,8 +396,10 @@ const addSecretRedactions = (
 ): void => {
   if (secret === undefined || secret === "") return;
   redactionValues.add(secret);
+  const bearer = /(?:authorization\s*:\s*)?bearer\s+([A-Za-z0-9._~+/=-]+)/iu.exec(secret)?.[1];
+  if (bearer !== undefined) redactionValues.add(bearer);
   if (!setting.toUpperCase().includes("COOKIE")) return;
-  addCookieComponentRedactions(redactionValues, secret);
+  for (const line of secret.split(/[\r\n]+/u)) addCookieComponentRedactions(redactionValues, line);
 };
 
 const text = (body: Uint8Array): string => {
@@ -1015,6 +1017,18 @@ const selectedStrategyAllowed = (
       strategy.id === "ollama.web"
     );
   }
+  if (providerId === "factory") {
+    const credential = ownSetting(selectedAccount.secureSettings, "FACTORY_COOKIE_HEADER");
+    const apiKey = ownSetting(selectedAccount.secureSettings, "FACTORY_API_KEY");
+    return (
+      credential.present &&
+      Boolean(credential.value?.trim()) &&
+      apiKey.present &&
+      apiKey.value === undefined &&
+      (context.sourceMode === "auto" || context.sourceMode === "web") &&
+      strategy.id === "factory.web"
+    );
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";
@@ -1234,7 +1248,7 @@ const executeProvider = (
         if (authSuppressed && auth?.type !== "provider-managed") {
           withoutHeader(headers, "Authorization");
         }
-        if (auth !== undefined && !authSuppressed) {
+        if (auth !== undefined && auth.type !== "provider-managed" && !authSuppressed) {
           const secretName = managementAuthSecret ?? auth.secret;
           const secret = secrets.get(secretName) ?? settings.get(secretName);
           if (secret === undefined || secret === "")

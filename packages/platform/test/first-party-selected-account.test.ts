@@ -137,13 +137,51 @@ describe("first-party selected accounts from the token-account vault", () => {
   });
 
   it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["factory", "minimax", "qoder"] as const) {
+    for (const providerId of ["minimax", "qoder"] as const) {
       await expect(
         resolve(config(providerId), providerId, {
           [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
         }),
       ).rejects.toMatchObject({ kind: "missing-credential" });
     }
+  });
+
+  it.each([
+    ["session=selected", "Cookie: session=selected"],
+    [
+      "access-token=selected.jwt.token; session=selected",
+      "Cookie: access-token=selected.jwt.token; session=selected\nAuthorization: Bearer selected.jwt.token",
+    ],
+    ["Authorization: Bearer selected-token", "Authorization: Bearer selected-token"],
+    [
+      "Cookie: session=selected\nAuthorization: Bearer selected-token",
+      "Cookie: session=selected\nAuthorization: Bearer selected-token",
+    ],
+  ] as const)("normalizes a selected Factory credential from %s", async (material, expected) => {
+    const key = tokenAccountVaultKey("factory", "account-0");
+    await expect(resolve(config("factory"), "factory", { [key]: material })).resolves.toEqual({
+      id: "account-0",
+      secureSettings: {
+        FACTORY_COOKIE_HEADER: expected,
+        FACTORY_API_KEY: null,
+      },
+    });
+  });
+
+  it.each([
+    "",
+    "definitely not a cookie or bearer",
+    "short-token",
+    "Cookie: session=value\nInjected: yes",
+    "Cookie: session=value\rInjected: yes",
+    "session=value\u0000suffix",
+    "x".repeat(1024 * 1024),
+    `session=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected Factory material", async (material) => {
+    const key = tokenAccountVaultKey("factory", "account-0");
+    await expect(resolve(config("factory"), "factory", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
   });
 
   it.each([

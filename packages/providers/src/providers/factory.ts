@@ -12,6 +12,101 @@ type Dict = Record<string, unknown>;
 type Headers = Record<string, string>;
 
 const trim = (value: string | undefined): string | undefined => value?.trim() || undefined;
+
+const cookieHeaderPatterns = [
+  /-H\s*'Cookie:\s*([^']+)'/iu,
+  /-H\s*"Cookie:\s*([^"]+)"/iu,
+  /\bcookie:\s*'([^']+)'/iu,
+  /\bcookie:\s*"([^"]+)"/iu,
+  /\bcookie:\s*([^\r\n]+)/iu,
+  /(?:^|\s)(?:--cookie|-b)\s*'([^']+)'/iu,
+  /(?:^|\s)(?:--cookie|-b)\s*"([^"]+)"/iu,
+  /(?:^|\s)-b([^\s=]+=[^\s]+)/iu,
+  /(?:^|\s)(?:--cookie|-b)\s+([^\s]+)/iu,
+] as const;
+
+const stripWrappingQuotes = (raw: string): string => {
+  if (
+    raw.length >= 2 &&
+    ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+  ) {
+    return raw.slice(1, -1);
+  }
+  return raw;
+};
+
+const normalizeFactoryCookieHeader = (raw: string): string | undefined => {
+  let value = raw.trim();
+  if (value === "") return undefined;
+  for (const pattern of cookieHeaderPatterns) {
+    const match = pattern.exec(value);
+    if (match?.[1]?.trim()) {
+      value = match[1].trim();
+      break;
+    }
+  }
+  if (value.toLowerCase().startsWith("cookie:")) value = value.slice("cookie:".length).trim();
+  value = stripWrappingQuotes(value).trim();
+  return value || undefined;
+};
+
+const factoryCookiePairs = (raw: string): readonly { name: string; value: string }[] => {
+  const normalized = normalizeFactoryCookieHeader(raw);
+  if (!normalized) return [];
+  const pairs: { name: string; value: string }[] = [];
+  for (const part of normalized.split(";")) {
+    const value = part.trim();
+    const separator = value.indexOf("=");
+    if (separator < 0) continue;
+    const name = value.slice(0, separator).trim();
+    if (name === "") continue;
+    pairs.push({ name, value: value.slice(separator + 1).trim() });
+  }
+  return pairs;
+};
+
+export interface FactoryManualCredentials {
+  readonly cookieHeader?: string;
+  readonly bearerToken?: string;
+}
+
+export const factoryManualCredentials = (
+  raw: string | undefined,
+): FactoryManualCredentials | undefined => {
+  const value = trim(raw);
+  if (!value) return undefined;
+  const normalizedCookieHeader = normalizeFactoryCookieHeader(value);
+  const pairs = normalizedCookieHeader ? factoryCookiePairs(normalizedCookieHeader) : [];
+  const cookieHeader = pairs.length > 0 ? normalizedCookieHeader : undefined;
+  const authorization = /(?:authorization\s*:\s*)?bearer\s+([A-Za-z0-9._~+/=-]+)/iu.exec(value);
+  const accessToken = pairs.find((pair) => pair.name === "access-token")?.value.trim();
+  const bareBearer =
+    !value.includes("=") &&
+    !value.includes(";") &&
+    !value.includes(" ") &&
+    !value.includes("\n") &&
+    (value.length >= 40 || value.split(".").length >= 3)
+      ? value
+      : undefined;
+  const bearerToken = authorization?.[1]?.trim() || accessToken || bareBearer;
+  if (!cookieHeader && !bearerToken) return undefined;
+  return {
+    ...(cookieHeader ? { cookieHeader } : {}),
+    ...(bearerToken ? { bearerToken } : {}),
+  };
+};
+
+export const canonicalFactoryManualCredential = (raw: string): string | undefined => {
+  const credentials = factoryManualCredentials(raw);
+  if (!credentials) return undefined;
+  return [
+    credentials.cookieHeader ? `Cookie: ${credentials.cookieHeader}` : undefined,
+    credentials.bearerToken ? `Authorization: Bearer ${credentials.bearerToken}` : undefined,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join("\n");
+};
+
 const token = (raw: string | undefined): string | undefined => {
   let value = trim(raw);
   if (!value) return undefined;
@@ -19,11 +114,6 @@ const token = (raw: string | undefined): string | undefined => {
   if (header?.[1]) value = header[1].trim();
   value = value.replace(/^bearer\s+/iu, "").trim();
   return value || undefined;
-};
-const cookie = (raw: string | undefined): string | undefined => {
-  const value = trim(raw);
-  if (!value || /^authorization\s*:/iu.test(value)) return undefined;
-  return value.replace(/^cookie\s*:\s*/iu, "").trim() || undefined;
 };
 const title = (value: string | undefined): string | undefined =>
   value?.trim().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -164,11 +254,65 @@ const rateLimitSnapshot = (ctx: ProviderContext, auth: Dict, billing: Dict) => {
   };
 };
 
+const legacyUsageSnapshot = (ctx: ProviderContext, auth: Dict, usageRoot: Dict) => {
+  const usage = objectAt(usageRoot, "usage") ?? usageRoot;
+  const standard = objectAt(usage, "standard") ?? {};
+  const premium = objectAt(usage, "premium") ?? {};
+  const periodEnd = date(usage.endDate, ctx);
+  const window = (entry: Dict) => {
+    const used = numberAt(entry, "userTokens") ?? 0;
+    const allowance = numberAt(entry, "totalAllowance") ?? 0;
+    return {
+      usedPercent: ratio(used, allowance, entry.usedRatio),
+      ...(periodEnd
+        ? { resetsAt: periodEnd, resetDescription: resetDescription(ctx, periodEnd) }
+        : {}),
+    };
+  };
+  return { primary: window(standard), secondary: window(premium), identity: identity(auth) };
+};
+
+const fetchFactorySnapshot = async (
+  ctx: ProviderContext,
+  base: string,
+  cookieHeader: string | undefined,
+  bearerToken: string | undefined,
+) => {
+  const headers = requestHeaders(cookieHeader, bearerToken);
+  const authResponse = await get(ctx, `${base}/api/app/auth/me`, { headers });
+  const auth = responseObject(ctx, authResponse, "auth");
+  try {
+    const billingResponse = await get(ctx, "https://api.factory.ai/api/billing/limits", {
+      headers,
+    });
+    if (billingResponse.status === 200) {
+      const billing = object(json(ctx, "Factory", billingResponse));
+      if (billing?.usesTokenRateLimitsBilling === true) {
+        const snapshot = rateLimitSnapshot(ctx, auth, billing);
+        if (snapshot) return snapshot;
+      }
+    }
+  } catch {
+    // Billing limits are best-effort in the Swift oracle. Legacy usage remains
+    // authoritative when this optional endpoint times out or changes shape.
+  }
+  const query = new URLSearchParams({ useCache: "true" });
+  const id = userID(auth);
+  if (id) query.set("userId", id);
+  const usageResponse = await get(ctx, `${base}/api/organization/subscription/usage?${query}`, {
+    headers,
+  });
+  return legacyUsageSnapshot(ctx, auth, responseObject(ctx, usageResponse, "usage"));
+};
+
 const definition: ProviderDefinition = {
   id: "factory",
   name: "Factory",
   endpoints: ["https://app.factory.ai", "https://auth.factory.ai", "https://api.factory.ai"],
-  auth: { type: "bearer", secret: "FACTORY_API_KEY" },
+  // Factory accepts either API-key bearer auth or a browser session (and may
+  // need Cookie plus Authorization together), so the provider owns the exact
+  // header combination instead of the host's single-secret auth injector.
+  auth: { type: "provider-managed", secret: "FACTORY_API_KEY" },
   settings: [
     { key: "FACTORY_API_KEY", title: "API key", type: "secure" },
     { key: "FACTORY_COOKIE_HEADER", title: "Cookie or Authorization header", type: "secure" },
@@ -181,64 +325,56 @@ const definition: ProviderDefinition = {
     );
     const manual =
       ctx.settings.getSecret("FACTORY_COOKIE_HEADER") ?? ctx.settings.get("FACTORY_COOKIE_HEADER");
-    const cookieHeader = cookie(manual) ?? trim(await ctx.browser.cookieHeader("app.factory.ai"));
-    const bearerToken = apiKey ?? token(manual);
+    const manualPresent = trim(manual) !== undefined;
+    const manualCredentials = factoryManualCredentials(manual);
+    if (manualPresent && manualCredentials === undefined) {
+      throw ctx.fail.missingCredential("Factory manual credential is invalid.");
+    }
+    const browserCookie =
+      manualCredentials === undefined && apiKey === undefined
+        ? trim(await ctx.browser.cookieHeader("app.factory.ai"))
+        : undefined;
+    const browserCredentials = factoryManualCredentials(browserCookie);
+    const cookieHeader = manualCredentials?.cookieHeader ?? browserCredentials?.cookieHeader;
+    const bearerToken = manualCredentials?.bearerToken ?? apiKey ?? browserCredentials?.bearerToken;
     if (!cookieHeader && !bearerToken)
       throw ctx.fail.missingCredential("Factory API key or browser session is not configured.");
-    const bases = ["https://api.factory.ai", "https://app.factory.ai", "https://auth.factory.ai"];
+    const bases = cookieHeader
+      ? ["https://app.factory.ai", "https://auth.factory.ai", "https://api.factory.ai"]
+      : ["https://api.factory.ai", "https://app.factory.ai"];
     let lastError: Error | undefined;
+    let preferredAuthError: Error | undefined;
     for (const base of bases) {
       try {
-        const authResponse = await get(ctx, `${base}/api/app/auth/me`, {
-          headers: requestHeaders(cookieHeader, bearerToken),
-        });
-        const auth = responseObject(ctx, authResponse, "auth");
-        const billingResponse = await get(ctx, "https://api.factory.ai/api/billing/limits", {
-          headers: requestHeaders(cookieHeader, bearerToken),
-        });
-        if (billingResponse.status === 200) {
-          const billing = object(json(ctx, "Factory", billingResponse));
-          if (billing?.usesTokenRateLimitsBilling === true) {
-            const snapshot = rateLimitSnapshot(ctx, auth, billing);
-            if (snapshot) return snapshot;
-          }
-        }
-        const query = new URLSearchParams({ useCache: "true" });
-        const id = userID(auth);
-        if (id) query.set("userId", id);
-        const usageResponse = await get(
-          ctx,
-          `${base}/api/organization/subscription/usage?${query}`,
-          {
-            headers: requestHeaders(cookieHeader, bearerToken),
-          },
-        );
-        const usageRoot = responseObject(ctx, usageResponse, "usage");
-        const usage = objectAt(usageRoot, "usage") ?? usageRoot;
-        const standard = objectAt(usage, "standard") ?? {};
-        const premium = objectAt(usage, "premium") ?? {};
-        const periodEnd = date(usage.endDate, ctx);
-        const window = (entry: Dict) => {
-          const used = numberAt(entry, "userTokens") ?? 0;
-          const allowance = numberAt(entry, "totalAllowance") ?? 0;
-          return {
-            usedPercent: ratio(used, allowance, entry.usedRatio),
-            ...(periodEnd
-              ? { resetsAt: periodEnd, resetDescription: resetDescription(ctx, periodEnd) }
-              : {}),
-          };
-        };
-        return { primary: window(standard), secondary: window(premium), identity: identity(auth) };
+        return await fetchFactorySnapshot(ctx, base, cookieHeader, bearerToken);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (
           String(lastError.message).startsWith("authentication-expired:") ||
           String(lastError.message).startsWith("permission-denied:")
-        )
-          throw lastError;
+        ) {
+          preferredAuthError ??= lastError;
+        }
       }
     }
-    throw lastError ?? ctx.fail.apiFailure("Factory usage endpoints did not succeed.");
+    if (cookieHeader && bearerToken) {
+      try {
+        return await fetchFactorySnapshot(ctx, "https://api.factory.ai", undefined, bearerToken);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (
+          String(lastError.message).startsWith("authentication-expired:") ||
+          String(lastError.message).startsWith("permission-denied:")
+        ) {
+          preferredAuthError ??= lastError;
+        }
+      }
+    }
+    throw (
+      preferredAuthError ??
+      lastError ??
+      ctx.fail.apiFailure("Factory usage endpoints did not succeed.")
+    );
   },
 };
 

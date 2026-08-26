@@ -83,6 +83,7 @@ describe("provider token account support inventory", () => {
       "deepinfra",
       "deepseek",
       "elevenlabs",
+      "factory",
       "grok",
       "groq",
       "ibmbob",
