@@ -1,0 +1,82 @@
+{
+  "cases": [
+    {
+      "id": "mixed-currency",
+      "payload": {
+        "lineItems": [
+          { "totalCost": { "currencyCode": "USD", "nanos": 100000000, "units": "1" } },
+          { "totalCost": { "currencyCode": "EUR", "nanos": 900000000, "units": "9" } },
+          { "totalCost": { "currencyCode": "USD", "nanos": 250000000, "units": "0" } }
+        ],
+        "usageBuckets": []
+      }
+    },
+    {
+      "id": "empty-lines",
+      "payload": { "lineItems": [], "usageBuckets": [] }
+    },
+    {
+      "id": "missing-lines",
+      "payload": { "usageBuckets": [] }
+    },
+    {
+      "id": "ignored-incomplete-lines",
+      "payload": {
+        "lineItems": [
+          {},
+          { "totalCost": { "currencyCode": "  ", "nanos": 0, "units": "1" } },
+          { "totalCost": { "currencyCode": "USD", "nanos": 0, "units": "not-a-number" } },
+          { "totalCost": { "currencyCode": "USD", "nanos": 500000000, "units": "0" } }
+        ]
+      }
+    },
+    {
+      "id": "invalid-root",
+      "payload": [{ "lineItems": [] }]
+    },
+    {
+      "id": "invalid-line-items",
+      "payload": { "lineItems": {} }
+    },
+    {
+      "id": "invalid-total-cost",
+      "payload": { "lineItems": [{ "totalCost": "invalid" }] }
+    },
+    {
+      "id": "numeric-units",
+      "payload": {
+        "lineItems": [{ "totalCost": { "currencyCode": "USD", "nanos": 0, "units": 1 } }]
+      }
+    },
+    {
+      "id": "string-nanos",
+      "payload": {
+        "lineItems": [{ "totalCost": { "currencyCode": "USD", "nanos": "1", "units": "0" } }]
+      }
+    },
+    {
+      "id": "invalid-known-line-field",
+      "payload": { "lineItems": [{ "category": 1 }] }
+    },
+    {
+      "id": "invalid-usage-buckets",
+      "payload": { "lineItems": [], "usageBuckets": "invalid" }
+    },
+    {
+      "id": "invalid-bucket-lines",
+      "payload": { "lineItems": [], "usageBuckets": [{ "lineItems": "invalid" }] }
+    },
+    {
+      "id": "invalid-unit-amount",
+      "payload": { "lineItems": [{ "unitAmount": "invalid" }] }
+    },
+    {
+      "id": "invalid-bucket-start",
+      "payload": { "lineItems": [], "usageBuckets": [{ "bucketStartTime": 1 }] }
+    },
+    {
+      "id": "invalid-bucket-object",
+      "payload": { "lineItems": [], "usageBuckets": ["invalid"] }
+    }
+  ]
+}

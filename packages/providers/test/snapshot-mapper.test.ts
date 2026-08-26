@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { InvalidProviderSnapshot, mapProviderSnapshot } from "../src/snapshot-mapper.ts";
+import {
+  InvalidProviderSnapshot,
+  mapFirstPartyProviderSnapshot,
+  mapProviderSnapshot,
+} from "../src/snapshot-mapper.ts";
 
 const now = new Date("2026-08-19T12:00:00Z");
 
@@ -44,6 +48,33 @@ describe("upstream plugin snapshot mapper", () => {
     expect(() =>
       mapProviderSnapshot({ extraWindows: Array.from({ length: 65 }, () => ({})) }, "openai", now),
     ).toThrow("extraWindows exceeds 64 entries");
+  });
+
+  it("allows only an explicitly marked empty first-party snapshot", () => {
+    expect(
+      mapFirstPartyProviderSnapshot(
+        { emptySnapshot: true },
+        { id: "fireworks", allowEmptySnapshot: true },
+        now,
+      ),
+    ).toEqual({
+      details: [],
+      updatedAt: "2026-08-19T12:00:00.000Z",
+      dataConfidence: "unknown",
+    });
+    expect(() => mapProviderSnapshot({ emptySnapshot: true }, "fireworks", now)).toThrow(
+      InvalidProviderSnapshot,
+    );
+    expect(() =>
+      mapFirstPartyProviderSnapshot({ emptySnapshot: true }, { id: "openai" }, now),
+    ).toThrow(InvalidProviderSnapshot);
+    expect(() =>
+      mapFirstPartyProviderSnapshot(
+        { emptySnapshot: true, primary: { usedPercent: 0 } },
+        { id: "fireworks", allowEmptySnapshot: true },
+        now,
+      ),
+    ).toThrow("cannot accompany snapshot data");
   });
 
   it("rejects invalid currency, date and detail chart shapes", () => {

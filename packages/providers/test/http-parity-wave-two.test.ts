@@ -2,7 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { deepinfra } from "../src/providers/deepinfra.ts";
 import { deepseek } from "../src/providers/deepseek.ts";
-import { fireworks } from "../src/providers/fireworks.ts";
+import {
+  fireworks,
+  InvalidFireworksSummary,
+  parseFireworksSummary,
+  resolveFireworksAccountSlug,
+  resolveFireworksAPIKey,
+} from "../src/providers/fireworks.ts";
 import { groq } from "../src/providers/groq.ts";
 import { moonshot } from "../src/providers/moonshot.ts";
 import type { ProviderContext, ProviderResponse } from "../src/types.ts";
@@ -132,106 +138,156 @@ describe("Swift-derived HTTP provider parity wave two", () => {
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url.pathname).toBe("/v1/accounts/x0mh0x/billing/summary");
-    expect(requests[0]?.url.searchParams.get("startTime")).toBe("2026-07-21T12:00:00.000Z");
-    expect(requests[0]?.url.searchParams.get("endTime")).toBe("2026-08-20T12:00:00.000Z");
+    expect(requests[0]?.url.href).toBe(
+      "https://api.fireworks.ai/v1/accounts/x0mh0x/billing/summary?startTime=2026-07-21T12:00:00Z&endTime=2026-08-20T12:00:00Z",
+    );
     expect(requests[0]?.options).toMatchObject({
       headers: { Authorization: "Bearer fixture-key", Accept: "application/json" },
+      timeoutSeconds: 15,
     });
     expect(snapshot).toEqual({
       cost: { used: 1.525548296, limit: 0, currency: "USD", period: "Last 30 days" },
-      identity: {},
     });
   });
 
-  it("discovers one Fireworks account across paginated account pages", async () => {
-    const requests: Request[] = [];
-    const snapshot = await fireworks.fetchUsage(
-      context(
-        (request) => {
-          if (request.url.pathname === "/v1/accounts") {
-            if (request.url.searchParams.get("pageToken") === "page-2") {
-              return json({ accounts: [{ name: "accounts/discovered-team" }] });
-            }
-            return json({ accounts: [{ name: "accounts/invalid slug" }], nextPageToken: "page-2" });
-          }
-          expect(request.url.pathname).toBe("/v1/accounts/discovered-team/billing/summary");
-          return json({
-            lineItems: [{ totalCost: { currencyCode: "USD", units: "2", nanos: 250_000_000 } }],
-          });
-        },
-        { settings: { FIREWORKS_API_KEY: "fixture-key" }, requests },
-      ),
-    );
-
-    expect(requests.map(({ url }) => `${url.pathname}${url.search}`)).toEqual([
-      "/v1/accounts",
-      "/v1/accounts?pageToken=page-2",
-      "/v1/accounts/discovered-team/billing/summary?startTime=2026-07-21T12%3A00%3A00.000Z&endTime=2026-08-20T12%3A00%3A00.000Z",
-    ]);
-    expect(snapshot).toEqual({
-      cost: { used: 2.25, limit: 0, currency: "USD", period: "Last 30 days" },
-      identity: {},
+  it("matches Fireworks alias precedence, quote cleaning and blank fallthrough", () => {
+    const settings = (values: Readonly<Record<string, string>>) => ({
+      get: (key: string) => values[key],
+      getSecret: (key: string) => values[key],
     });
-  });
-
-  it("verifies an explicit Fireworks slug after an empty summary and rejects unknown accounts", async () => {
-    const requests: Request[] = [];
-    await expect(
-      fireworks.fetchUsage(
-        context(
-          (request) => {
-            if (request.url.pathname === "/v1/accounts/explicit-slug/billing/summary") {
-              return json({ lineItems: [] });
-            }
-            return json({ accounts: [{ name: "accounts/different-slug" }] });
-          },
-          {
-            settings: { FIREWORKS_API_KEY: "fixture-key", FIREWORKS_ACCOUNT_SLUG: "explicit-slug" },
-            requests,
-          },
-        ),
-      ),
-    ).rejects.toThrow("Fireworks account slug 'explicit-slug' not found");
-    expect(requests.map(({ url }) => url.pathname)).toEqual([
-      "/v1/accounts/explicit-slug/billing/summary",
-      "/v1/accounts",
-    ]);
-  });
-
-  it("reports zero and multiple visible Fireworks accounts when the slug is omitted", async () => {
-    await expect(
-      fireworks.fetchUsage(
-        context(() => json({ accounts: [] }), { settings: { FIREWORKS_API_KEY: "fixture-key" } }),
-      ),
-    ).rejects.toThrow("No Fireworks accounts are visible");
-
-    await expect(
-      fireworks.fetchUsage(
-        context(() => json({ accounts: [{ name: "accounts/zeta" }, { name: "accounts/alpha" }] }), {
-          settings: { FIREWORKS_API_KEY: "fixture-key" },
+    expect(
+      resolveFireworksAPIKey(
+        settings({
+          CODEXBAR_FIREWORKS_API_KEY: "  ",
+          FIREWORKS_API_KEY: '"  primary  "',
+          FIREWORKS_KEY: "legacy",
         }),
       ),
-    ).rejects.toThrow("alpha, zeta");
+    ).toBe("primary");
+    expect(
+      resolveFireworksAPIKey(settings({ FIREWORKS_API_KEY: "''", FIREWORKS_KEY: "legacy" })),
+    ).toBe("legacy");
+    expect(
+      resolveFireworksAccountSlug(
+        settings({
+          CODEXBAR_FIREWORKS_ACCOUNT_SLUG: "''",
+          FIREWORKS_ACCOUNT_SLUG: " ' account-1 ' ",
+        }),
+      ),
+    ).toBe("account-1");
   });
 
-  it("classifies Fireworks authentication and availability failures like the Swift fetcher", async () => {
-    for (const [responseStatus, expectedKind] of [
-      [401, "authentication-expired"],
-      [403, "authentication-expired"],
-      [429, "rate-limited"],
-      [500, "provider-unavailable"],
-    ] as const) {
+  it("requires an explicit safe Fireworks account slug without making a discovery request", async () => {
+    const missingRequests: Request[] = [];
+    await expect(
+      fireworks.fetchUsage(
+        context(() => json({}), {
+          settings: { FIREWORKS_API_KEY: "fixture-key" },
+          requests: missingRequests,
+        }),
+      ),
+    ).rejects.toThrow("missing-credential: Missing Fireworks account slug");
+    expect(missingRequests).toEqual([]);
+
+    for (const slug of [
+      ".",
+      "..",
+      "sp ace",
+      "has/slash",
+      "has?query",
+      "has#fragment",
+      "percent%2F",
+      "coléon",
+    ]) {
+      const requests: Request[] = [];
       await expect(
         fireworks.fetchUsage(
+          context(() => json({}), {
+            settings: { FIREWORKS_API_KEY: "fixture-key", FIREWORKS_ACCOUNT_SLUG: slug },
+            requests,
+          }),
+        ),
+      ).rejects.toThrow(
+        `missing-credential: Invalid Fireworks account slug '${slug}'. Please double-check the account slug in Settings.`,
+      );
+      expect(requests).toEqual([]);
+    }
+  });
+
+  it("strictly validates Fireworks known fields and preserves an explicit empty snapshot", () => {
+    expect(parseFireworksSummary({ lineItems: [], usageBuckets: [] })).toEqual({
+      emptySnapshot: true,
+    });
+    expect(
+      parseFireworksSummary({
+        lineItems: [
+          {},
+          { totalCost: { currencyCode: "  ", nanos: 0, units: "1" } },
+          { totalCost: { currencyCode: "USD", nanos: 0, units: "not-a-number" } },
+          { totalCost: { currencyCode: "USD", nanos: 500_000_000, units: "0" } },
+        ],
+      }),
+    ).toEqual({ cost: { used: 0.5, limit: 0, currency: "USD", period: "Last 30 days" } });
+    for (const payload of [
+      [],
+      { lineItems: {} },
+      { lineItems: [{ totalCost: "invalid" }] },
+      { lineItems: [{ category: 1 }] },
+      { usageBuckets: "invalid" },
+      { usageBuckets: [{ lineItems: "invalid" }] },
+    ]) {
+      expect(() => parseFireworksSummary(payload)).toThrow(InvalidFireworksSummary);
+    }
+  });
+
+  it("classifies every Fireworks non-200 status like the Swift fetcher without exposing its body", async () => {
+    for (const [responseStatus, expectedMessage] of [
+      [
+        401,
+        "authentication-expired: Fireworks rejected the API key. Create a new key at app.fireworks.ai and update Settings.",
+      ],
+      [
+        403,
+        "authentication-expired: Fireworks rejected the API key. Create a new key at app.fireworks.ai and update Settings.",
+      ],
+      [429, "rate-limited: Fireworks rate limit exceeded. Usage will refresh on the next cycle."],
+      [201, "api-failure: Fireworks billing API returned HTTP 201."],
+      [404, "api-failure: Fireworks billing API returned HTTP 404."],
+      [500, "api-failure: Fireworks billing API returned HTTP 500."],
+    ] as const) {
+      const error = await fireworks
+        .fetchUsage(
           context(() => json({ error: "secret-ish provider body" }, responseStatus), {
             settings: {
               FIREWORKS_API_KEY: "fixture-key",
               FIREWORKS_ACCOUNT_SLUG: "fixture-account",
             },
           }),
-        ),
-      ).rejects.toThrow(expectedKind);
+        )
+        .catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(expectedMessage);
     }
+  });
+
+  it("classifies Fireworks transport and invalid-JSON failures without fallback", async () => {
+    const settings = {
+      FIREWORKS_API_KEY: "fixture-key",
+      FIREWORKS_ACCOUNT_SLUG: "fixture-account",
+    };
+    await expect(
+      fireworks.fetchUsage(
+        context(
+          () => {
+            throw new Error("socket closed");
+          },
+          { settings },
+        ),
+      ),
+    ).rejects.toThrow("network-failure: socket closed");
+    await expect(
+      fireworks.fetchUsage(context(() => ({ status: 200, bodyText: "{" }), { settings })),
+    ).rejects.toThrow("parse-failure: Fireworks response was not valid JSON.");
   });
 
   it("matches Groq Prometheus query paths, mixed scalar values and rate windows", async () => {

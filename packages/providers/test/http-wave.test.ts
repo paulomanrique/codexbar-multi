@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { mapProviderSnapshot } from "../src/snapshot-mapper.ts";
+import { mapFirstPartyProviderSnapshot } from "../src/snapshot-mapper.ts";
 import { fireworks } from "../src/providers/fireworks.ts";
 import { moonshot } from "../src/providers/moonshot.ts";
 import type { ProviderContext } from "../src/types.ts";
@@ -57,7 +57,11 @@ describe("HTTP provider wave fixtures", () => {
       ),
     );
     expect(
-      mapProviderSnapshot(snapshot, "fireworks", new Date("2026-08-19T00:00:00Z")).providerCost,
+      mapFirstPartyProviderSnapshot(
+        snapshot,
+        fireworks.descriptor,
+        new Date("2026-08-19T00:00:00Z"),
+      ).providerCost,
     ).toMatchObject({
       used: 3.5,
       currencyCode: "USD",

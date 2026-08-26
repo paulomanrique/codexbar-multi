@@ -1,4 +1,5 @@
 import type { ProviderInstanceId, UsageSnapshot } from "@codexbar/contracts";
+import type { ProviderDescriptor } from "./types.ts";
 
 const MAXIMUM_STRING_BYTES = 256;
 const MAXIMUM_EXTRA_WINDOWS = 64;
@@ -253,11 +254,12 @@ function mapIdentity(root: JsonObject, providerId: ProviderInstanceId) {
  * Maps the upstream first-party JS/plugin snapshot shape into the public DTO.
  * This is a direct TS port of the bounded portions of ProviderPluginSnapshotMapper.swift.
  */
-export function mapProviderSnapshot(
+const mapProviderSnapshotWithPolicy = (
   value: unknown,
   providerId: ProviderInstanceId,
   now: Date,
-): UsageSnapshot {
+  allowEmptySnapshot: boolean,
+): UsageSnapshot => {
   const root = object(value, "fetchUsage result");
   if (!Number.isFinite(now.getTime())) throw new InvalidProviderSnapshot("now must be valid");
   const updatedAt = now.toISOString();
@@ -280,18 +282,25 @@ export function mapProviderSnapshot(
       identity.accountOrganization !== undefined ||
       identity.loginMethod !== undefined ||
       identity.accountId !== undefined);
-  if (
+  const isEmpty =
     primary === undefined &&
     secondary === undefined &&
     tertiary === undefined &&
     (extraRateWindows === undefined || extraRateWindows.length === 0) &&
     providerCost === undefined &&
     details.length === 0 &&
-    !hasIdentity
-  ) {
+    !hasIdentity;
+  const emptySnapshotMarker = root.emptySnapshot;
+  if (emptySnapshotMarker !== undefined && emptySnapshotMarker !== true) {
+    throw new InvalidProviderSnapshot("emptySnapshot must be true when present");
+  }
+  if (isEmpty && !(allowEmptySnapshot && emptySnapshotMarker === true)) {
     throw new InvalidProviderSnapshot(
       "snapshot must contain at least one rate window, cost, detail section, or identity field",
     );
+  }
+  if (!isEmpty && emptySnapshotMarker === true) {
+    throw new InvalidProviderSnapshot("emptySnapshot cannot accompany snapshot data");
   }
   return {
     ...(primary === undefined ? {} : { primary }),
@@ -314,4 +323,30 @@ export function mapProviderSnapshot(
     ...(identity === undefined ? {} : { identity }),
     dataConfidence: dataConfidence as UsageSnapshot["dataConfidence"],
   };
+};
+
+/** Untrusted/plugin entrypoint. Empty snapshots are always rejected. */
+export function mapProviderSnapshot(
+  value: unknown,
+  providerId: ProviderInstanceId,
+  now: Date,
+): UsageSnapshot {
+  return mapProviderSnapshotWithPolicy(value, providerId, now, false);
+}
+
+/**
+ * Trusted first-party entrypoint. Only a statically registered descriptor may opt into the
+ * explicit empty marker; plugin call sites deliberately keep using `mapProviderSnapshot`.
+ */
+export function mapFirstPartyProviderSnapshot(
+  value: unknown,
+  descriptor: Pick<ProviderDescriptor, "id" | "allowEmptySnapshot">,
+  now: Date,
+): UsageSnapshot {
+  return mapProviderSnapshotWithPolicy(
+    value,
+    descriptor.id,
+    now,
+    descriptor.allowEmptySnapshot === true,
+  );
 }

@@ -7,9 +7,17 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  fireworks,
+  InvalidFireworksAccountSlug,
+  InvalidFireworksSummary,
+  mapFirstPartyProviderSnapshot,
   mapProviderSnapshot,
   moonshot,
+  parseFireworksSummary,
   qwencloud,
+  resolveFireworksAccountSlug,
+  resolveFireworksAPIKey,
+  resolveFireworksSummaryURL,
   resolveMoonshotAPIKey,
   resolveMoonshotRegion,
 } from "@codexbar/providers";
@@ -199,6 +207,107 @@ async function moonshotSettingsResults() {
   };
 }
 
+async function fireworksSummaryResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Fireworks/summary-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly { readonly id: string; readonly payload: unknown }[];
+  };
+  const now = new Date("2023-11-14T22:13:20Z");
+  return {
+    cases: fixture.cases.map((entry) => {
+      try {
+        const raw = parseFireworksSummary(entry.payload);
+        const snapshot = normalizeUsageSnapshotJson(
+          mapFirstPartyProviderSnapshot(raw, fireworks.descriptor, now),
+        );
+        return { id: entry.id, snapshot };
+      } catch (error) {
+        if (error instanceof InvalidFireworksSummary) {
+          return { id: entry.id, error: "parse-failure" };
+        }
+        throw error;
+      }
+    }),
+  };
+}
+
+async function fireworksSettingsResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Fireworks/settings-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly {
+      readonly id: string;
+      readonly environment: Readonly<Record<string, string>>;
+    }[];
+  };
+  return {
+    cases: fixture.cases.map((entry) => {
+      const settings = {
+        get: (key: string) => entry.environment[key],
+        getSecret: (key: string) => entry.environment[key],
+      };
+      const resolvedMarker = resolveFireworksAPIKey(settings);
+      const accountSlug = resolveFireworksAccountSlug(settings);
+      return {
+        id: entry.id,
+        ...(resolvedMarker === undefined ? {} : { resolvedMarker }),
+        ...(accountSlug === undefined ? {} : { accountSlug }),
+      };
+    }),
+  };
+}
+
+async function fireworksRequestResults() {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../Tests/CodexBarTests/Fixtures/Providers/Fireworks/request-cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as {
+    readonly cases: readonly {
+      readonly id: string;
+      readonly accountSlug: string;
+      readonly startTimeMillis?: number;
+      readonly endTimeMillis?: number;
+    }[];
+  };
+  return {
+    cases: fixture.cases.map((entry) => {
+      try {
+        return {
+          id: entry.id,
+          url: resolveFireworksSummaryURL(
+            entry.accountSlug,
+            entry.startTimeMillis === undefined ? undefined : new Date(entry.startTimeMillis),
+            entry.endTimeMillis === undefined ? undefined : new Date(entry.endTimeMillis),
+          ),
+        };
+      } catch (error) {
+        if (error instanceof InvalidFireworksAccountSlug) {
+          return { id: entry.id, error: "invalid-account-slug" };
+        }
+        throw error;
+      }
+    }),
+  };
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -383,7 +492,17 @@ describe("parity testkit", () => {
           detectedRegion: "international",
           resolvedMarker: "quoted-marker",
         },
+        {
+          id: "padded-quoted-environment-key",
+          detectedRegion: "international",
+          resolvedMarker: "padded-marker",
+        },
         { id: "region-bound-config", detectedRegion: "china", resolvedMarker: "config-marker" },
+        {
+          id: "padded-quoted-config-key-preserves-quotes",
+          detectedRegion: "china",
+          resolvedMarker: "'config-marker'",
+        },
         { id: "mismatched-config", detectedRegion: "international" },
         { id: "mismatched-environment-region", detectedRegion: "china" },
         {
@@ -393,6 +512,37 @@ describe("parity testkit", () => {
         },
       ],
     });
+  });
+
+  it("proves the Fireworks fixtures reach the strict parser, settings and URL helpers offline", async () => {
+    const summary = await fireworksSummaryResults();
+    expect(summary.cases).toHaveLength(15);
+    expect(summary.cases[0]).toMatchObject({
+      id: "mixed-currency",
+      snapshot: { providerCost: { used: 1.35, currencyCode: "USD" } },
+    });
+    expect(summary.cases.filter((entry) => "error" in entry)).toHaveLength(11);
+
+    await expect(fireworksSettingsResults()).resolves.toEqual({
+      cases: [
+        { id: "config-precedence", resolvedMarker: "config-marker", accountSlug: "config-slug" },
+        { id: "legacy-key", resolvedMarker: "legacy-marker", accountSlug: "legacy-slug" },
+        { id: "quoted-and-padded", resolvedMarker: "quoted-marker", accountSlug: "quoted-slug" },
+        {
+          id: "blank-config-falls-through",
+          resolvedMarker: "environment-marker",
+          accountSlug: "environment-slug",
+        },
+        { id: "blank-primary-falls-to-legacy", resolvedMarker: "fallback-marker" },
+        { id: "missing" },
+      ],
+    });
+    const requests = await fireworksRequestResults();
+    expect(requests.cases[0]).toEqual({
+      id: "epoch-window",
+      url: "https://api.fireworks.ai/v1/accounts/x0mh0x/billing/summary?startTime=1970-01-01T00:00:00Z&endTime=1970-01-02T00:00:00Z",
+    });
+    expect(requests.cases.filter((entry) => "error" in entry)).toHaveLength(9);
   });
 
   const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -481,7 +631,7 @@ describe("parity testkit", () => {
           containerOracleExecutor,
         );
   it.skipIf(!builtOracleRunnable && containerOracleExecutor === undefined)(
-    "executes the prebuilt Swift snapshot, Qwen, and Moonshot fixture oracles without credentials or network",
+    "executes every prebuilt fixture oracle without credentials or network",
     async () => {
       const snapshotFixture = JSON.parse(
         await readFile(
@@ -528,6 +678,15 @@ describe("parity testkit", () => {
         await moonshotSettingsResults(),
       );
       expect(moonshotSettings.comparison.equal).toBe(true);
+
+      for (const [oracleCase, typescript] of [
+        ["fireworks-summary", await fireworksSummaryResults()],
+        ["fireworks-settings", await fireworksSettingsResults()],
+        ["fireworks-request", await fireworksRequestResults()],
+      ] as const) {
+        const result = await compareWithBuiltOracle(oracleCase, typescript);
+        expect(result.comparison.equal).toBe(true);
+      }
     },
   );
 

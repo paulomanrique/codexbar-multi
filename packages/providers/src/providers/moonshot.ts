@@ -10,7 +10,7 @@ import { get, json, object } from "./_http.ts";
 type MoonshotRegion = "international" | "china";
 type MoonshotSettings = ProviderContext["settings"];
 
-const cleanSetting = (raw: string | undefined): string | undefined => {
+const cleanRawSetting = (raw: string | undefined): string | undefined => {
   if (raw === undefined) return undefined;
   let value = raw;
   if (
@@ -24,8 +24,14 @@ const cleanSetting = (raw: string | undefined): string | undefined => {
   return value === "" ? undefined : value;
 };
 
-const setting = (settings: MoonshotSettings, key: string): string | undefined =>
-  cleanSetting(settings.getSecret(key)) ?? cleanSetting(settings.get(key));
+const cleanEnvironmentAPIKey = (raw: string | undefined): string | undefined =>
+  raw === undefined ? undefined : cleanRawSetting(raw.trim());
+
+const setting = (
+  settings: MoonshotSettings,
+  key: string,
+  clean: (raw: string | undefined) => string | undefined = cleanRawSetting,
+): string | undefined => clean(settings.getSecret(key)) ?? clean(settings.get(key));
 
 export const resolveMoonshotRegion = (settings: MoonshotSettings): MoonshotRegion =>
   setting(settings, "MOONSHOT_REGION")?.toLowerCase() === "china" ? "china" : "international";
@@ -40,7 +46,10 @@ export const resolveMoonshotAPIKey = (
     if (configured !== undefined) return configured;
   }
   if (resolveMoonshotRegion(settings) !== selectedRegion) return undefined;
-  return setting(settings, "MOONSHOT_API_KEY") ?? setting(settings, "MOONSHOT_KEY");
+  return (
+    setting(settings, "MOONSHOT_API_KEY", cleanEnvironmentAPIKey) ??
+    setting(settings, "MOONSHOT_KEY", cleanEnvironmentAPIKey)
+  );
 };
 
 const finiteNumber = (value: unknown): number | undefined =>

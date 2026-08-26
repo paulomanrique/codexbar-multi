@@ -117,7 +117,10 @@ struct FireworksUsageFetcherTests {
     func `malformed account slugs fail with a config error instead of misrouting`() {
         // A slug with reserved/invalid URL characters must surface as a config error
         // (never widen the path, inject a query, or crash on URL construction).
-        for badSlug in ["sp ace", "has/slash", "has?query", "has#fragment", "percent%2F", "col\u{00e9}on"] {
+        let badSlugs = [
+            "", ".", "..", "sp ace", "has/slash", "has?query", "has#fragment", "percent%2F", "col\u{00e9}on",
+        ]
+        for badSlug in badSlugs {
             #expect(throws: FireworksUsageError.invalidAccountSlug(badSlug)) {
                 _ = try FireworksUsageFetcher.resolveSummaryURL(accountSlug: badSlug)
             }

@@ -154,7 +154,11 @@ public struct FireworksUsageFetcher: Sendable {
         startTime: Date? = nil,
         endTime: Date? = nil) throws -> URL
     {
-        guard accountSlug.rangeOfCharacter(from: self.accountSlugAllowedCharacters.inverted) == nil else {
+        guard !accountSlug.isEmpty,
+              accountSlug != ".",
+              accountSlug != "..",
+              accountSlug.rangeOfCharacter(from: self.accountSlugAllowedCharacters.inverted) == nil
+        else {
             throw FireworksUsageError.invalidAccountSlug(accountSlug)
         }
         guard let components = URLComponents(
@@ -177,7 +181,11 @@ public struct FireworksUsageFetcher: Sendable {
         return url
     }
 
-    static func _parseSummaryForTesting(_ data: Data, now: Date = Date()) throws -> FireworksUsageSummary {
+    /// Fixture-only parser hook shared by XCTest and the bounded offline parity oracle.
+    public static func _parseSummaryForTesting(
+        _ data: Data,
+        now: Date = Date()) throws -> FireworksUsageSummary
+    {
         try self.parseSummary(data: data, now: now)
     }
 

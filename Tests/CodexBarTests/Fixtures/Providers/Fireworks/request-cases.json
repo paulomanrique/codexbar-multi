@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "id": "epoch-window",
+      "accountSlug": "x0mh0x",
+      "startTimeMillis": 0,
+      "endTimeMillis": 86400000
+    },
+    {
+      "id": "valid-punctuation",
+      "accountSlug": "acct-1_x.d"
+    },
+    { "id": "empty-segment", "accountSlug": "" },
+    { "id": "dot-segment", "accountSlug": "." },
+    { "id": "parent-segment", "accountSlug": ".." },
+    { "id": "space", "accountSlug": "sp ace" },
+    { "id": "slash", "accountSlug": "has/slash" },
+    { "id": "query", "accountSlug": "has?query" },
+    { "id": "fragment", "accountSlug": "has#fragment" },
+    { "id": "percent", "accountSlug": "percent%2F" },
+    { "id": "unicode", "accountSlug": "coléon" }
+  ]
+}

@@ -11,6 +11,9 @@ private enum OracleCase: String {
     case qwenCloudFlatSubscription = "qwencloud-flat-subscription"
     case moonshotBalance = "moonshot-balance"
     case moonshotSettings = "moonshot-settings"
+    case fireworksSummary = "fireworks-summary"
+    case fireworksSettings = "fireworks-settings"
+    case fireworksRequest = "fireworks-request"
 
     var fixture: String {
         switch self {
@@ -22,6 +25,12 @@ private enum OracleCase: String {
             "Tests/CodexBarTests/Fixtures/Providers/Moonshot/balance-deficit.json"
         case .moonshotSettings:
             "Tests/CodexBarTests/Fixtures/Providers/Moonshot/settings-cases.json"
+        case .fireworksSummary:
+            "Tests/CodexBarTests/Fixtures/Providers/Fireworks/summary-cases.json"
+        case .fireworksSettings:
+            "Tests/CodexBarTests/Fixtures/Providers/Fireworks/settings-cases.json"
+        case .fireworksRequest:
+            "Tests/CodexBarTests/Fixtures/Providers/Fireworks/request-cases.json"
         }
     }
 }
@@ -35,7 +44,7 @@ private enum OracleError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidInvocation:
-            "usage: CodexBarOracle <snapshot-serialization|qwencloud-flat-subscription|moonshot-balance|moonshot-settings>"
+            "usage: CodexBarOracle <snapshot-serialization|qwencloud-flat-subscription|moonshot-balance|moonshot-settings|fireworks-summary|fireworks-settings|fireworks-request>"
         case .unsafeFixturePath:
             "oracle fixture path is unsafe"
         case .fixtureTooLarge:
@@ -66,6 +75,109 @@ private struct MoonshotSettingsResult: Encodable {
 
 private struct MoonshotSettingsResults: Encodable {
     let cases: [MoonshotSettingsResult]
+}
+
+private struct FireworksSummaryFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let payload: JSONValue
+    }
+
+    let cases: [Case]
+}
+
+private struct FireworksSummaryResult: Encodable {
+    let id: String
+    let snapshot: UsageSnapshot?
+    let error: String?
+}
+
+private struct FireworksSummaryResults: Encodable {
+    let cases: [FireworksSummaryResult]
+}
+
+private struct FireworksSettingsFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let environment: [String: String]
+    }
+
+    let cases: [Case]
+}
+
+private struct FireworksSettingsResult: Encodable {
+    let id: String
+    let resolvedMarker: String?
+    let accountSlug: String?
+}
+
+private struct FireworksSettingsResults: Encodable {
+    let cases: [FireworksSettingsResult]
+}
+
+private struct FireworksRequestFixture: Decodable {
+    struct Case: Decodable {
+        let id: String
+        let accountSlug: String
+        let startTimeMillis: Double?
+        let endTimeMillis: Double?
+    }
+
+    let cases: [Case]
+}
+
+private struct FireworksRequestResult: Encodable {
+    let id: String
+    let url: String?
+    let error: String?
+}
+
+private struct FireworksRequestResults: Encodable {
+    let cases: [FireworksRequestResult]
+}
+
+private enum JSONValue: Codable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: JSONValue].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null:
+            try container.encodeNil()
+        case let .bool(value):
+            try container.encode(value)
+        case let .number(value):
+            try container.encode(value)
+        case let .string(value):
+            try container.encode(value)
+        case let .array(value):
+            try container.encode(value)
+        case let .object(value):
+            try container.encode(value)
+        }
+    }
 }
 
 private func isSymlink(_ url: URL) throws -> Bool {
@@ -152,6 +264,54 @@ private func run(case oracleCase: OracleCase, root: URL) throws -> Data {
                     environment: entry.environment))
         }
         return try encodeJSON(MoonshotSettingsResults(cases: results))
+    case .fireworksSummary:
+        let fixture = try JSONDecoder().decode(
+            FireworksSummaryFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let results = fixture.cases.map { entry in
+            do {
+                let payload = try encodeJSON(entry.payload)
+                let summary = try FireworksUsageFetcher._parseSummaryForTesting(payload, now: now)
+                return FireworksSummaryResult(
+                    id: entry.id,
+                    snapshot: summary.toUsageSnapshot(),
+                    error: nil)
+            } catch FireworksUsageError.parseFailed {
+                return FireworksSummaryResult(id: entry.id, snapshot: nil, error: "parse-failure")
+            } catch {
+                return FireworksSummaryResult(id: entry.id, snapshot: nil, error: "unexpected-error")
+            }
+        }
+        return try encodeJSON(FireworksSummaryResults(cases: results))
+    case .fireworksSettings:
+        let fixture = try JSONDecoder().decode(
+            FireworksSettingsFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        return try encodeJSON(FireworksSettingsResults(cases: fixture.cases.map { entry in
+            FireworksSettingsResult(
+                id: entry.id,
+                resolvedMarker: FireworksSettingsReader.apiKey(environment: entry.environment),
+                accountSlug: FireworksSettingsReader.accountSlug(environment: entry.environment))
+        }))
+    case .fireworksRequest:
+        let fixture = try JSONDecoder().decode(
+            FireworksRequestFixture.self,
+            from: readFixture(root: root, relativePath: oracleCase.fixture))
+        let results = fixture.cases.map { entry in
+            do {
+                let url = try FireworksUsageFetcher.resolveSummaryURL(
+                    accountSlug: entry.accountSlug,
+                    startTime: entry.startTimeMillis.map { Date(timeIntervalSince1970: $0 / 1000) },
+                    endTime: entry.endTimeMillis.map { Date(timeIntervalSince1970: $0 / 1000) })
+                return FireworksRequestResult(id: entry.id, url: url.absoluteString, error: nil)
+            } catch FireworksUsageError.invalidAccountSlug {
+                return FireworksRequestResult(id: entry.id, url: nil, error: "invalid-account-slug")
+            } catch {
+                return FireworksRequestResult(id: entry.id, url: nil, error: "unexpected-error")
+            }
+        }
+        return try encodeJSON(FireworksRequestResults(cases: results))
     }
 }
 

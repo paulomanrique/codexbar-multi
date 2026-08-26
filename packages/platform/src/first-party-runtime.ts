@@ -15,7 +15,7 @@ import {
   normalizeEndpoint,
 } from "@codexbar/core";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
-import { mapProviderSnapshot } from "@codexbar/providers";
+import { mapFirstPartyProviderSnapshot } from "@codexbar/providers";
 import type {
   FirstPartyProvider,
   ProviderAntigravityLocalSnapshot,
@@ -1496,7 +1496,7 @@ const executeProvider = (
           apiFailure: (message) => failure("api-failure", message),
         },
       };
-      return mapProviderSnapshot(await strategy.fetchUsage(context), descriptor.id, now());
+      return mapFirstPartyProviderSnapshot(await strategy.fetchUsage(context), descriptor, now());
     },
     catch: (error) => error,
   }).pipe(

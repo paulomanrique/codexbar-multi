@@ -245,6 +245,11 @@ export interface ProviderDescriptor {
   readonly id: ProviderId;
   readonly name: string;
   readonly status: "partial" | "unported";
+  /**
+   * First-party-only permission for a deliberate `{ emptySnapshot: true }` result.
+   * The untrusted plugin mapper never reads this flag and remains fail-closed.
+   */
+  readonly allowEmptySnapshot?: true;
   /** Mirrors ProviderMetadata.isPrimaryProvider for CLI `--provider both` selection. */
   readonly isPrimaryProvider?: boolean;
   readonly endpoints: readonly ProviderEndpoint[];
@@ -265,6 +270,8 @@ export interface ProviderDescriptor {
 export interface ProviderDefinition {
   readonly id: ProviderId;
   readonly name: string;
+  /** See `ProviderDescriptor.allowEmptySnapshot`; currently required only by Fireworks. */
+  readonly allowEmptySnapshot?: true;
   readonly endpoints: readonly ProviderEndpoint[];
   readonly auth?: ProviderAuth;
   readonly settings: readonly ProviderSetting[];

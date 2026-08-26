@@ -1,0 +1,9 @@
+# Reviewed security deltas from upstream
+
+This file records deliberate hardening where the TypeScript port must not blindly reproduce an
+upstream behavior. Each delta stays covered by the shared Swift oracle so a future upstream sync can
+tell whether the original implementation adopted, changed, or removed the same protection.
+
+| Provider  | Baseline behavior                                                                                                                                                                                               | CodexBar Multi behavior                                                                                                                                         | Evidence                                                                                                                |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Fireworks | `resolveSummaryURL` accepted an empty account slug and the path-only segments `.` and `..`. Foundation preserved them in `absoluteString`, while WHATWG URL normalization in Node can change the endpoint path. | Reject empty, `.` and `..` before any transport call in both the migration oracle hook and TypeScript helper. Other allowed characters remain `[A-Za-z0-9._-]`. | `FireworksUsageFetcherTests`, `request-cases.json`, `fireworks-request` oracle case, and `http-parity-wave-two.test.ts` |

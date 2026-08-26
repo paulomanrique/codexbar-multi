@@ -1,5 +1,5 @@
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
-import { mapProviderSnapshot } from "./snapshot-mapper.ts";
+import { mapFirstPartyProviderSnapshot } from "./snapshot-mapper.ts";
 import type { FirstPartyProvider, ProviderContext, ProviderDescriptor } from "./types.ts";
 
 /** The persisted first-party provider roster. Keep this order stable. */
@@ -142,5 +142,5 @@ export async function fetchProviderUsage(
     throw new Error(`Provider '${providerId}' is mapped but not ported yet`);
   }
   const raw = await descriptor.strategy.fetchUsage(context);
-  return mapProviderSnapshot(raw, providerId, context.date.now());
+  return mapFirstPartyProviderSnapshot(raw, descriptor, context.date.now());
 }

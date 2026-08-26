@@ -19,6 +19,9 @@ export const OFFLINE_SWIFT_ORACLE_CASES = [
   "qwencloud-flat-subscription",
   "moonshot-balance",
   "moonshot-settings",
+  "fireworks-summary",
+  "fireworks-settings",
+  "fireworks-request",
 ] as const;
 export type OfflineSwiftOracleCase = (typeof OFFLINE_SWIFT_ORACLE_CASES)[number];
 

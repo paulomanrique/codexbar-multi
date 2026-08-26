@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "id": "config-precedence",
+      "environment": {
+        "CODEXBAR_FIREWORKS_API_KEY": "config-marker",
+        "FIREWORKS_API_KEY": "environment-marker",
+        "CODEXBAR_FIREWORKS_ACCOUNT_SLUG": "config-slug",
+        "FIREWORKS_ACCOUNT_SLUG": "environment-slug"
+      }
+    },
+    {
+      "id": "legacy-key",
+      "environment": {
+        "FIREWORKS_KEY": "legacy-marker",
+        "FIREWORKS_ACCOUNT_SLUG": "legacy-slug"
+      }
+    },
+    {
+      "id": "quoted-and-padded",
+      "environment": {
+        "FIREWORKS_API_KEY": "\"  quoted-marker  \"",
+        "FIREWORKS_ACCOUNT_SLUG": "' quoted-slug '"
+      }
+    },
+    {
+      "id": "blank-config-falls-through",
+      "environment": {
+        "CODEXBAR_FIREWORKS_API_KEY": "  ",
+        "FIREWORKS_API_KEY": "environment-marker",
+        "CODEXBAR_FIREWORKS_ACCOUNT_SLUG": "''",
+        "FIREWORKS_ACCOUNT_SLUG": "environment-slug"
+      }
+    },
+    {
+      "id": "blank-primary-falls-to-legacy",
+      "environment": {
+        "FIREWORKS_API_KEY": "\"\"",
+        "FIREWORKS_KEY": "fallback-marker"
+      }
+    },
+    {
+      "id": "missing",
+      "environment": {}
+    }
+  ]
+}

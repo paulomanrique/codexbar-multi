@@ -3,168 +3,276 @@ import type {
   ProviderContext,
   ProviderDefinition,
   ProviderDescriptor,
+  ProviderSnapshot,
   ProviderStrategy,
 } from "../types.ts";
-import { get, json, number, object, status, string } from "./_http.ts";
+import { get, json, object } from "./_http.ts";
+
+type FireworksSettings = ProviderContext["settings"];
+type JsonObject = Readonly<Record<string, unknown>>;
 
 const endpoint = "https://api.fireworks.ai";
-const accountSlugPattern = /^[A-Za-z0-9._-]+$/;
-const maxAccountPages = 100;
+const accountSlugPattern = /^[A-Za-z0-9._-]+$/u;
+// The API contract emits finite decimal money strings. Swift's `Double.init` also accepts
+// non-finite and hexadecimal spellings, but those cannot cross the bounded UsageSnapshot DTO.
+const swiftDoublePattern = /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$/u;
 
-type SummaryResult = {
-  readonly snapshot: Record<string, unknown>;
-  readonly hasRatedCost: boolean;
+export class InvalidFireworksAccountSlug extends Error {
+  readonly accountSlug: string;
+
+  constructor(accountSlug: string) {
+    super(`Invalid Fireworks account slug '${accountSlug}'.`);
+    this.name = "InvalidFireworksAccountSlug";
+    this.accountSlug = accountSlug;
+  }
+}
+
+export class InvalidFireworksSummary extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidFireworksSummary";
+  }
+}
+
+const cleanSetting = (raw: string | undefined): string | undefined => {
+  if (raw === undefined) return undefined;
+  let value = raw.trim();
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1);
+  }
+  value = value.trim();
+  return value === "" ? undefined : value;
 };
 
-function accountSlug(value: unknown): string | undefined {
-  const account = object(value);
-  if (!account) return undefined;
-  for (const key of ["accountId", "id", "name"]) {
-    const raw = string(account[key]);
-    if (!raw) continue;
-    const candidate = raw.split("/").filter(Boolean).at(-1) ?? raw;
-    if (accountSlugPattern.test(candidate)) return candidate;
+const setting = (settings: FireworksSettings, key: string): string | undefined =>
+  cleanSetting(settings.getSecret(key)) ?? cleanSetting(settings.get(key));
+
+export const resolveFireworksAPIKey = (settings: FireworksSettings): string | undefined =>
+  setting(settings, "CODEXBAR_FIREWORKS_API_KEY") ??
+  setting(settings, "FIREWORKS_API_KEY") ??
+  setting(settings, "FIREWORKS_KEY");
+
+export const resolveFireworksAccountSlug = (settings: FireworksSettings): string | undefined =>
+  setting(settings, "CODEXBAR_FIREWORKS_ACCOUNT_SLUG") ??
+  setting(settings, "FIREWORKS_ACCOUNT_SLUG");
+
+const isoWithoutFraction = (date: Date): string => {
+  if (!Number.isFinite(date.getTime())) throw new RangeError("Fireworks request date is invalid");
+  return date.toISOString().replace(/\.\d{3}Z$/u, "Z");
+};
+
+/** Matches `FireworksUsageFetcher.resolveSummaryURL`, including literal ISO query values. */
+export const resolveFireworksSummaryURL = (
+  accountSlug: string,
+  startTime?: Date,
+  endTime?: Date,
+): string => {
+  if (accountSlug === "." || accountSlug === ".." || !accountSlugPattern.test(accountSlug)) {
+    throw new InvalidFireworksAccountSlug(accountSlug);
   }
-  return undefined;
-}
+  const query = [
+    ...(startTime === undefined ? [] : [`startTime=${isoWithoutFraction(startTime)}`]),
+    ...(endTime === undefined ? [] : [`endTime=${isoWithoutFraction(endTime)}`]),
+  ];
+  return `${endpoint}/v1/accounts/${accountSlug}/billing/summary${query.length === 0 ? "" : `?${query.join("&")}`}`;
+};
 
-async function listAccountSlugs(ctx: ProviderContext, key: string): Promise<string[]> {
-  const slugs = new Set<string>();
-  const seenPageTokens = new Set<string>();
-  let pageToken: string | undefined;
+const optionalString = (source: JsonObject, key: string, path: string): string | undefined => {
+  const value = source[key];
+  if (value == null) return undefined;
+  if (typeof value !== "string") throw new InvalidFireworksSummary(`${path} must be a string`);
+  return value;
+};
 
-  for (let page = 0; page < maxAccountPages; page += 1) {
-    const url = new URL(`${endpoint}/v1/accounts`);
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const response = await get(ctx, url.href, {
-      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
-    });
-    if (response.status === 401 || response.status === 403)
-      throw ctx.fail.authenticationExpired("Fireworks rejected the API key.");
-    status(ctx, "Fireworks", response);
-    const root = object(json(ctx, "Fireworks accounts", response));
-    if (!root) throw ctx.fail.parseFailure("Fireworks accounts response must be an object.");
-    if (Array.isArray(root.accounts)) {
-      for (const value of root.accounts) {
-        const slug = accountSlug(value);
-        if (slug) slugs.add(slug);
-      }
-    }
-    pageToken = string(root.nextPageToken);
-    if (!pageToken) return [...slugs].sort();
-    if (!seenPageTokens.add(pageToken)) {
-      throw ctx.fail.apiFailure("Fireworks accounts pagination repeated a page token.");
-    }
+const optionalDouble = (source: JsonObject, key: string, path: string): number | undefined => {
+  const value = source[key];
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new InvalidFireworksSummary(`${path} must be a finite number`);
   }
-  throw ctx.fail.apiFailure("Fireworks accounts pagination exceeded 100 pages.");
+  return value;
+};
+
+const optionalInteger = (source: JsonObject, key: string, path: string): number | undefined => {
+  const value = source[key];
+  if (value == null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new InvalidFireworksSummary(`${path} must be an integer`);
+  }
+  return value;
+};
+
+interface FireworksMoney {
+  readonly currencyCode?: string;
+  readonly nanos?: number;
+  readonly units?: string;
 }
 
-function noAccounts(ctx: ProviderContext): Error {
-  return ctx.fail.missingCredential(
-    "No Fireworks accounts are visible to this API key. Check the key in app.fireworks.ai or run 'firectl whoami'.",
-  );
+interface FireworksLineItem {
+  readonly totalCost?: FireworksMoney;
 }
 
-function multipleAccounts(ctx: ProviderContext, slugs: readonly string[]): Error {
-  return ctx.fail.missingCredential(
-    `This Fireworks API key can access multiple accounts: ${slugs.join(", ")}. Set the account slug in Settings or FIREWORKS_ACCOUNT_SLUG.`,
-  );
-}
+const money = (value: unknown, path: string): FireworksMoney | undefined => {
+  if (value == null) return undefined;
+  const source = object(value);
+  if (source === undefined) throw new InvalidFireworksSummary(`${path} must be an object`);
+  const currencyCode = optionalString(source, "currencyCode", `${path}.currencyCode`);
+  const nanos = optionalInteger(source, "nanos", `${path}.nanos`);
+  const units = optionalString(source, "units", `${path}.units`);
+  return {
+    ...(currencyCode === undefined ? {} : { currencyCode }),
+    ...(nanos === undefined ? {} : { nanos }),
+    ...(units === undefined ? {} : { units }),
+  };
+};
 
-function accountNotFound(ctx: ProviderContext, slug: string): Error {
-  return ctx.fail.missingCredential(
-    `Fireworks account slug '${slug}' not found for this API key. Leave the slug blank to auto-discover it.`,
-  );
-}
+const lineItem = (value: unknown, path: string): FireworksLineItem => {
+  const source = object(value);
+  if (source === undefined) throw new InvalidFireworksSummary(`${path} must be an object`);
+  optionalString(source, "category", `${path}.category`);
+  optionalString(source, "groupingKey", `${path}.groupingKey`);
+  optionalString(source, "groupingValue", `${path}.groupingValue`);
+  optionalDouble(source, "quantity", `${path}.quantity`);
+  optionalString(source, "series", `${path}.series`);
+  const totalCost = money(source.totalCost, `${path}.totalCost`);
+  money(source.unitAmount, `${path}.unitAmount`);
+  return totalCost === undefined ? {} : { totalCost };
+};
 
-async function fetchSummary(
-  ctx: ProviderContext,
+const optionalLineItems = (
+  source: JsonObject,
   key: string,
-  slug: string,
-): Promise<SummaryResult | undefined> {
-  const end = ctx.date.now();
-  const start = new Date(end.getTime() - 30 * 86400000);
-  const url = `${endpoint}/v1/accounts/${slug}/billing/summary?startTime=${encodeURIComponent(start.toISOString())}&endTime=${encodeURIComponent(end.toISOString())}`;
-  const response = await get(ctx, url, {
-    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
-  });
-  if (response.status === 404) return undefined;
-  if (response.status === 401 || response.status === 403)
-    throw ctx.fail.authenticationExpired("Fireworks rejected the API key.");
-  status(ctx, "Fireworks", response);
-  const root = object(json(ctx, "Fireworks", response));
-  if (!root) throw ctx.fail.parseFailure("Fireworks response must be an object.");
-  const rows = Array.isArray(root.lineItems) ? root.lineItems : [];
+  path: string,
+): readonly FireworksLineItem[] => {
+  const value = source[key];
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new InvalidFireworksSummary(`${path} must be an array`);
+  return value.map((entry, index) => lineItem(entry, `${path}[${index}]`));
+};
+
+/** Strict known-field validation plus the upstream first-currency summation rule. */
+export const parseFireworksSummary = (value: unknown): ProviderSnapshot => {
+  const root = object(value);
+  if (root === undefined) throw new InvalidFireworksSummary("Fireworks response must be an object");
+  const lineItems = optionalLineItems(root, "lineItems", "lineItems");
+  const usageBuckets = root.usageBuckets;
+  if (usageBuckets != null) {
+    if (!Array.isArray(usageBuckets)) {
+      throw new InvalidFireworksSummary("usageBuckets must be an array");
+    }
+    for (const [index, entry] of usageBuckets.entries()) {
+      const bucket = object(entry);
+      const path = `usageBuckets[${index}]`;
+      if (bucket === undefined) throw new InvalidFireworksSummary(`${path} must be an object`);
+      optionalString(bucket, "bucketStartTime", `${path}.bucketStartTime`);
+      optionalLineItems(bucket, "lineItems", `${path}.lineItems`);
+    }
+  }
+
   let currency: string | undefined;
   let total = 0;
-  for (const raw of rows) {
-    const row = object(raw);
-    const cost = row && object(row.totalCost);
-    const code = cost && string(cost.currencyCode);
-    const units = cost && number(cost.units);
-    const nanos = cost && number(cost.nanos);
-    if (code && units !== undefined && nanos !== undefined) {
-      currency ??= code;
-      if (currency === code) total += units + nanos / 1e9;
+  for (const item of lineItems) {
+    const cost = item.totalCost;
+    const code = cost?.currencyCode?.trim();
+    const unitsText = cost?.units;
+    const nanos = cost?.nanos;
+    if (
+      code === undefined ||
+      code === "" ||
+      unitsText === undefined ||
+      !swiftDoublePattern.test(unitsText) ||
+      nanos === undefined
+    ) {
+      continue;
     }
+    const units = Number(unitsText);
+    if (!Number.isFinite(units)) continue;
+    currency ??= code;
+    if (currency === code) total += units + nanos / 1_000_000_000;
   }
-  return {
-    snapshot: currency
-      ? { cost: { used: total, limit: 0, currency, period: "Last 30 days" }, identity: {} }
-      : { identity: {} },
-    hasRatedCost: currency !== undefined,
-  };
-}
+
+  return currency === undefined
+    ? { emptySnapshot: true }
+    : { cost: { used: total, limit: 0, currency, period: "Last 30 days" } };
+};
 
 const definition: ProviderDefinition = {
   id: "fireworks",
   name: "Fireworks",
-  endpoints: ["https://api.fireworks.ai"],
-  auth: { type: "bearer", secret: "FIREWORKS_API_KEY" },
+  allowEmptySnapshot: true,
+  endpoints: [endpoint],
+  auth: { type: "provider-managed", secret: "FIREWORKS_API_KEY" },
   settings: [
+    { key: "CODEXBAR_FIREWORKS_API_KEY", title: "Configured API key", type: "secure" },
     { key: "FIREWORKS_API_KEY", title: "API key", type: "secure" },
+    { key: "FIREWORKS_KEY", title: "Legacy API key", type: "secure" },
+    {
+      key: "CODEXBAR_FIREWORKS_ACCOUNT_SLUG",
+      title: "Configured account slug",
+      type: "plain",
+    },
     { key: "FIREWORKS_ACCOUNT_SLUG", title: "Account slug", type: "plain" },
   ],
   fetchUsage: async (ctx: ProviderContext) => {
-    const key = (
-      ctx.settings.getSecret("FIREWORKS_API_KEY") ||
-      ctx.settings.get("FIREWORKS_API_KEY") ||
-      ""
-    ).trim();
-    const slug = (ctx.settings.get("FIREWORKS_ACCOUNT_SLUG") || "").trim();
-    if (!key) throw ctx.fail.missingCredential("Missing Fireworks API key.");
-    if (slug && !accountSlugPattern.test(slug))
-      throw ctx.fail.missingCredential(`Invalid Fireworks account slug '${slug}'.`);
-
-    if (slug) {
-      const configured = await fetchSummary(ctx, key, slug);
-      if (configured) {
-        if (!configured.hasRatedCost) {
-          const slugs = await listAccountSlugs(ctx, key);
-          if (!slugs.includes(slug)) throw accountNotFound(ctx, slug);
-        }
-        return configured.snapshot;
-      }
-      const slugs = await listAccountSlugs(ctx, key);
-      if (slugs.length === 0) throw accountNotFound(ctx, slug);
-      if (slugs.length > 1) throw multipleAccounts(ctx, slugs);
-      const discovered = await fetchSummary(ctx, key, slugs[0] as string);
-      if (!discovered) throw ctx.fail.apiFailure("Fireworks billing API returned HTTP 404.");
-      return discovered.snapshot;
+    const key = resolveFireworksAPIKey(ctx.settings);
+    if (key === undefined) {
+      throw ctx.fail.missingCredential(
+        "Missing Fireworks API key. Add one in Settings or set FIREWORKS_API_KEY.",
+      );
+    }
+    const slug = resolveFireworksAccountSlug(ctx.settings);
+    if (slug === undefined) {
+      throw ctx.fail.missingCredential(
+        "Missing Fireworks account slug. Set FIREWORKS_ACCOUNT_SLUG or the slug field in Settings.",
+      );
+    }
+    if (slug === "." || slug === ".." || !accountSlugPattern.test(slug)) {
+      // The shared failure taxonomy has no separate invalid-config lane. Keep this local,
+      // actionable condition in the credential/config lane; it must never look like an API fault.
+      throw ctx.fail.missingCredential(
+        `Invalid Fireworks account slug '${slug}'. Please double-check the account slug in Settings.`,
+      );
     }
 
-    const slugs = await listAccountSlugs(ctx, key);
-    if (slugs.length === 0) throw noAccounts(ctx);
-    if (slugs.length > 1) throw multipleAccounts(ctx, slugs);
-    const discovered = await fetchSummary(ctx, key, slugs[0] as string);
-    if (!discovered) throw ctx.fail.apiFailure("Fireworks billing API returned HTTP 404.");
-    return discovered.snapshot;
+    const end = ctx.date.now();
+    const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1_000);
+    const response = await get(ctx, resolveFireworksSummaryURL(slug, start, end), {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+      timeoutSeconds: 15,
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw ctx.fail.authenticationExpired(
+        "Fireworks rejected the API key. Create a new key at app.fireworks.ai and update Settings.",
+      );
+    }
+    if (response.status === 429) {
+      throw ctx.fail.rateLimited(
+        "Fireworks rate limit exceeded. Usage will refresh on the next cycle.",
+      );
+    }
+    if (response.status !== 200) {
+      throw ctx.fail.apiFailure(`Fireworks billing API returned HTTP ${response.status}.`);
+    }
+    try {
+      return parseFireworksSummary(json(ctx, "Fireworks", response));
+    } catch (error) {
+      if (error instanceof InvalidFireworksSummary) {
+        throw ctx.fail.parseFailure(`Could not parse Fireworks usage: ${error.message}`);
+      }
+      throw error;
+    }
   },
 };
+
 const strategy: ProviderStrategy = {
   id: "fireworks.api",
   kind: "api",
   fetchUsage: definition.fetchUsage,
 };
+
 export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };
 export const fireworks: FirstPartyProvider = { ...strategy, descriptor };

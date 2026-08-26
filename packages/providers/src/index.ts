@@ -178,7 +178,15 @@ export { devin } from "./providers/devin.ts";
 export { doubao } from "./providers/doubao.ts";
 export { elevenlabs } from "./providers/elevenlabs.ts";
 export { factory } from "./providers/factory.ts";
-export { fireworks } from "./providers/fireworks.ts";
+export {
+  fireworks,
+  InvalidFireworksAccountSlug,
+  InvalidFireworksSummary,
+  parseFireworksSummary,
+  resolveFireworksAccountSlug,
+  resolveFireworksAPIKey,
+  resolveFireworksSummaryURL,
+} from "./providers/fireworks.ts";
 export { gemini } from "./providers/gemini.ts";
 export { groq } from "./providers/groq.ts";
 export { grok } from "./providers/grok.ts";

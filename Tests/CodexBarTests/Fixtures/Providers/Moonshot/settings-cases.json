@@ -16,11 +16,27 @@
       "requestedRegion": "international"
     },
     {
+      "id": "padded-quoted-environment-key",
+      "environment": {
+        "MOONSHOT_API_KEY": "  \"padded-marker\"  "
+      },
+      "requestedRegion": "international"
+    },
+    {
       "id": "region-bound-config",
       "environment": {
         "MOONSHOT_REGION": "china",
         "CODEXBAR_MOONSHOT_API_KEY": "'config-marker'",
         "CODEXBAR_MOONSHOT_API_KEY_REGION": "\"china\""
+      },
+      "requestedRegion": "china"
+    },
+    {
+      "id": "padded-quoted-config-key-preserves-quotes",
+      "environment": {
+        "MOONSHOT_REGION": "china",
+        "CODEXBAR_MOONSHOT_API_KEY": "  'config-marker'  ",
+        "CODEXBAR_MOONSHOT_API_KEY_REGION": "china"
       },
       "requestedRegion": "china"
     },

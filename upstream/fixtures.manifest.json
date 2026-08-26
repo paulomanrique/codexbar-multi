@@ -41,13 +41,37 @@
       "tsTest": "packages/testkit/test/testkit.test.ts",
       "providers": ["moonshot"],
       "status": "parity"
+    },
+    {
+      "id": "fireworks-summary",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Fireworks/summary-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["fireworks"],
+      "status": "parity"
+    },
+    {
+      "id": "fireworks-settings",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Fireworks/settings-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["fireworks"],
+      "status": "parity"
+    },
+    {
+      "id": "fireworks-request",
+      "swiftTarget": "CodexBarOracle",
+      "fixture": "Tests/CodexBarTests/Fixtures/Providers/Fireworks/request-cases.json",
+      "tsTest": "packages/testkit/test/testkit.test.ts",
+      "providers": ["fireworks"],
+      "status": "parity"
     }
   ],
   "entries": [
     {
       "id": "provider-response-fixtures",
       "pathGlobs": ["Tests/CodexBarTests/Fixtures/Providers/**/*"],
-      "observedCount": 18,
+      "observedCount": 21,
       "testGlobs": [
         "Tests/CodexBarTests/*Provider*Tests.swift",
         "Tests/CodexBarTests/ProviderQuotaFixtureContractTests.swift"
