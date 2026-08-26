@@ -168,9 +168,9 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 - [x] Port the complete 14-provider simple HTTP wave with dedicated TypeScript tests.
 - [ ] Finish Swift-oracle/native parity gates for the simple HTTP wave.
   - [x] Accept Moonshot settings, parser, deficit snapshot, and offline Swift-oracle case parity.
-  - [ ] Complete Moonshot persisted regional credential projection before provider-level parity.
+  - [x] Complete Moonshot persisted regional credential projection before provider-level parity.
   - [x] Accept Fireworks settings, strict parser, request, empty snapshot, and offline Swift-oracle case parity.
-  - [ ] Complete Fireworks persisted API-key/account-slug projection before provider-level parity.
+  - [x] Complete Fireworks persisted API-key/account-slug projection before provider-level parity.
 - [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial; MiniMax selected-account isolation and HTML-first parsing are complete).
   - [x] Harden Wayfinder required payload decoding, cancellation, and no-redirect transport proof; native-oracle parity remains pending.
   - [x] Align ZenMux opt-in PAYG fetches, cancellation, strict decoding, and HTTP error classification; native-oracle parity remains pending.

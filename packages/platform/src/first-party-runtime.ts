@@ -91,6 +91,12 @@ export interface FirstPartySelectedAccounts {
   ) => Effect.Effect<FirstPartySelectedAccount | undefined, unknown>;
 }
 
+/** One host-owned configuration generation reused throughout a provider fetch. */
+export interface FirstPartyFetchState {
+  readonly settings: FirstPartySettings;
+  readonly selectedAccount?: FirstPartySelectedAccount;
+}
+
 /**
  * Host-owned local capabilities for first-party providers. These are named
  * operations rather than general process or filesystem access so providers
@@ -133,14 +139,12 @@ export interface FirstPartyLocalCapabilities {
   ) => Effect.Effect<ProviderClaudeCliUsageResult, unknown>;
 }
 
-export interface FirstPartyProviderRuntimeOptions {
+interface FirstPartyProviderRuntimeBaseOptions {
   /** Swift runtime policy: app-auto may fall back from Admin API; CLI never does. */
   readonly runtime?: "app" | "cli";
   readonly providers: readonly FirstPartyProvider[];
   readonly settings: FirstPartySettings;
   readonly browserSessions: FirstPartyBrowserSessions;
-  /** Optional account resolver; omitted hosts retain ambient single-account behavior. */
-  readonly selectedAccounts?: FirstPartySelectedAccounts;
   /** Omitted hosts fail closed when a provider asks for local integration. */
   readonly local?: FirstPartyLocalCapabilities;
   readonly http: HttpTransportService;
@@ -151,6 +155,23 @@ export interface FirstPartyProviderRuntimeOptions {
   /** Stable host namespace. Provider source code never gets access to the key name. */
   readonly credentialKey?: (providerId: ProviderId, setting: string) => string;
 }
+
+export type FirstPartyProviderRuntimeOptions = FirstPartyProviderRuntimeBaseOptions &
+  (
+    | {
+        /** Optional account resolver; omitted hosts retain ambient single-account behavior. */
+        readonly selectedAccounts?: FirstPartySelectedAccounts;
+        readonly resolveFetchState?: never;
+      }
+    | {
+        /** Coherently resolves one immutable config/account generation before strategy availability. */
+        readonly resolveFetchState: (
+          providerId: ProviderId,
+          context: ProviderFetchContext,
+        ) => Effect.Effect<FirstPartyFetchState, unknown>;
+        readonly selectedAccounts?: never;
+      }
+  );
 
 const sourceFor = (strategy: ProviderStrategy): ProviderFetchStrategy["source"] =>
   strategy.kind === "web"
@@ -825,6 +846,9 @@ const localFor = (
 export const makeFirstPartyProviderRuntime = (
   options: FirstPartyProviderRuntimeOptions,
 ): ProviderRuntimeService => {
+  if (options.resolveFetchState !== undefined && options.selectedAccounts !== undefined) {
+    throw new TypeError("resolveFetchState and selectedAccounts are mutually exclusive");
+  }
   const byId = new Map(options.providers.map((provider) => [provider.descriptor.id, provider]));
   const keyFor = options.credentialKey ?? credentialKeyFor;
 
@@ -832,6 +856,7 @@ export const makeFirstPartyProviderRuntime = (
     descriptor: ProviderDescriptor,
     selectedAccount: FirstPartySelectedAccount | undefined,
     keys: readonly string[],
+    resolvedSettings: FirstPartySettings,
   ): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const secureKeys = new Set(
@@ -847,7 +872,7 @@ export const makeFirstPartyProviderRuntime = (
           if (selected.value?.trim()) return true;
           continue;
         }
-        const injected = yield* options.settings
+        const injected = yield* resolvedSettings
           .read(descriptor.id, key)
           .pipe(Effect.orElseSucceed(() => undefined));
         const stored = yield* options.credentials
@@ -862,6 +887,7 @@ export const makeFirstPartyProviderRuntime = (
     providerId: ProviderId,
     context: ProviderFetchContext,
     selectedAccount: FirstPartySelectedAccount | undefined,
+    resolvedSettings: FirstPartySettings,
   ): Effect.Effect<readonly ProviderFetchStrategy[], never> => {
     const provider = byId.get(providerId);
     if (provider === undefined) return Effect.succeed([]);
@@ -886,9 +912,18 @@ export const makeFirstPartyProviderRuntime = (
                     provider.descriptor,
                     selectedAccount,
                     strategy.autoRequiresAnySecret,
+                    resolvedSettings,
                   ),
             fetch: () =>
-              executeProvider(provider, strategy, context, selectedAccount, options, keyFor),
+              executeProvider(
+                provider,
+                strategy,
+                context,
+                selectedAccount,
+                resolvedSettings,
+                options,
+                keyFor,
+              ),
             shouldFallback: (error, fetchContext) =>
               fetchContext.sourceMode === "auto" &&
               (strategy.id !== "claude.admin-api" || options.runtime !== "cli") &&
@@ -902,16 +937,31 @@ export const makeFirstPartyProviderRuntime = (
     );
   };
   return {
-    fetch: (providerId, context) =>
-      resolveSelectedAccount(options, byId.get(providerId)?.descriptor, providerId, context).pipe(
-        Effect.flatMap((selectedAccount) =>
+    fetch: (providerId, context) => {
+      const descriptor = byId.get(providerId)?.descriptor;
+      const state =
+        descriptor === undefined
+          ? Effect.succeed<FirstPartyFetchState>({ settings: options.settings })
+          : options.resolveFetchState === undefined
+            ? resolveSelectedAccount(options, descriptor, providerId, context).pipe(
+                Effect.map(
+                  (selectedAccount): FirstPartyFetchState => ({
+                    settings: options.settings,
+                    ...(selectedAccount === undefined ? {} : { selectedAccount }),
+                  }),
+                ),
+              )
+            : resolveHostFetchState(options, descriptor, providerId, context);
+      return state.pipe(
+        Effect.flatMap(({ selectedAccount, settings: resolvedSettings }) =>
           makeProviderFetchPipeline({
             resolveStrategies: (resolvedProviderId, resolvedContext) =>
-              strategyFor(resolvedProviderId, resolvedContext, selectedAccount),
+              strategyFor(resolvedProviderId, resolvedContext, selectedAccount, resolvedSettings),
           }).fetch(providerId, context),
         ),
         Effect.provideService(Clock, options.clock),
-      ),
+      );
+    },
   };
 };
 
@@ -1191,11 +1241,51 @@ const resolveSelectedAccount = (
   );
 };
 
+const resolveHostFetchState = (
+  options: FirstPartyProviderRuntimeOptions,
+  descriptor: ProviderDescriptor | undefined,
+  providerId: ProviderId,
+  context: ProviderFetchContext,
+): Effect.Effect<FirstPartyFetchState, ClassifiedFetchFailure> => {
+  if (options.resolveFetchState === undefined) {
+    return Effect.succeed({ settings: options.settings });
+  }
+  return options.resolveFetchState(providerId, context).pipe(
+    Effect.mapError((error) =>
+      error instanceof ClassifiedFetchFailure
+        ? error
+        : failure("api-failure", "Unable to resolve provider fetch state."),
+    ),
+    Effect.flatMap((state) =>
+      Effect.try({
+        try: (): FirstPartyFetchState => {
+          if (typeof state.settings?.read !== "function") {
+            throw failure("api-failure", "Provider fetch state is invalid.");
+          }
+          const selectedAccount =
+            descriptor === undefined
+              ? undefined
+              : validateSelectedAccount(descriptor, state.selectedAccount);
+          return {
+            settings: state.settings,
+            ...(selectedAccount === undefined ? {} : { selectedAccount }),
+          };
+        },
+        catch: (error) =>
+          error instanceof ClassifiedFetchFailure
+            ? error
+            : failure("api-failure", "Provider fetch state is invalid."),
+      }),
+    ),
+  );
+};
+
 const executeProvider = (
   provider: FirstPartyProvider,
   strategy: ProviderStrategy,
   fetchContext: ProviderFetchContext,
   selectedAccount: FirstPartySelectedAccount | undefined,
+  resolvedSettings: FirstPartySettings,
   options: FirstPartyProviderRuntimeOptions,
   keyFor: (providerId: ProviderId, setting: string) => string,
 ): Effect.Effect<UsageSnapshot, ClassifiedFetchFailure> => {
@@ -1253,7 +1343,7 @@ const executeProvider = (
         );
         const injected = selectedOverride.present
           ? undefined
-          : await Effect.runPromise(options.settings.read(descriptor.id, setting.key), {
+          : await Effect.runPromise(resolvedSettings.read(descriptor.id, setting.key), {
               signal: operationSignal,
             });
         if (secureKeys.has(setting.key)) {
@@ -1282,7 +1372,7 @@ const executeProvider = (
         );
         const injected = selectedOverride.present
           ? undefined
-          : await Effect.runPromise(options.settings.read(descriptor.id, descriptor.auth.secret), {
+          : await Effect.runPromise(resolvedSettings.read(descriptor.id, descriptor.auth.secret), {
               signal: operationSignal,
             });
         let stored: string | undefined;

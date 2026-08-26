@@ -495,17 +495,34 @@ providers:
         - packages/providers/test/http-parity-wave-two.test.ts
         - packages/providers/test/snapshot-mapper.test.ts
         - packages/testkit/test/testkit.test.ts
+        - packages/platform/test/persisted-provider-settings.test.ts
+        - packages/platform/test/first-party-runtime-persisted-settings.test.ts
+        - apps/desktop/test/main-wiring.test.ts
+        - apps/cli/test/runner.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Fireworks/*.json
     tsPaths:
-      expected: [packages/providers/src/providers/fireworks.ts]
+      expected:
+        - packages/providers/src/providers/fireworks.ts
+        - packages/platform/src/persisted-provider-settings.ts
+        - packages/platform/src/first-party-runtime.ts
+        - apps/desktop/src/main/index.ts
+        - apps/cli/src/runner.ts
       real:
         - packages/providers/src/providers/fireworks.ts
+        - packages/platform/src/persisted-provider-settings.ts
+        - packages/platform/src/first-party-runtime.ts
+        - apps/desktop/src/main/index.ts
+        - apps/cli/src/runner.ts
     tsTestGlobs:
       - packages/providers/test/http-wave.test.ts
       - packages/providers/test/http-parity-wave-two.test.ts
       - packages/providers/test/snapshot-mapper.test.ts
       - packages/testkit/test/testkit.test.ts
+      - packages/platform/test/persisted-provider-settings.test.ts
+      - packages/platform/test/first-party-runtime-persisted-settings.test.ts
+      - apps/desktop/test/main-wiring.test.ts
+      - apps/cli/test/runner.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
@@ -873,16 +890,33 @@ providers:
         - packages/providers/test/http-wave.test.ts
         - packages/providers/test/http-parity-wave-two.test.ts
         - packages/testkit/test/testkit.test.ts
+        - packages/platform/test/persisted-provider-settings.test.ts
+        - packages/platform/test/first-party-runtime-persisted-settings.test.ts
+        - apps/desktop/test/main-wiring.test.ts
+        - apps/cli/test/runner.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/Moonshot/*.json
     tsPaths:
-      expected: [packages/providers/src/providers/moonshot.ts]
+      expected:
+        - packages/providers/src/providers/moonshot.ts
+        - packages/platform/src/persisted-provider-settings.ts
+        - packages/platform/src/first-party-runtime.ts
+        - apps/desktop/src/main/index.ts
+        - apps/cli/src/runner.ts
       real:
         - packages/providers/src/providers/moonshot.ts
+        - packages/platform/src/persisted-provider-settings.ts
+        - packages/platform/src/first-party-runtime.ts
+        - apps/desktop/src/main/index.ts
+        - apps/cli/src/runner.ts
     tsTestGlobs:
       - packages/providers/test/http-wave.test.ts
       - packages/providers/test/http-parity-wave-two.test.ts
       - packages/testkit/test/testkit.test.ts
+      - packages/platform/test/persisted-provider-settings.test.ts
+      - packages/platform/test/first-party-runtime-persisted-settings.test.ts
+      - apps/desktop/test/main-wiring.test.ts
+      - apps/cli/test/runner.test.ts
     status: partial
     oracleStatus: pending
     lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553

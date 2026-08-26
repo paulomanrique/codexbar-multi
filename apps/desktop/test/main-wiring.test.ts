@@ -105,6 +105,19 @@ describe("main wiring for visible startup shell", () => {
     expect(source).not.toContain("OverviewUpdatedDTO");
   });
 
+  it("derives selected accounts and persisted provider settings from one config generation", async () => {
+    const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
+    const runtimeStart = source.indexOf("providerRuntime = makeFirstPartyProviderRuntime({");
+    const runtimeEnd = source.indexOf("adaptiveRefresh =", runtimeStart);
+    const runtimeBlock = source.slice(runtimeStart, runtimeEnd);
+    expect(runtimeBlock).toContain("resolveFetchState: (providerId) =>");
+    expect(runtimeBlock.match(/configRepository\.load/g)).toHaveLength(1);
+    expect(runtimeBlock).toContain("(capturedConfig) =>");
+    expect(runtimeBlock).toContain("makePersistedFirstPartySettings(");
+    expect(runtimeBlock).toContain("resolveSelectedFirstPartyAccountFromVault(");
+    expect(runtimeBlock).not.toContain("selectedAccounts:");
+  });
+
   it("wires Codex browser-session IPC through exact DTOs and crash-safe publication", async () => {
     const source = await readFile(new URL("../src/main/index.ts", import.meta.url), "utf8");
     for (const [channel, keys] of [

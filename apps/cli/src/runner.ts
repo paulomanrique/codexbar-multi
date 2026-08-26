@@ -17,6 +17,7 @@ import {
   makeCredentialBrowserSessions,
   makeFetchHttpTransport,
   makeNodeDiscoveredProviderSettings,
+  makePersistedFirstPartySettings,
   makeFirstPartyProviderRuntime,
   makeNativeCredentialStore,
   makeNodeFirstPartyLocalCapabilities,
@@ -737,6 +738,7 @@ export const makeNodeCLIProviderRuntime = (
   const claudeSwapFiles = makeNodePrivateFileStore();
   const claudeSwapRetentionPath = join(dirname(configPath), "claude-swap-retained-usage.json");
   const agentSessions = makeNodeAgentSessionRuntime(environment);
+  const discoveredProviderSettings = makeNodeDiscoveredProviderSettings({ environment });
   const runtime: ProviderRuntimeService = makeFirstPartyProviderRuntime({
     runtime: "cli",
     providers: FIRST_PARTY_PROVIDERS,
@@ -744,19 +746,27 @@ export const makeNodeCLIProviderRuntime = (
     credentials,
     clock: makeSystemClock(),
     browserSessions: makeCredentialBrowserSessions(credentials),
-    selectedAccounts: {
-      resolve: (providerId) =>
-        Effect.flatMap(configRepository.load, (config) =>
+    resolveFetchState: (providerId) =>
+      Effect.flatMap(configRepository.load, (config) =>
+        Effect.map(
           resolveSelectedFirstPartyAccountFromVault(config, credentials, providerId),
+          (selectedAccount) => ({
+            settings: makePersistedFirstPartySettings(
+              config,
+              providerId,
+              discoveredProviderSettings,
+            ),
+            ...(selectedAccount === undefined ? {} : { selectedAccount }),
+          }),
         ),
-    },
+      ),
     local: makeNodeFirstPartyLocalCapabilities({
       environment,
       ...(environment.ANTIGRAVITY_CLI_PATH?.trim()
         ? { antigravityExternalCLIPath: environment.ANTIGRAVITY_CLI_PATH.trim() }
         : {}),
     }),
-    settings: makeNodeDiscoveredProviderSettings({ environment }),
+    settings: discoveredProviderSettings,
   });
   // Both the normal Node CLI and SEA use the same disposable QuickJS child.
   // The SEA bootstrap extracts a digest-bound ESM child asset before forking

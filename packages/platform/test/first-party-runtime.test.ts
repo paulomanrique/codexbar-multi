@@ -13,7 +13,11 @@ import {
 import { amp, antigravity, grok, openai } from "@codexbar/providers";
 import { ibmbob } from "@codexbar/providers";
 import type { FirstPartyProvider, ProviderStrategy } from "@codexbar/providers";
-import { makeFirstPartyProviderRuntime, nextDailyReset } from "../src/first-party-runtime.ts";
+import {
+  makeFirstPartyProviderRuntime,
+  nextDailyReset,
+  type FirstPartyProviderRuntimeOptions,
+} from "../src/first-party-runtime.ts";
 
 const response = (value: unknown) => ({
   status: 200,
@@ -182,6 +186,160 @@ describe("first-party refresh runtime", () => {
       kind: "api-failure",
       message: "Unable to resolve the selected account.",
     });
+  });
+
+  it("reuses one coherent host fetch state for availability and execution", async () => {
+    let stateResolutions = 0;
+    let baseSettingsReads = 0;
+    const settingReads: string[] = [];
+    const strategy: ProviderStrategy = {
+      id: "openai.fetch-state-probe",
+      kind: "api",
+      autoRequiresAnySecret: ["PROBE_TOKEN"],
+      fetchUsage: async (context) => {
+        const token = context.settings.getSecret("PROBE_TOKEN");
+        const generation = context.settings.get("PROBE_GENERATION");
+        if (token !== `token-${generation}`) {
+          throw context.fail.apiFailure("Provider settings came from different generations.");
+        }
+        return { primary: { usedPercent: Number(generation) } };
+      },
+    };
+    const probe: FirstPartyProvider = {
+      ...strategy,
+      descriptor: {
+        id: "openai",
+        name: "Fetch state probe",
+        status: "partial",
+        endpoints: [],
+        settings: [
+          { key: "PROBE_TOKEN", title: "Token", type: "secure" },
+          { key: "PROBE_GENERATION", title: "Generation", type: "plain" },
+        ],
+        strategies: [strategy],
+      },
+      strategies: [strategy],
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: {
+        read: () => {
+          baseSettingsReads += 1;
+          return Effect.succeed(undefined);
+        },
+      },
+      resolveFetchState: () => {
+        const generation = ++stateResolutions;
+        return Effect.succeed({
+          settings: {
+            read: (_providerId, setting) => {
+              settingReads.push(`${generation}:${setting}`);
+              return Effect.succeed(
+                setting === "PROBE_TOKEN"
+                  ? `token-${generation}`
+                  : setting === "PROBE_GENERATION"
+                    ? String(generation)
+                    : undefined,
+              );
+            },
+          },
+        });
+      },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    });
+
+    const outcome = await Effect.runPromise(
+      runtime.fetch("openai", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(outcome.snapshot.primary?.usedPercent).toBe(1);
+    expect(stateResolutions).toBe(1);
+    expect(baseSettingsReads).toBe(0);
+    expect(settingReads).toEqual(["1:PROBE_TOKEN", "1:PROBE_TOKEN", "1:PROBE_GENERATION"]);
+
+    await expect(
+      Effect.runPromise(runtime.fetch("codex", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "codex" });
+    expect(stateResolutions).toBe(1);
+  });
+
+  it("fails closed and redacts fetch-state resolver failures before touching adapters", async () => {
+    let settingsReads = 0;
+    let credentialReads = 0;
+    let httpCalls = 0;
+    const probe: FirstPartyProvider = {
+      id: "openai.fetch-state-failure",
+      kind: "api",
+      descriptor: {
+        id: "openai",
+        name: "Fetch state failure",
+        status: "partial",
+        endpoints: [],
+        settings: [],
+      },
+      fetchUsage: async () => ({ primary: { usedPercent: 1 } }),
+    };
+    const base = {
+      providers: [probe],
+      settings: {
+        read: () => {
+          settingsReads += 1;
+          return Effect.succeed(undefined);
+        },
+      },
+      credentials: {
+        read: () => {
+          credentialReads += 1;
+          return Effect.succeed(undefined);
+        },
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      browserSessions: { cookieHeader: () => Effect.fail(new Error("not used")) },
+      http: {
+        execute: () => {
+          httpCalls += 1;
+          return Effect.fail(new InfrastructureError("test", "not used"));
+        },
+      },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    } as const;
+    const runtime = makeFirstPartyProviderRuntime({
+      ...base,
+      resolveFetchState: () => Effect.fail(new Error("secret config path")),
+    });
+    await expect(
+      Effect.runPromise(runtime.fetch("openai", { sourceMode: "api", includeCredits: false })),
+    ).rejects.toMatchObject({
+      kind: "api-failure",
+      message: "Unable to resolve provider fetch state.",
+    });
+    expect(settingsReads).toBe(0);
+    expect(credentialReads).toBe(0);
+    expect(httpCalls).toBe(0);
+
+    const classified = makeFirstPartyProviderRuntime({
+      ...base,
+      resolveFetchState: () =>
+        Effect.fail(new ClassifiedFetchFailure("missing-credential", "Config is unavailable.")),
+    });
+    await expect(
+      Effect.runPromise(classified.fetch("openai", { sourceMode: "api", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "missing-credential", message: "Config is unavailable." });
+
+    expect(() =>
+      makeFirstPartyProviderRuntime({
+        ...base,
+        resolveFetchState: () => Effect.succeed({ settings: base.settings }),
+        selectedAccounts: { resolve: () => Effect.succeed(undefined) },
+      } as unknown as FirstPartyProviderRuntimeOptions),
+    ).toThrow("mutually exclusive");
   });
 
   it("prefers the Antigravity local broker in auto mode and keeps host credentials out of the snapshot", async () => {

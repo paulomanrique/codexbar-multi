@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { readFile } from "node:fs/promises";
 import { ClassifiedFetchFailure, type ProviderFetchOutcome } from "@codexbar/core";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import {
@@ -60,6 +61,19 @@ const capture = (): {
 };
 
 describe("CodexBar Multi CLI runner", () => {
+  it("loads one config generation for selected accounts and persisted provider settings", async () => {
+    const source = await readFile(new URL("../src/runner.ts", import.meta.url), "utf8");
+    const runtimeStart = source.indexOf("const runtime: ProviderRuntimeService");
+    const runtimeEnd = source.indexOf("// Both the normal Node CLI", runtimeStart);
+    const runtimeBlock = source.slice(runtimeStart, runtimeEnd);
+    expect(runtimeBlock).toContain("resolveFetchState: (providerId) =>");
+    expect(runtimeBlock.match(/configRepository\.load/g)).toHaveLength(1);
+    expect(runtimeBlock).toContain("makePersistedFirstPartySettings(");
+    expect(runtimeBlock).toContain("providerId,");
+    expect(runtimeBlock).toContain("resolveSelectedFirstPartyAccountFromVault(config");
+    expect(runtimeBlock).not.toContain("selectedAccounts:");
+  });
+
   it("accepts bounded non-interactive secret input and fails closed for terminals or oversized input", async () => {
     async function* input(value: string): AsyncGenerator<string> {
       yield value;

@@ -73,6 +73,7 @@ import {
   makeNodeFirstPartyLocalCapabilities,
   makeNodeGrokLocalTokenScanner,
   makeNodeDiscoveredProviderSettings,
+  makePersistedFirstPartySettings,
   makeNodeConfigRepository,
   makeNodeTokenAccountMigrationLock,
   makeTokenAccountVaultConfigRepository,
@@ -686,16 +687,27 @@ void desktopReady?.then(async () => {
     }
 
     hostLifecycle.advanceBootstrapStage("runtime");
+    const discoveredProviderSettings = makeNodeDiscoveredProviderSettings();
     providerRuntime = makeFirstPartyProviderRuntime({
       runtime: "app",
       providers: FIRST_PARTY_PROVIDERS,
-      settings: makeNodeDiscoveredProviderSettings(),
+      settings: discoveredProviderSettings,
       credentials,
       browserSessions: makeCredentialBrowserSessions(credentials),
-      selectedAccounts: {
-        resolve: (providerId) =>
-          resolveSelectedFirstPartyAccountFromVault(desktopConfig, credentials, providerId),
-      },
+      resolveFetchState: (providerId) =>
+        Effect.flatMap(configRepository.load, (capturedConfig) =>
+          Effect.map(
+            resolveSelectedFirstPartyAccountFromVault(capturedConfig, credentials, providerId),
+            (selectedAccount) => ({
+              settings: makePersistedFirstPartySettings(
+                capturedConfig,
+                providerId,
+                discoveredProviderSettings,
+              ),
+              ...(selectedAccount === undefined ? {} : { selectedAccount }),
+            }),
+          ),
+        ),
       local: {
         ...baseLocal,
         fetchClaudeCliUsage: makeNodeClaudeCliLocalCapability({

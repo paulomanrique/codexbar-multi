@@ -90,6 +90,7 @@ export * from "./node-grok-local-session.ts";
 export * from "./node-grok-local-token-scan.ts";
 export * from "./node-grok-rpc.ts";
 export * from "./node-private-path-security.ts";
+export * from "./persisted-provider-settings.ts";
 
 /** Node's explicit equivalent of Swift's `NSString.expandingTildeInPath`. */
 export const resolveNodeClaudeSwapExecutablePath = (configuredPath: string): string => {
