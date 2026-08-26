@@ -6,6 +6,7 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { number, object, status, string } from "./_http.ts";
+import { normalizeMiniMaxCookieCredential } from "./minimax-credential.ts";
 
 type Region = "global" | "cn";
 type Service = {
@@ -23,7 +24,38 @@ const region = (ctx: ProviderContext): Region =>
 const host = (region: Region) => (region === "cn" ? "api.minimaxi.com" : "api.minimax.io");
 const platformHost = (region: Region) =>
   region === "cn" ? "platform.minimaxi.com" : "platform.minimax.io";
+const webFallbackHost = (region: Region) =>
+  region === "cn" ? "www.minimaxi.com" : "www.minimax.io";
 const apiURL = (region: Region, path: string) => `https://${host(region)}${path}`;
+const miniMaxUserAgent =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+
+const cleanToken = (raw: string | undefined): string | undefined => {
+  let value = raw?.trim();
+  if (!value) return undefined;
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  if (value.toLowerCase().startsWith("bearer ")) value = value.slice(7).trim();
+  return value || undefined;
+};
+const apiToken = (ctx: ProviderContext): string | undefined =>
+  cleanToken(
+    ctx.settings.getSecret("MINIMAX_CODING_API_KEY") ?? ctx.settings.get("MINIMAX_CODING_API_KEY"),
+  ) ??
+  cleanToken(ctx.settings.getSecret("MINIMAX_API_KEY") ?? ctx.settings.get("MINIMAX_API_KEY")) ??
+  cleanToken(ctx.settings.getSecret("MINIMAX_API_TOKEN") ?? ctx.settings.get("MINIMAX_API_TOKEN"));
+const apiTokenKind = (value: string): "coding-plan" | "standard" | "unknown" =>
+  value.toLowerCase().startsWith("sk-cp-")
+    ? "coding-plan"
+    : value.toLowerCase().startsWith("sk-api-")
+      ? "standard"
+      : "unknown";
 
 const positive = (value: unknown): number => Math.max(0, number(value) ?? 0);
 const timestamp = (ctx: ProviderContext, value: unknown): string | undefined => {
@@ -152,6 +184,96 @@ const tryAPI = async (ctx: ProviderContext, token: string, requestedRegion: Regi
   throw ctx.fail.authenticationExpired("MiniMax rejected the API token.");
 };
 
+const webCredential = async (ctx: ProviderContext) => {
+  const manualRaw =
+    ctx.settings.getSecret("MINIMAX_COOKIE") ??
+    ctx.settings.get("MINIMAX_COOKIE") ??
+    ctx.settings.getSecret("MINIMAX_COOKIE_HEADER") ??
+    ctx.settings.get("MINIMAX_COOKIE_HEADER");
+  const manualPresent = Boolean(manualRaw?.trim());
+  const manual = normalizeMiniMaxCookieCredential(manualRaw);
+  if (manualPresent && manual === undefined) {
+    throw ctx.fail.missingCredential("MiniMax manual cookie credential is invalid.");
+  }
+  const selectedRegion = region(ctx);
+  const browserCookie =
+    manual === undefined
+      ? (await ctx.browser.cookieHeader(platformHost(selectedRegion))).trim()
+      : "";
+  const browser = normalizeMiniMaxCookieCredential(browserCookie);
+  const cookieHeader = manual?.cookieHeader ?? browser?.cookieHeader;
+  if (!cookieHeader) {
+    throw ctx.fail.missingCredential("MiniMax coding-plan cookie is not configured.");
+  }
+  const configuredAuthorization = cleanToken(
+    ctx.settings.getSecret("MINIMAX_AUTHORIZATION_TOKEN") ??
+      ctx.settings.get("MINIMAX_AUTHORIZATION_TOKEN"),
+  );
+  const configuredGroupID = (
+    ctx.settings.getSecret("MINIMAX_GROUP_ID") ?? ctx.settings.get("MINIMAX_GROUP_ID")
+  )?.trim();
+  const resolvedAPIToken = apiToken(ctx);
+  const standardToken =
+    resolvedAPIToken && apiTokenKind(resolvedAPIToken) === "standard"
+      ? resolvedAPIToken
+      : undefined;
+  return {
+    cookieHeader,
+    authorizationToken: configuredAuthorization ?? manual?.authorizationToken ?? standardToken,
+    groupId: configuredGroupID || manual?.groupId,
+    region: selectedRegion,
+  };
+};
+
+const webHeaders = (
+  selectedRegion: Region,
+  credential: Awaited<ReturnType<typeof webCredential>>,
+) => {
+  const origin = `https://${platformHost(selectedRegion)}`;
+  return {
+    Cookie: credential.cookieHeader,
+    ...(credential.authorizationToken
+      ? { Authorization: `Bearer ${credential.authorizationToken}` }
+      : {}),
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": miniMaxUserAgent,
+    Origin: origin,
+    Referer: `${origin}/user-center/payment/coding-plan`,
+    "X-Requested-With": "XMLHttpRequest",
+  };
+};
+
+const webUsage = async (ctx: ProviderContext) => {
+  const credential = await webCredential(ctx);
+  const query = new URLSearchParams();
+  if (credential.groupId) query.set("GroupId", credential.groupId);
+  const suffix = query.size > 0 ? `?${query}` : "";
+  const hosts = [platformHost(credential.region), webFallbackHost(credential.region)] as const;
+  let terminalError: Error | undefined;
+  for (const currentHost of hosts) {
+    try {
+      const response = await ctx.http.getJSON(
+        `https://${currentHost}/v1/api/openplatform/coding_plan/remains${suffix}`,
+        { headers: webHeaders(credential.region, credential) },
+      );
+      const root = object(response.json);
+      const code = number(object(root?.base_resp)?.status_code);
+      if (response.status === 401 || response.status === 403 || code === 1004) {
+        throw ctx.fail.authenticationExpired("MiniMax coding-plan session expired.");
+      }
+      status(ctx, "MiniMax", response);
+      if (!root) throw ctx.fail.parseFailure("MiniMax response must be an object.");
+      return snapshot(ctx, root);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      terminalError = error instanceof Error ? error : new Error(String(error));
+      if (terminalError.message.startsWith("authentication-expired:")) throw terminalError;
+    }
+  }
+  throw terminalError ?? ctx.fail.apiFailure("MiniMax coding-plan endpoints did not succeed.");
+};
+
 const definition: ProviderDefinition = {
   id: "minimax",
   name: "MiniMax",
@@ -160,50 +282,58 @@ const definition: ProviderDefinition = {
     "https://api.minimaxi.com",
     "https://platform.minimax.io",
     "https://platform.minimaxi.com",
+    "https://www.minimax.io",
+    "https://www.minimaxi.com",
   ],
-  auth: { type: "bearer", secret: "MINIMAX_API_TOKEN" },
+  auth: { type: "provider-managed", secret: "MINIMAX_API_KEY" },
   settings: [
-    { key: "MINIMAX_API_TOKEN", title: "API token", type: "secure" },
+    { key: "MINIMAX_CODING_API_KEY", title: "Coding Plan API key", type: "secure" },
+    { key: "MINIMAX_API_KEY", title: "API key", type: "secure" },
+    { key: "MINIMAX_API_TOKEN", title: "Legacy API token", type: "secure" },
     { key: "MINIMAX_API_REGION", title: "API region", type: "plain" },
+    { key: "MINIMAX_COOKIE", title: "Cookie", type: "secure" },
     { key: "MINIMAX_COOKIE_HEADER", title: "Cookie header", type: "secure" },
+    { key: "MINIMAX_AUTHORIZATION_TOKEN", title: "Web authorization token", type: "secure" },
+    { key: "MINIMAX_GROUP_ID", title: "Group ID", type: "secure" },
   ],
   capabilities: ["browser-cookies"],
   cookieDomains: ["platform.minimax.io", "platform.minimaxi.com"],
   fetchUsage: async (ctx: ProviderContext) => {
-    const token = ctx.settings.getSecret("MINIMAX_API_TOKEN")?.trim();
+    const token = apiToken(ctx);
     if (token) return tryAPI(ctx, token, region(ctx));
-    const selected = region(ctx);
-    const cookie =
-      ctx.settings.getSecret("MINIMAX_COOKIE_HEADER")?.trim() ||
-      (await ctx.browser.cookieHeader(platformHost(selected))).trim();
-    if (!cookie)
-      throw ctx.fail.missingCredential(
-        "MiniMax API token or coding-plan cookie is not configured.",
-      );
-    const response = await ctx.http.getJSON(
-      `https://${platformHost(selected)}/v1/api/openplatform/coding_plan/remains`,
-      {
-        headers: {
-          Cookie: cookie,
-          Accept: "application/json, text/plain, */*",
-          "X-Requested-With": "XMLHttpRequest",
-        },
-      },
-    );
-    status(ctx, "MiniMax", response);
-    const root = object(response.json);
-    if (number(object(root?.base_resp)?.status_code) === 1004) {
-      throw ctx.fail.authenticationExpired("MiniMax coding-plan session expired.");
-    }
-    if (!root) throw ctx.fail.parseFailure("MiniMax response must be an object.");
-    return snapshot(ctx, root);
+    return webUsage(ctx);
   },
 };
 
-const strategy: ProviderStrategy = {
+const legacyStrategy: ProviderStrategy = {
   id: "minimax.api",
   kind: "api",
   fetchUsage: definition.fetchUsage,
 };
-export const descriptor: ProviderDescriptor = { ...definition, status: "partial", strategy };
-export const minimax: FirstPartyProvider = { ...strategy, descriptor };
+const apiStrategy: ProviderStrategy = {
+  id: "minimax.api",
+  kind: "api",
+  autoRequiresAnySecret: ["MINIMAX_CODING_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_TOKEN"],
+  fallbackOn: ["authentication-expired", "missing-credential", "api-failure"],
+  fetchUsage: async (ctx) => {
+    const token = apiToken(ctx);
+    if (!token) throw ctx.fail.missingCredential("MiniMax API token is not configured.");
+    if (apiTokenKind(token) === "standard") {
+      throw ctx.fail.missingCredential("MiniMax standard API keys use the coding-plan web flow.");
+    }
+    return tryAPI(ctx, token, region(ctx));
+  },
+};
+const webStrategy: ProviderStrategy = {
+  id: "minimax.web",
+  kind: "web",
+  fetchUsage: webUsage,
+};
+const strategies = [apiStrategy, webStrategy] as const;
+export const descriptor: ProviderDescriptor = {
+  ...definition,
+  status: "partial",
+  strategy: legacyStrategy,
+  strategies,
+};
+export const minimax: FirstPartyProvider = { ...legacyStrategy, descriptor, strategies };

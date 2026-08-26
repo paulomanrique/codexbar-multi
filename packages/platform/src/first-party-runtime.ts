@@ -1041,6 +1041,31 @@ const selectedStrategyAllowed = (
       strategy.id === "qoder.web"
     );
   }
+  if (providerId === "minimax") {
+    const legacyCookie = ownSetting(selectedAccount.secureSettings, "MINIMAX_COOKIE");
+    const cookie = ownSetting(selectedAccount.secureSettings, "MINIMAX_COOKIE_HEADER");
+    const authorization = ownSetting(selectedAccount.secureSettings, "MINIMAX_AUTHORIZATION_TOKEN");
+    const groupId = ownSetting(selectedAccount.secureSettings, "MINIMAX_GROUP_ID");
+    const legacyToken = ownSetting(selectedAccount.secureSettings, "MINIMAX_API_TOKEN");
+    const apiKey = ownSetting(selectedAccount.secureSettings, "MINIMAX_API_KEY");
+    const codingKey = ownSetting(selectedAccount.secureSettings, "MINIMAX_CODING_API_KEY");
+    return (
+      legacyCookie.present &&
+      legacyCookie.value === undefined &&
+      cookie.present &&
+      Boolean(cookie.value?.trim()) &&
+      authorization.present &&
+      groupId.present &&
+      legacyToken.present &&
+      legacyToken.value === undefined &&
+      apiKey.present &&
+      apiKey.value === undefined &&
+      codingKey.present &&
+      codingKey.value === undefined &&
+      (context.sourceMode === "auto" || context.sourceMode === "web") &&
+      strategy.id === "minimax.web"
+    );
+  }
   if (providerId === "copilot") {
     const apiToken = ownSetting(selectedAccount.secureSettings, "COPILOT_API_TOKEN");
     return apiToken.present && Boolean(apiToken.value?.trim()) && strategy.id === "copilot.api";

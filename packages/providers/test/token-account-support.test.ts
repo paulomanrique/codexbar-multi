@@ -90,6 +90,7 @@ describe("provider token account support inventory", () => {
       "litellm",
       "llmproxy",
       "manus",
+      "minimax",
       "mistral",
       "neuralwatt",
       "ollama",

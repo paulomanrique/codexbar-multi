@@ -70,7 +70,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
     - [x] Add selected Factory Cookie/Bearer isolation with Swift-compatible manual credential parsing.
     - [x] Add selected Qoder cookie isolation with strict international/China host routing.
     - [ ] Make the OpenRouter spend-history UI provenance explicit when it uses the independently global management key.
-    - [ ] Add descriptor-driven environment/cookie mappers and provider-specific scrub/source rules for the remaining provider: MiniMax.
+    - [x] Add descriptor-driven MiniMax Cookie/Bearer/Group ID mappers with selected-account scrub/source rules.
   - [ ] Add account CRUD/UI, unsupported token-account provider mappers, full Codex selected-home/web semantics, and Codex selected-account credential mapping.
   - [ ] Migrate other plaintext provider config secrets (`apiKey`, `secretKey`, `cookieHeader`, `pluginSecrets`) under separate milestones.
 - [x] Integrate the dedicated SQLite worker with Electron main startup/shutdown.
@@ -148,7 +148,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
 
 - [x] Port the complete 14-provider simple HTTP wave with dedicated TypeScript tests.
 - [ ] Finish Swift-oracle/native parity gates for the simple HTTP wave.
-- [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial).
+- [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial; MiniMax selected-account isolation is complete).
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.
 - [ ] Complete local/CLI/OAuth parity; all provider IDs now have executable strategies, while Grok OAuth/CLI RPC and the remaining native discovery/login adapters still require parity work.
   - [x] Port Kiro `GetUsageLimits` enrichment, including read-only CLI credentials, Windows/macOS/Linux state paths, overage cap/charges, and CLI-authoritative fallback.

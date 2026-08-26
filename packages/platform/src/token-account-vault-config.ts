@@ -17,6 +17,7 @@ import {
 } from "@codexbar/providers/providers/antigravity";
 import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-code-cookie";
 import { manusSessionToken } from "@codexbar/providers/providers/manus";
+import { normalizeMiniMaxCookieCredential } from "@codexbar/providers/providers/minimax-credential";
 import { canonicalFactoryManualCredential } from "@codexbar/providers/providers/factory";
 import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers/ollama";
 import { normalizeQoderManualCredential } from "@codexbar/providers/providers/qoder";
@@ -624,6 +625,35 @@ const selectedQoderAccount = (
   });
 };
 
+const selectedMiniMaxAccount = (
+  accountId: string,
+  raw: string,
+): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
+  const rawBytes = new TextEncoder().encode(raw).byteLength;
+  const credential = normalizeMiniMaxCookieCredential(raw);
+  if (
+    raw.includes("\u0000") ||
+    rawBytes >= 1024 * 1024 ||
+    credential === undefined ||
+    credential.cookieHeader.includes("\u0000") ||
+    new TextEncoder().encode(credential.cookieHeader).byteLength >= 1024 * 1024
+  ) {
+    return Effect.fail(selectedAccountFailure("Selected MiniMax account credential is invalid."));
+  }
+  return Effect.succeed({
+    id: accountId,
+    secureSettings: {
+      MINIMAX_COOKIE: null,
+      MINIMAX_COOKIE_HEADER: credential.cookieHeader,
+      MINIMAX_AUTHORIZATION_TOKEN: credential.authorizationToken ?? null,
+      MINIMAX_API_TOKEN: null,
+      MINIMAX_API_KEY: null,
+      MINIMAX_CODING_API_KEY: null,
+      MINIMAX_GROUP_ID: credential.groupId ?? null,
+    },
+  });
+};
+
 const selectedZaiAccount = (
   accountId: string,
   raw: string,
@@ -968,6 +998,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
       if (providerId === "ollama") return selectedOllamaAccount(account.id, material);
       if (providerId === "factory") return selectedFactoryAccount(account.id, material);
       if (providerId === "qoder") return selectedQoderAccount(account.id, material);
+      if (providerId === "minimax") return selectedMiniMaxAccount(account.id, material);
       if (providerId === "antigravity") return selectedAntigravityAccount(account.id, material);
       return Effect.fail(
         selectedAccountFailure("Selected account provider mapper is not available."),

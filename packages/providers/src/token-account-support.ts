@@ -60,6 +60,7 @@ const runtimeSelectableProviders = new Set<ProviderId>([
   "llmproxy",
   "litellm",
   "manus",
+  "minimax",
   "mistral",
   "neuralwatt",
   "ollama",

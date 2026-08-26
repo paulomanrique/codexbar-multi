@@ -136,16 +136,6 @@ describe("first-party selected accounts from the token-account vault", () => {
     ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
-  it("fails closed for selected accounts whose first-party mapper is not ported", async () => {
-    for (const providerId of ["minimax"] as const) {
-      await expect(
-        resolve(config(providerId), providerId, {
-          [tokenAccountVaultKey(providerId, "account-0")]: "must-not-be-reinterpreted",
-        }),
-      ).rejects.toMatchObject({ kind: "missing-credential" });
-    }
-  });
-
   it.each([
     ["sid=selected", "sid=selected", "qoder.com"],
     ["Cookie: sid=selected", "sid=selected", "qoder.com"],
@@ -173,6 +163,53 @@ describe("first-party selected accounts from the token-account vault", () => {
   ])("fails closed for invalid selected Qoder material", async (material) => {
     const key = tokenAccountVaultKey("qoder", "account-0");
     await expect(resolve(config("qoder"), "qoder", { [key]: material })).rejects.toMatchObject({
+      kind: "missing-credential",
+    });
+  });
+
+  it.each([
+    ["session=selected", "session=selected", undefined, undefined],
+    [
+      "Cookie: session=selected\nAuthorization: Bearer selected-bearer\nx-group-id: 123456",
+      "session=selected",
+      "selected-bearer",
+      "123456",
+    ],
+    [
+      "curl 'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains?GroupId=654321' -H 'Cookie: session=selected'",
+      "session=selected",
+      undefined,
+      "654321",
+    ],
+  ] as const)(
+    "normalizes a selected MiniMax credential from %s",
+    async (material, cookieHeader, authorizationToken, groupId) => {
+      const key = tokenAccountVaultKey("minimax", "account-0");
+      await expect(resolve(config("minimax"), "minimax", { [key]: material })).resolves.toEqual({
+        id: "account-0",
+        secureSettings: {
+          MINIMAX_COOKIE: null,
+          MINIMAX_COOKIE_HEADER: cookieHeader,
+          MINIMAX_AUTHORIZATION_TOKEN: authorizationToken ?? null,
+          MINIMAX_API_TOKEN: null,
+          MINIMAX_API_KEY: null,
+          MINIMAX_CODING_API_KEY: null,
+          MINIMAX_GROUP_ID: groupId ?? null,
+        },
+      });
+    },
+  );
+
+  it.each([
+    "",
+    "not-a-cookie",
+    "session=value\u0000suffix",
+    "Cookie: session=value\nInjected: yes",
+    "x".repeat(1024 * 1024),
+    `session=${"x".repeat(1024 * 1024)}`,
+  ])("fails closed for invalid selected MiniMax material", async (material) => {
+    const key = tokenAccountVaultKey("minimax", "account-0");
+    await expect(resolve(config("minimax"), "minimax", { [key]: material })).rejects.toMatchObject({
       kind: "missing-credential",
     });
   });
