@@ -37,6 +37,7 @@ import type {
   ProviderSelectedAccount,
   ProviderStrategy,
 } from "@codexbar/providers";
+import { usesAccountScopedBrowserSession } from "./account-scoped-browser-session.ts";
 
 const maximumResponseBytes = 1024 * 1024;
 const defaultTimeoutMs = 15_000;
@@ -164,7 +165,7 @@ const acceptsSource = (
   strategy: ProviderStrategy,
   mode: ProviderFetchContext["sourceMode"],
 ): boolean =>
-  mode === "auto" ||
+  (mode === "auto" && strategy.explicitOnly !== true) ||
   (mode === "web" && strategy.kind === "web") ||
   (mode === "cli" && (strategy.kind === "cli" || strategy.kind === "local")) ||
   (mode === "oauth" && strategy.kind === "oauth") ||
@@ -918,16 +919,35 @@ const selectedStrategyAllowed = (
   selectedAccount: FirstPartySelectedAccount | undefined,
   strategy: ProviderStrategy,
 ): boolean => {
+  if (providerId === "codex" && strategy.id === "codex.web.dashboard") {
+    if (context.sourceMode !== "web" || selectedAccount === undefined) return false;
+    const oauth = ownSetting(selectedAccount.secureSettings, "CODEX_ACCESS_TOKEN");
+    const pat = ownSetting(selectedAccount.secureSettings, "CODEX_PERSONAL_ACCESS_TOKEN");
+    const accountId = ownSetting(selectedAccount.plainSettings, "CODEX_ACCOUNT_ID");
+    return (
+      oauth.present &&
+      pat.present &&
+      accountId.present &&
+      Boolean(accountId.value?.trim()) &&
+      Boolean(selectedAccount.accountEmail?.trim())
+    );
+  }
   if (selectedAccount === undefined) return true;
   if (providerId === "codex") {
     const oauth = ownSetting(selectedAccount.secureSettings, "CODEX_ACCESS_TOKEN");
     const pat = ownSetting(selectedAccount.secureSettings, "CODEX_PERSONAL_ACCESS_TOKEN");
-    return (
-      oauth.present &&
-      pat.present &&
-      (Boolean(oauth.value?.trim()) || Boolean(pat.value?.trim())) &&
-      strategy.id === "codex"
-    );
+    const accountId = ownSetting(selectedAccount.plainSettings, "CODEX_ACCOUNT_ID");
+    const ownsCredentialNamespace = oauth.present && pat.present && accountId.present;
+    if (!ownsCredentialNamespace) return false;
+    if (context.sourceMode === "web") return false;
+    if (context.sourceMode === "oauth") {
+      return Boolean(oauth.value?.trim()) && strategy.id === "codex.oauth";
+    }
+    if (context.sourceMode === "api") {
+      return Boolean(pat.value?.trim()) && strategy.id === "codex";
+    }
+    if (context.sourceMode === "cli") return false;
+    return (Boolean(oauth.value?.trim()) || Boolean(pat.value?.trim())) && strategy.id === "codex";
   }
   if (providerId === "deepinfra") {
     const apiKey = ownSetting(selectedAccount.secureSettings, "DEEPINFRA_API_KEY");
@@ -1392,10 +1412,11 @@ const executeProvider = (
             }
             let cookie: string;
             try {
-              const cookieHeader =
-                descriptor.id === "grok"
-                  ? options.browserSessions.cookieHeader(descriptor.id, domain, selectedAccount?.id)
-                  : options.browserSessions.cookieHeader(descriptor.id, domain);
+              const cookieHeader = options.browserSessions.cookieHeader(
+                descriptor.id,
+                domain,
+                usesAccountScopedBrowserSession(descriptor.id) ? selectedAccount?.id : undefined,
+              );
               cookie = await Effect.runPromise(cookieHeader, { signal: operationSignal });
             } catch (error) {
               if (isAbortError(error)) throw error;

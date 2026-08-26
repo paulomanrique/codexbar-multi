@@ -21,10 +21,12 @@ providers:
         - TestsLinux/*Codex*Tests.swift
       tsGlobs:
         - packages/providers/test/codex.test.ts
+        - packages/providers/test/codex-dashboard-authority.test.ts
         - packages/providers/test/token-account-support.test.ts
         - apps/cli/test/codex-credential.test.ts
         - packages/platform/test/first-party-runtime-codex-account.test.ts
         - packages/platform/test/first-party-selected-account.test.ts
+        - packages/platform/test/browser-session-credentials.test.ts
         - packages/platform/test/node-codex-home.test.ts
         - packages/platform/test/node-codex-login.test.ts
         - apps/desktop/test/codex-account-login.test.ts
@@ -44,8 +46,10 @@ providers:
       expected:
         - packages/providers/src/providers/codex.ts
         - packages/providers/src/providers/codex-pat.ts
+        - packages/providers/src/providers/codex-dashboard-authority.ts
         - packages/providers/src/token-account-support.ts
         - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/account-scoped-browser-session.ts
         - packages/platform/src/node-codex-credential.ts
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/node-codex-login.ts
@@ -62,8 +66,10 @@ providers:
       real:
         - packages/providers/src/providers/codex.ts
         - packages/providers/src/providers/codex-pat.ts
+        - packages/providers/src/providers/codex-dashboard-authority.ts
         - packages/providers/src/token-account-support.ts
         - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/account-scoped-browser-session.ts
         - packages/platform/src/node-codex-credential.ts
         - packages/platform/src/node-codex-home.ts
         - packages/platform/src/node-codex-login.ts
@@ -79,10 +85,12 @@ providers:
         - apps/desktop/src/renderer/settings-view-model.ts
     tsTestGlobs:
       - packages/providers/test/codex.test.ts
+      - packages/providers/test/codex-dashboard-authority.test.ts
       - packages/providers/test/token-account-support.test.ts
       - apps/cli/test/codex-credential.test.ts
       - packages/platform/test/first-party-runtime-codex-account.test.ts
       - packages/platform/test/first-party-selected-account.test.ts
+      - packages/platform/test/browser-session-credentials.test.ts
       - packages/platform/test/node-codex-home.test.ts
       - packages/platform/test/node-codex-login.test.ts
       - apps/desktop/test/codex-account-login.test.ts

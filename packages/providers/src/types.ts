@@ -277,6 +277,8 @@ export interface ProviderStrategy {
   readonly id: string;
   readonly kind: "api" | "web" | "cli" | "local" | "oauth";
   readonly fetchUsage: (context: ProviderContext) => Promise<ProviderSnapshot>;
+  /** Never offer this strategy in Auto; it must be selected by its matching source mode. */
+  readonly explicitOnly?: boolean;
   /** In Auto, skip this strategy unless at least one declared secure setting is populated. */
   readonly autoRequiresAnySecret?: readonly string[];
   /**

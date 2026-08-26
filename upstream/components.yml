@@ -154,7 +154,9 @@ components:
       - Sources/CodexBar/CookieHeaderStore.swift
     tsPaths:
       - packages/core/src/services.ts
+      - packages/platform/src/account-scoped-browser-session.ts
       - packages/platform/src/**/*.ts
+      - packages/providers/src/providers/codex-dashboard-authority.ts
       - packages/providers/src/**/*.ts
     tests:
       - Tests/CodexBarTests/APITokenFetchStrategyTests.swift
@@ -162,6 +164,9 @@ components:
       - Tests/CodexBarTests/CodexPATAppPublicationTests.swift
       - Tests/CodexBarTests/*Credentials*Tests.swift
       - Tests/CodexBarTests/BrowserCookie*.swift
+      - packages/providers/test/codex-dashboard-authority.test.ts
+      - packages/platform/test/browser-session-credentials.test.ts
+      - packages/platform/test/first-party-runtime-codex-account.test.ts
     fixtures:
       - Tests/CodexBarTests/Fixtures/Providers/OpenAI/*.html
       - Tests/CodexBarTests/Fixtures/codex-config-*.toml

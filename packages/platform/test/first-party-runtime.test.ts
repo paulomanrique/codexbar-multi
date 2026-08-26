@@ -12,7 +12,7 @@ import {
 } from "@codexbar/core";
 import { amp, antigravity, grok, openai } from "@codexbar/providers";
 import { ibmbob } from "@codexbar/providers";
-import type { FirstPartyProvider } from "@codexbar/providers";
+import type { FirstPartyProvider, ProviderStrategy } from "@codexbar/providers";
 import { makeFirstPartyProviderRuntime, nextDailyReset } from "../src/first-party-runtime.ts";
 
 const response = (value: unknown) => ({
@@ -23,6 +23,60 @@ const response = (value: unknown) => ({
 });
 
 describe("first-party refresh runtime", () => {
+  it("never offers an explicit-only strategy in Auto", async () => {
+    let browserCalls = 0;
+    const web: ProviderStrategy = {
+      id: "openai.explicit-web-probe",
+      kind: "web",
+      explicitOnly: true,
+      fetchUsage: async (context) => {
+        await context.browser.cookieHeader("example.test");
+        return { primary: { usedPercent: 1 } };
+      },
+    };
+    const probe: FirstPartyProvider = {
+      ...web,
+      descriptor: {
+        id: "openai",
+        name: "Explicit web probe",
+        status: "partial",
+        endpoints: ["https://example.test"],
+        settings: [],
+        capabilities: ["browser-cookies"],
+        cookieDomains: ["example.test"],
+        strategies: [web],
+      },
+      strategies: [web],
+    };
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [probe],
+      settings: { read: () => Effect.succeed(undefined) },
+      browserSessions: {
+        cookieHeader: () => {
+          browserCalls += 1;
+          return Effect.succeed("session=explicit");
+        },
+      },
+      credentials: {
+        read: () => Effect.succeed(undefined),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      http: { execute: () => Effect.fail(new InfrastructureError("test", "not used")) },
+      clock: { now: Effect.succeed(1), sleep: () => Effect.void },
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("openai", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "openai" });
+    expect(browserCalls).toBe(0);
+
+    await expect(
+      Effect.runPromise(runtime.fetch("openai", { sourceMode: "web", includeCredits: false })),
+    ).resolves.toMatchObject({ strategyId: "openai.explicit-web-probe" });
+    expect(browserCalls).toBe(1);
+  });
+
   it("passes selected-account ClassifiedFetchFailure through without ambient fallback", async () => {
     let settingsReads = 0;
     let credentialReads = 0;

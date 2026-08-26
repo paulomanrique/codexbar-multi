@@ -2,6 +2,7 @@ export * from "./types.ts";
 export * from "./registry.ts";
 export * from "./snapshot-mapper.ts";
 export * from "./token-account-support.ts";
+export * from "./providers/codex-dashboard-authority.ts";
 
 import { installProviderRegistry, PROVIDER_REGISTRY } from "./registry.ts";
 import { aiand } from "./providers/aiand.ts";

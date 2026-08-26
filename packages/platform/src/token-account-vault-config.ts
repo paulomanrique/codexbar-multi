@@ -769,6 +769,7 @@ const selectedCodexAccount = (
   }
   return Effect.succeed({
     id: accountId,
+    ...(parsed.email === undefined ? {} : { accountEmail: parsed.email }),
     ...(externalIdentifier === undefined ? {} : { externalIdentifier }),
     secureSettings: {
       CODEX_ACCESS_TOKEN: accessToken ?? null,

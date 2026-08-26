@@ -167,6 +167,7 @@ describe("first-party selected accounts from the token-account vault", () => {
       ),
     ).resolves.toEqual({
       id: "account-0",
+      accountEmail: "selected@example.test",
       externalIdentifier: "acct-selected",
       secureSettings: {
         CODEX_ACCESS_TOKEN: "selected-oauth",
@@ -269,6 +270,45 @@ describe("first-party selected accounts from the token-account vault", () => {
         }),
       }),
     ).resolves.toMatchObject({ plainSettings: { CODEX_ACCOUNT_ID: "org-from-access" } });
+  });
+
+  it("keeps the auth-backed Codex email separate from renameable account metadata", async () => {
+    const account = {
+      id: "account-0",
+      label: "Renameable label",
+      addedAt: 0,
+      externalIdentifier: "acct-owner",
+    };
+    const input: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "codex",
+          extensions: {},
+          tokenAccounts: { version: 2, activeIndex: 0, accounts: [account] },
+        },
+      ],
+    };
+    const key = tokenAccountVaultKey("codex", account.id);
+
+    await expect(
+      resolve(input, "codex", {
+        [key]: JSON.stringify({
+          tokens: {
+            access_token: "selected-oauth",
+            refresh_token: "selected-refresh",
+            id_token: jwt({
+              email: "OWNER@Example.Test",
+              "https://api.openai.com/auth": { chatgpt_account_id: "acct-owner" },
+            }),
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      id: account.id,
+      accountEmail: "owner@example.test",
+      externalIdentifier: "acct-owner",
+    });
   });
 
   it("maps selected Codex personal access tokens and suppresses ambient OAuth", async () => {

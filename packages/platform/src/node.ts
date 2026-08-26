@@ -40,6 +40,7 @@ import type {
   FirstPartyLocalCapabilities,
   FirstPartySettings,
 } from "./first-party-runtime.ts";
+import { usesAccountScopedBrowserSession } from "./account-scoped-browser-session.ts";
 import {
   parseGrokAuthJson,
   parseGrokLocalSessionSignal,
@@ -1313,7 +1314,7 @@ export const makeCredentialBrowserSessions = (
   accountIdFor: (providerId: ProviderId) => string = () => "default",
 ): FirstPartyBrowserSessions => ({
   cookieHeader: (providerId, domain, selectedAccountId) => {
-    if (selectedAccountId !== undefined && providerId !== "grok") {
+    if (selectedAccountId !== undefined && !usesAccountScopedBrowserSession(providerId)) {
       return Effect.fail(
         new InfrastructureError("browser session", "Selected browser session is unsupported"),
       );

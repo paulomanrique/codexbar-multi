@@ -93,6 +93,14 @@ const usagePayload = (ctx: ProviderContext, value: unknown): CodexUsagePayload =
   return value as CodexUsagePayload;
 };
 
+const parseResponseJSON = (ctx: ProviderContext, bodyText: string, message: string): unknown => {
+  try {
+    return JSON.parse(bodyText) as unknown;
+  } catch {
+    throw ctx.fail.parseFailure(message);
+  }
+};
+
 /**
  * Fetch a PAT's identity before usage. The account header is intentionally
  * derived only from whoami, never from an OAuth/managed-workspace setting.
@@ -101,22 +109,30 @@ export const fetchCodexPATUsage = async (
   ctx: ProviderContext,
   token: string,
 ): Promise<ProviderSnapshot> => {
-  const whoami = await ctx.http.getJSON(whoamiURL, { headers: headersFor(ctx, token) });
+  const whoami = await ctx.http.get(whoamiURL, { headers: headersFor(ctx, token) });
   throwForResponse(ctx, whoami.status, "whoami");
-  if (typeof whoami.json !== "object" || whoami.json === null || Array.isArray(whoami.json))
+  const whoamiJSON = parseResponseJSON(
+    ctx,
+    whoami.bodyText,
+    "Invalid response from Codex PAT whoami API",
+  );
+  if (typeof whoamiJSON !== "object" || whoamiJSON === null || Array.isArray(whoamiJSON))
     throw ctx.fail.parseFailure("Invalid response from Codex PAT whoami API");
-  const identity = whoami.json as CodexPATWhoami;
+  const identity = whoamiJSON as CodexPATWhoami;
   const accountId = optionalWhoamiString(ctx, identity.chatgpt_account_id, "chatgpt_account_id");
   const email = optionalWhoamiString(ctx, identity.email, "email");
   const planType = optionalWhoamiString(ctx, identity.chatgpt_plan_type, "chatgpt_plan_type");
-  const usage = await ctx.http.getJSON(usageURL, {
+  const usage = await ctx.http.get(usageURL, {
     headers: {
       ...headersFor(ctx, token),
       ...(accountId === undefined ? {} : { "ChatGPT-Account-Id": accountId }),
     },
   });
   throwForResponse(ctx, usage.status, "usage");
-  const payload = usagePayload(ctx, usage.json);
+  const payload = usagePayload(
+    ctx,
+    parseResponseJSON(ctx, usage.bodyText, "Invalid response from Codex usage API"),
+  );
   const primary = parseWindow(ctx, payload.rate_limit?.primary_window, "primary_window");
   const secondary = parseWindow(ctx, payload.rate_limit?.secondary_window, "secondary_window");
   const balance = optionalNumber(payload.credits?.balance);
@@ -145,4 +161,8 @@ export const fetchCodexPATUsage = async (
 };
 
 export const isCodexPATAuthenticationFailure = (error: unknown): boolean =>
-  error instanceof Error && error.message.startsWith("authentication-expired:");
+  (typeof error === "object" &&
+    error !== null &&
+    "kind" in error &&
+    error.kind === "authentication-expired") ||
+  (error instanceof Error && error.message.startsWith("authentication-expired:"));

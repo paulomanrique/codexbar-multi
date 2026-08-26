@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { Effect } from "effect";
 import {
   InfrastructureError,
+  MissingBrowserCredentialError,
   type HttpRequest,
   type HttpResponse,
   type PersistedCodexBarConfig,
@@ -332,7 +333,7 @@ describe("first-party runtime selected Codex accounts", () => {
     expect(requests).toEqual([]);
   });
 
-  it.each(["web", "cli"] as const)(
+  it.each(["cli"] as const)(
     "does not route selected Codex account material through %s source mode",
     async (sourceMode) => {
       const requests: HttpRequest[] = [];
@@ -350,6 +351,220 @@ describe("first-party runtime selected Codex accounts", () => {
       expect(requests).toEqual([]);
     },
   );
+
+  it("routes explicit web through only the selected account browser session", async () => {
+    const requests: HttpRequest[] = [];
+    const browserCalls: Array<{
+      readonly provider: string;
+      readonly domain: string;
+      readonly selectedAccountId?: string;
+    }> = [];
+    const selected = makeFirstPartyProviderRuntime({
+      providers: [codex],
+      settings: {
+        read: (_provider, setting) =>
+          setting === "CODEX_CLI_USER_AGENT"
+            ? Effect.succeed("codex_cli_rs/1.2.3 (Windows 11; x86_64)")
+            : Effect.die(`selected Codex web account must suppress ambient setting ${setting}`),
+      },
+      selectedAccounts: {
+        resolve: () =>
+          Effect.succeed({
+            id: "codex-web-selected",
+            accountEmail: "owner@example.com",
+            secureSettings: {
+              CODEX_ACCESS_TOKEN: null,
+              CODEX_PERSONAL_ACCESS_TOKEN: null,
+            },
+            plainSettings: { CODEX_ACCOUNT_ID: "acct-owner" },
+          }),
+      },
+      browserSessions: {
+        cookieHeader: (provider, domain, selectedAccountId) => {
+          browserCalls.push({
+            provider,
+            domain,
+            ...(selectedAccountId === undefined ? {} : { selectedAccountId }),
+          });
+          return Effect.succeed("__Secure-session=selected-cookie");
+        },
+      },
+      credentials: {
+        read: () => Effect.die("selected Codex web account must not read the ambient keyring"),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      http: {
+        execute: (request) => {
+          requests.push(request);
+          return Effect.succeed(
+            response(
+              request,
+              request.url.endsWith("/backend-api/me")
+                ? { user: { email: "owner@example.com" } }
+                : { ...usagePayload, account_id: "acct-owner" },
+            ),
+          );
+        },
+      },
+      clock,
+    });
+
+    const outcome = await Effect.runPromise(
+      selected.fetch("codex", { sourceMode: "web", includeCredits: false }),
+    );
+    expect(outcome.strategyId).toBe("codex.web.dashboard");
+    expect(browserCalls).toEqual([
+      {
+        provider: "codex",
+        domain: "chatgpt.com",
+        selectedAccountId: "codex-web-selected",
+      },
+    ]);
+    expect(requests.map(({ url }) => url)).toEqual([
+      "https://chatgpt.com/backend-api/me",
+      "https://chatgpt.com/backend-api/wham/usage",
+    ]);
+    expect(
+      requests.every(({ headers }) => headers?.Cookie === "__Secure-session=selected-cookie"),
+    ).toBe(true);
+    expect(requests.every(({ headers }) => headers?.Authorization === undefined)).toBe(true);
+    expect(outcome.snapshot.identity).toMatchObject({
+      accountId: "acct-owner",
+      accountEmail: "owner@example.com",
+    });
+    expect(JSON.stringify(outcome)).not.toContain("selected-cookie");
+  });
+
+  it("keeps Codex web unavailable without scoped ownership and maps a missing selected session", async () => {
+    let browserCalls = 0;
+    let httpCalls = 0;
+    const unselected = makeFirstPartyProviderRuntime({
+      providers: [codex],
+      settings: {
+        read: () => {
+          throw new Error("unselected Codex web must not read ambient settings");
+        },
+      },
+      selectedAccounts: { resolve: () => Effect.succeed(undefined) },
+      browserSessions: {
+        cookieHeader: () => {
+          browserCalls += 1;
+          return Effect.succeed("default-session=must-not-be-read");
+        },
+      },
+      credentials: {
+        read: () => Effect.die("unselected Codex web must not read the keyring"),
+        write: () => Effect.void,
+        remove: () => Effect.void,
+      },
+      http: {
+        execute: () => {
+          httpCalls += 1;
+          return Effect.die("unselected Codex web must not use HTTP");
+        },
+      },
+      clock,
+    });
+    await expect(
+      Effect.runPromise(unselected.fetch("codex", { sourceMode: "web", includeCredits: false })),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "codex" });
+    expect(browserCalls).toBe(0);
+    expect(httpCalls).toBe(0);
+
+    const makeRuntime = (accountEmail: string | undefined) =>
+      makeFirstPartyProviderRuntime({
+        providers: [codex],
+        settings: {
+          read: (_provider, setting) =>
+            setting === "CODEX_CLI_USER_AGENT"
+              ? Effect.succeed(undefined)
+              : Effect.die(`ambient setting must not be read: ${setting}`),
+        },
+        selectedAccounts: {
+          resolve: () =>
+            Effect.succeed({
+              id: "codex-web-selected",
+              ...(accountEmail === undefined ? {} : { accountEmail }),
+              secureSettings: {
+                CODEX_ACCESS_TOKEN: null,
+                CODEX_PERSONAL_ACCESS_TOKEN: null,
+              },
+              plainSettings: { CODEX_ACCOUNT_ID: "acct-owner" },
+            }),
+        },
+        browserSessions: {
+          cookieHeader: () => {
+            browserCalls += 1;
+            return Effect.fail(new MissingBrowserCredentialError());
+          },
+        },
+        credentials: {
+          read: () => Effect.die("ambient keyring must not be read"),
+          write: () => Effect.void,
+          remove: () => Effect.void,
+        },
+        http: {
+          execute: () => {
+            httpCalls += 1;
+            return Effect.die("HTTP must not be reached");
+          },
+        },
+        clock,
+      });
+
+    await expect(
+      Effect.runPromise(
+        makeRuntime(undefined).fetch("codex", { sourceMode: "web", includeCredits: false }),
+      ),
+    ).rejects.toMatchObject({ name: "NoAvailableStrategy", providerId: "codex" });
+    expect(browserCalls).toBe(0);
+    expect(httpCalls).toBe(0);
+
+    await expect(
+      Effect.runPromise(
+        makeRuntime("owner@example.com").fetch("codex", {
+          sourceMode: "web",
+          includeCredits: false,
+        }),
+      ),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
+    expect(browserCalls).toBe(1);
+    expect(httpCalls).toBe(0);
+  });
+
+  it("falls back from a production-classified PAT 401 to selected OAuth", async () => {
+    const requests: HttpRequest[] = [];
+    const outcome = await Effect.runPromise(
+      runtime(
+        requests,
+        {
+          secureSettings: {
+            CODEX_ACCESS_TOKEN: "selected-oauth",
+            CODEX_PERSONAL_ACCESS_TOKEN: "at-selected",
+          },
+          plainSettings: { CODEX_ACCOUNT_ID: "acct-oauth" },
+        },
+        (request) =>
+          Effect.succeed(
+            request.url.endsWith("/whoami")
+              ? {
+                  status: 401,
+                  headers: { "content-type": "text/html" },
+                  body: new TextEncoder().encode("<html>login</html>"),
+                  url: request.url,
+                }
+              : response(request, { ...usagePayload, account_id: "acct-oauth" }),
+          ),
+      ).fetch("codex", { sourceMode: "auto", includeCredits: false }),
+    );
+    expect(requests.map(({ url }) => url)).toEqual([
+      "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami",
+      "https://chatgpt.com/backend-api/wham/usage",
+    ]);
+    expect(requests[1]?.headers?.Authorization).toBe("Bearer selected-oauth");
+    expect(outcome.snapshot.identity?.accountId).toBe("acct-oauth");
+  });
 
   it("redacts selected Codex credentials from transport failures", async () => {
     const selected = runtime(

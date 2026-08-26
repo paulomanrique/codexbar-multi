@@ -93,6 +93,51 @@ describe("browser session credential account routing", () => {
     expect(reads).toEqual(["browser-session/grok/account_selected-1"]);
   });
 
+  it("reads only the selected Codex account key and never its default session", async () => {
+    const reads: string[] = [];
+    const sessions = makeCredentialBrowserSessions(
+      store(
+        {
+          "browser-session/codex/account_selected-1": storedBrowserSession(
+            "codex",
+            "account_selected-1",
+            { "chatgpt.com": "__Secure-next-auth.session-token=selected-secret" },
+          ),
+          "browser-session/codex/default": storedBrowserSession("codex", "default", {
+            "chatgpt.com": "__Secure-next-auth.session-token=default-secret",
+          }),
+        },
+        reads,
+      ),
+      () => "default",
+    );
+
+    await expect(
+      Effect.runPromise(sessions.cookieHeader("codex", "chatgpt.com", "account_selected-1")),
+    ).resolves.toBe("__Secure-next-auth.session-token=selected-secret");
+    expect(reads).toEqual(["browser-session/codex/account_selected-1"]);
+  });
+
+  it("does not fall back to the default key when a selected Codex key is missing", async () => {
+    const reads: string[] = [];
+    const sessions = makeCredentialBrowserSessions(
+      store(
+        {
+          "browser-session/codex/default": storedBrowserSession("codex", "default", {
+            "chatgpt.com": "__Secure-next-auth.session-token=default-secret",
+          }),
+        },
+        reads,
+      ),
+      () => "default",
+    );
+
+    await expect(
+      Effect.runPromise(sessions.cookieHeader("codex", "chatgpt.com", "missing_selected")),
+    ).rejects.toMatchObject({ _tag: "MissingBrowserCredentialError" });
+    expect(reads).toEqual(["browser-session/codex/missing_selected"]);
+  });
+
   it("uses the configured default account when no selected ID is supplied", async () => {
     const reads: string[] = [];
     const sessions = makeCredentialBrowserSessions(
@@ -169,7 +214,7 @@ describe("browser session credential account routing", () => {
     expect(defaultAccountCalls).toBe(0);
   });
 
-  it("rejects a selected account for non-Grok providers before reading the credential store", async () => {
+  it("rejects a selected account for providers without account-scoped browser sessions", async () => {
     const reads: string[] = [];
     let defaultAccountCalls = 0;
     const sessions = makeCredentialBrowserSessions(store({}, reads), () => {
