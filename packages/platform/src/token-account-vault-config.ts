@@ -767,6 +767,7 @@ const selectedCodexTokenBag = (root: Record<string, unknown>): Record<string, un
 const selectedCodexAccount = (
   accountId: string,
   raw: string,
+  metadata: { readonly externalIdentifier?: string | undefined } = {},
 ): Effect.Effect<FirstPartySelectedAccount, ClassifiedFetchFailure> => {
   if (raw.includes("\u0000") || new TextEncoder().encode(raw).byteLength > 1024 * 1024) {
     return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
@@ -796,8 +797,13 @@ const selectedCodexAccount = (
   if (accessToken === undefined && personalAccessToken === undefined) {
     return Effect.fail(selectedAccountFailure("Selected Codex account credential is invalid."));
   }
+  const externalIdentifier = sanitizedMetadataValue(metadata.externalIdentifier);
+  if (externalIdentifier === "invalid") {
+    return Effect.fail(selectedAccountFailure("Selected Codex account metadata is invalid."));
+  }
   return Effect.succeed({
     id: accountId,
+    ...(externalIdentifier === undefined ? {} : { externalIdentifier }),
     secureSettings: {
       CODEX_ACCESS_TOKEN: accessToken ?? null,
       CODEX_PERSONAL_ACCESS_TOKEN: personalAccessToken ?? null,
@@ -1059,7 +1065,7 @@ const selectedClaudeAccount = (
 const sanitizedMetadataValue = (raw: string | undefined): string | "invalid" | undefined => {
   const trimmed = raw?.trim();
   if (trimmed === undefined || trimmed === "") return undefined;
-  if (trimmed.includes("\u0000") || new TextEncoder().encode(trimmed).byteLength > 256) {
+  if (/\p{Cc}/u.test(trimmed) || new TextEncoder().encode(trimmed).byteLength > 256) {
     return "invalid";
   }
   return trimmed;
@@ -1588,7 +1594,7 @@ export const resolveSelectedFirstPartyAccountFromVault = (
   if (account === undefined) return Effect.succeed(undefined);
   if (providerId === "codex") {
     return resolveSelectedMaterial(credentials, providerId, account.id).pipe(
-      Effect.flatMap((material) => selectedCodexAccount(account.id, material)),
+      Effect.flatMap((material) => selectedCodexAccount(account.id, material, account)),
     );
   }
   if (tokenAccountSupportForProvider(providerId)?.runtimeSelectionAvailable !== true) {

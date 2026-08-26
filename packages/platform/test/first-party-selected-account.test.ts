@@ -131,24 +131,87 @@ describe("first-party selected accounts from the token-account vault", () => {
   it("maps selected Codex auth.json material without exposing refresh tokens", async () => {
     const key = tokenAccountVaultKey("codex", "account-0");
     await expect(
-      resolve(config("codex"), "codex", {
-        [key]: JSON.stringify({
-          tokens: {
-            access_token: "selected-oauth",
-            refresh_token: "must-not-escape",
-            id_token: jwt({ email: "selected@example.test" }),
-            account_id: "acct-selected",
-          },
-        }),
-      }),
+      resolve(
+        {
+          ...config("codex"),
+          providers: [
+            {
+              id: "codex",
+              extensions: {},
+              tokenAccounts: {
+                version: 2,
+                activeIndex: 0,
+                accounts: [
+                  {
+                    id: "account-0",
+                    label: "Codex Pro",
+                    addedAt: 0,
+                    externalIdentifier: "acct-selected",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        "codex",
+        {
+          [key]: JSON.stringify({
+            tokens: {
+              access_token: "selected-oauth",
+              refresh_token: "must-not-escape",
+              id_token: jwt({ email: "selected@example.test" }),
+              account_id: "acct-selected",
+            },
+          }),
+        },
+      ),
     ).resolves.toEqual({
       id: "account-0",
+      externalIdentifier: "acct-selected",
       secureSettings: {
         CODEX_ACCESS_TOKEN: "selected-oauth",
         CODEX_PERSONAL_ACCESS_TOKEN: null,
       },
       plainSettings: { CODEX_ACCOUNT_ID: "acct-selected" },
     });
+  });
+
+  it("fails closed for invalid selected Codex account metadata before exposing settings", async () => {
+    const key = tokenAccountVaultKey("codex", "account-0");
+    await expect(
+      resolve(
+        {
+          ...config("codex"),
+          providers: [
+            {
+              id: "codex",
+              extensions: {},
+              tokenAccounts: {
+                version: 2,
+                activeIndex: 0,
+                accounts: [
+                  {
+                    id: "account-0",
+                    label: "Codex Pro",
+                    addedAt: 0,
+                    externalIdentifier: "bad\naccount",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        "codex",
+        {
+          [key]: JSON.stringify({
+            tokens: {
+              access_token: "selected-oauth",
+              account_id: "acct-selected",
+            },
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({ kind: "missing-credential" });
   });
 
   it.each([
