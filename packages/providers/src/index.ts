@@ -197,6 +197,8 @@ export {
   resolveGroqMetricsEndpoint,
   resolveGroqMetricsQueryURL,
 } from "./providers/groq.ts";
+export * from "./providers/groq-console.ts";
+export * from "./providers/groq-console-stytch.ts";
 export { grok } from "./providers/grok.ts";
 export { parseGrokAuthJson, parseGrokCreditsProxyResponse } from "./providers/grok.ts";
 export * from "./providers/grok-local-session.ts";

@@ -1613,6 +1613,8 @@ providers:
       tsGlobs:
         - packages/providers/test/http-parity-wave-two.test.ts
         - packages/providers/test/groq-api-parity.test.ts
+        - packages/providers/test/groq-console-parity.test.ts
+        - packages/providers/test/groq-console-stytch-parity.test.ts
         - packages/platform/test/first-party-runtime-groq-account.test.ts
         - packages/testkit/test/testkit.test.ts
     fixtures:
@@ -1620,13 +1622,19 @@ providers:
     tsPaths:
       expected:
         - packages/providers/src/providers/groq.ts
+        - packages/providers/src/providers/groq-console.ts
+        - packages/providers/src/providers/groq-console-stytch.ts
         - packages/platform/src/token-account-vault-config.ts
       real:
         - packages/providers/src/providers/groq.ts
+        - packages/providers/src/providers/groq-console.ts
+        - packages/providers/src/providers/groq-console-stytch.ts
         - packages/platform/src/token-account-vault-config.ts
     tsTestGlobs:
       - packages/providers/test/http-parity-wave-two.test.ts
       - packages/providers/test/groq-api-parity.test.ts
+      - packages/providers/test/groq-console-parity.test.ts
+      - packages/providers/test/groq-console-stytch-parity.test.ts
       - packages/platform/test/first-party-runtime-groq-account.test.ts
       - packages/testkit/test/testkit.test.ts
     status: partial
