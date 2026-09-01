@@ -635,7 +635,8 @@ export const runCLI = async (options: CLICommandRunnerOptions): Promise<CLIComma
     );
   if (command === "cards") return runCards(raw.slice(1), options.io, options.runtime);
   if (command === "dashboard") return runDashboard(raw.slice(1), options.io, options.runtime);
-  if (command === "diagnose") return runDiagnose(raw.slice(1), options.io, options.runtime);
+  if (command === "diagnose")
+    return runDiagnose(raw.slice(1), options.io, options.runtime, options.signal);
   if (command === "cache") return runCache(raw.slice(1), options.io, options.runtime);
   if (command === "guard") return runGuard(raw.slice(1), options.io, options.runtime);
   if (command === "hooks") return runHooks(raw.slice(1), options.io, options.runtime);

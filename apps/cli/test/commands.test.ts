@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ProviderFetchOutcome } from "@codexbar/core";
+import { Effect } from "effect";
+import {
+  ClassifiedFetchFailure,
+  makeProviderFetchPipeline,
+  TestClock,
+  type ProviderFetchOutcome,
+} from "@codexbar/core";
 import { makeDefaultCodexBarConfig } from "@codexbar/core";
 import type { ProviderId, UsageSnapshot } from "@codexbar/contracts";
 import type { ClaudeSwapAccountSnapshot } from "@codexbar/providers";
@@ -292,6 +298,196 @@ describe("CLI dashboard, cache, and diagnose", () => {
     expect(output.stdout[0]).not.toContain("secret@example.com");
     expect(output.stdout[0]).not.toContain("account-secret");
     expect(output.stdout[0]).not.toContain("secret-detail-value");
+  });
+
+  it("exports a bounded allowlisted fetch trace without strategy IDs or failure messages", async () => {
+    const output = capture();
+    const secret = "Bearer secret-token?account=secret@example.com&cost=$123.45";
+    const traced: ProviderFetchOutcome = {
+      ...outcome("codex"),
+      source: "oauth",
+      strategyId: `codex.oauth.${secret}`,
+      attempts: [
+        { strategyId: `codex.admin.${secret}`, source: "api-token", available: false },
+        {
+          strategyId: `codex.web.${secret}`,
+          source: "web",
+          available: true,
+          error: new ClassifiedFetchFailure("missing-credential", secret),
+        },
+        { strategyId: `codex.oauth.${secret}`, source: "oauth", available: true },
+      ],
+    };
+    const result = await runDiagnose(["--provider", "codex", "--trace-fetch"], output.io, {
+      ...runtime(),
+      fetch: async () => traced,
+    });
+    expect(result.exitCode).toBe(CLIExitCode.success);
+    const payload = JSON.parse(output.stdout[0] ?? "") as Record<string, any>;
+    expect(payload.fetchTrace).toEqual({
+      schemaVersion: 1,
+      attempts: [
+        { order: 1, source: "api-token", outcome: "skipped" },
+        {
+          order: 2,
+          source: "web",
+          outcome: "failed",
+          failureKind: "missing-credential",
+          fallback: "continued",
+        },
+        { order: 3, source: "oauth", outcome: "selected" },
+      ],
+    });
+    expect(output.stdout[0]).not.toContain(secret);
+    expect(output.stdout[0]).not.toContain("strategyId");
+  });
+
+  it("bounds hostile fetch trace metadata and maps unknown sources", async () => {
+    const output = capture();
+    const secret = "Bearer hostile-source-token";
+    const traced = {
+      ...outcome("codex"),
+      source: secret,
+      attempts: Array.from({ length: 20 }, (_, index) => ({
+        strategyId: `${secret}-${index}`,
+        source: secret,
+        available: false,
+      })),
+    } as unknown as ProviderFetchOutcome;
+    await runDiagnose(["--provider", "codex", "--trace-fetch"], output.io, {
+      ...runtime(),
+      fetch: async () => traced,
+    });
+    const payload = JSON.parse(output.stdout[0] ?? "") as Record<string, any>;
+    expect(payload.source).toBe("unknown");
+    expect(payload.fetchTrace).toMatchObject({ schemaVersion: 1, truncated: true });
+    expect(payload.fetchTrace.attempts).toHaveLength(16);
+    expect(
+      payload.fetchTrace.attempts.every(
+        (attempt: Record<string, unknown>) => attempt.source === "unknown",
+      ),
+    ).toBe(true);
+    expect(output.stdout[0]).not.toContain(secret);
+  });
+
+  it("redacts arbitrary terminal failure text and forwards cancellation", async () => {
+    const output = capture();
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const result = await runDiagnose(
+      ["--provider", "codex", "--trace-fetch"],
+      output.io,
+      {
+        ...runtime(),
+        fetch: async (_provider, _context, signal) => {
+          receivedSignal = signal;
+          throw Object.assign(new Error("Bearer terminal-secret https://example.test/?token=bad"), {
+            kind: "authentication-expired",
+          });
+        },
+      },
+      controller.signal,
+    );
+    expect(result.exitCode).toBe(CLIExitCode.failure);
+    expect(receivedSignal).toBe(controller.signal);
+    const payload = JSON.parse(output.stdout[0] ?? "") as Record<string, any>;
+    expect(payload).toMatchObject({
+      result: "failed",
+      failureKind: "authentication-expired",
+      error: { message: "Provider fetch failed; see failureKind." },
+      fetchTrace: { schemaVersion: 1, attempts: [], incomplete: true },
+    });
+    expect(output.stdout[0]).not.toContain("terminal-secret");
+    expect(output.stdout[0]).not.toContain("example.test");
+  });
+
+  it("exports the core attempt path for a terminal provider failure", async () => {
+    const output = capture();
+    const secret = "Bearer core-terminal-secret";
+    const terminal = new ClassifiedFetchFailure("authentication-expired", secret);
+    const pipeline = makeProviderFetchPipeline({
+      resolveStrategies: () =>
+        Effect.succeed([
+          {
+            id: `codex.admin.${secret}`,
+            source: "api-token" as const,
+            isAvailable: () => Effect.succeed(false),
+            fetch: () => Effect.succeed(snapshot),
+            shouldFallback: () => false,
+          },
+          {
+            id: `codex.oauth.${secret}`,
+            source: "oauth" as const,
+            isAvailable: () => Effect.succeed(true),
+            fetch: () => Effect.fail(terminal),
+            shouldFallback: () => false,
+          },
+        ]),
+    });
+    const result = await runDiagnose(["--provider", "codex", "--trace-fetch"], output.io, {
+      ...runtime(),
+      fetch: (provider, context) =>
+        Effect.runPromise(pipeline.fetch(provider, context).pipe(Effect.provide(TestClock()))),
+    });
+
+    expect(result.exitCode).toBe(CLIExitCode.failure);
+    const payload = JSON.parse(output.stdout[0] ?? "") as Record<string, any>;
+    expect(payload).toMatchObject({
+      result: "failed",
+      failureKind: "authentication-expired",
+      fetchTrace: {
+        schemaVersion: 1,
+        attempts: [
+          { order: 1, source: "api-token", outcome: "skipped" },
+          {
+            order: 2,
+            source: "oauth",
+            outcome: "failed",
+            failureKind: "authentication-expired",
+            fallback: "stopped",
+          },
+        ],
+      },
+    });
+    expect(output.stdout[0]).not.toContain(secret);
+    expect(output.stdout[0]).not.toContain("strategyId");
+  });
+
+  it("reports cancellation safely and does not start the next provider", async () => {
+    const output = capture();
+    const controller = new AbortController();
+    const secret = "cancelled with token=terminal-secret";
+    const fetches: ProviderId[] = [];
+    const result = await runDiagnose(
+      ["--trace-fetch"],
+      output.io,
+      {
+        ...runtime(),
+        providers: [
+          { id: "codex", name: "Codex", status: "partial" },
+          { id: "claude", name: "Claude", status: "partial" },
+        ],
+        fetch: async (provider) => {
+          fetches.push(provider);
+          controller.abort(new Error(secret));
+          throw controller.signal.reason;
+        },
+      },
+      controller.signal,
+    );
+
+    expect(result.exitCode).toBe(CLIExitCode.failure);
+    expect(fetches).toEqual(["codex"]);
+    const payload = JSON.parse(output.stdout[0] ?? "") as Record<string, any>;
+    expect(payload).toMatchObject({
+      schemaVersion: 1,
+      provider: "codex",
+      result: "cancelled",
+      error: { kind: "runtime", message: "Provider fetch cancelled." },
+      fetchTrace: { schemaVersion: 1, attempts: [], incomplete: true },
+    });
+    expect(output.stdout[0]).not.toContain(secret);
+    expect(output.stdout[0]).not.toContain("terminal-secret");
   });
 
   it("aborts a dashboard provider request when its deadline expires", async () => {

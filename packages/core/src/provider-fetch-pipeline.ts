@@ -92,6 +92,30 @@ export interface ProviderFetchOutcome {
   readonly attempts: ReadonlyArray<ProviderFetchAttempt>;
 }
 
+const fetchAttemptsByFailure = new WeakMap<object, readonly ProviderFetchAttempt[]>();
+
+const isFailureObject = (error: unknown): error is object =>
+  (typeof error === "object" && error !== null) || typeof error === "function";
+
+const rememberFetchAttempts = <E>(error: E, attempts: readonly ProviderFetchAttempt[]): E => {
+  if (isFailureObject(error)) {
+    fetchAttemptsByFailure.set(
+      error,
+      Object.freeze(attempts.map((attempt) => Object.freeze({ ...attempt }))),
+    );
+  }
+  return error;
+};
+
+/**
+ * Recovers pipeline attempts for a terminal failure without changing or
+ * serializing the original error. Hosts must still redact attempt errors.
+ */
+export const fetchAttemptsFromFailure = (
+  error: unknown,
+): readonly ProviderFetchAttempt[] | undefined =>
+  isFailureObject(error) ? fetchAttemptsByFailure.get(error) : undefined;
+
 export interface ProviderFetchPipelineService {
   readonly fetch: (
     providerId: ProviderId,
@@ -147,11 +171,13 @@ export const makeProviderFetchPipeline = (
         lastError = error;
         attempts.push({ strategyId: strategy.id, source: strategy.source, available: true, error });
         if (!strategy.shouldFallback(error, context)) {
-          return yield* Effect.fail(error);
+          return yield* Effect.fail(rememberFetchAttempts(error, attempts));
         }
       }
 
-      return yield* Effect.fail(lastError ?? new NoAvailableStrategy(providerId));
+      return yield* Effect.fail(
+        rememberFetchAttempts(lastError ?? new NoAvailableStrategy(providerId), attempts),
+      );
     }),
 });
 

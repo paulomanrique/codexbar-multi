@@ -1,7 +1,12 @@
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { UsageSnapshot } from "@codexbar/contracts";
-import { ClassifiedFetchFailure, makeProviderFetchPipeline, TestClock } from "../src/index.ts";
+import {
+  ClassifiedFetchFailure,
+  fetchAttemptsFromFailure,
+  makeProviderFetchPipeline,
+  TestClock,
+} from "../src/index.ts";
 
 const snapshot = { providerId: "codex" } as unknown as UsageSnapshot;
 const context = { sourceMode: "auto", includeCredits: false } as const;
@@ -77,6 +82,47 @@ describe("ProviderFetchPipeline", () => {
     expect(result.strategyId).toBe("web");
     expect(calls).toBe(2);
     expect(fallbackCalls).toBe(0);
+  });
+
+  it("preserves ordered attempts on the original terminal failure object", async () => {
+    const terminal = new ClassifiedFetchFailure("authentication-expired", "secret detail");
+    const originalKeys = Object.keys(terminal);
+    const pipeline = makeProviderFetchPipeline({
+      resolveStrategies: () =>
+        Effect.succeed([
+          {
+            id: "unavailable",
+            source: "api-token" as const,
+            isAvailable: () => Effect.succeed(false),
+            fetch: () => Effect.succeed(snapshot),
+            shouldFallback: () => false,
+          },
+          {
+            id: "terminal",
+            source: "oauth" as const,
+            isAvailable: () => Effect.succeed(true),
+            fetch: () => Effect.fail(terminal),
+            shouldFallback: () => false,
+          },
+        ]),
+    });
+
+    const failure = await Effect.runPromise(
+      pipeline.fetch("codex", context).pipe(Effect.provide(TestClock()), Effect.flip),
+    );
+
+    expect(failure).toBe(terminal);
+    expect(failure).toBeInstanceOf(ClassifiedFetchFailure);
+    expect(Object.keys(terminal)).toEqual(originalKeys);
+    expect(fetchAttemptsFromFailure(failure)).toMatchObject([
+      { strategyId: "unavailable", source: "api-token", available: false },
+      {
+        strategyId: "terminal",
+        source: "oauth",
+        available: true,
+        error: terminal,
+      },
+    ]);
   });
 
   it("propagates cancellation rather than falling back", async () => {
