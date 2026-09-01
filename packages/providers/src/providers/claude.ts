@@ -393,6 +393,7 @@ const claudeAdminAutoFallbackOn = [...claudeOAuthFallbackOn, "rate-limited"] as 
 const adminStrategy: ProviderStrategy = {
   id: "claude.admin-api",
   kind: "api",
+  autoRequiresAnySecret: ["ANTHROPIC_ADMIN_KEY", "ANTHROPIC_ADMIN_API_KEY"],
   fallbackOn: claudeAdminAutoFallbackOn,
   fetchUsage: async (ctx) => {
     const apiKey = configuredAdminAPIKey(ctx);

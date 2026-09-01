@@ -23,6 +23,7 @@ describe("Claude strategy order and fallback", () => {
   it("prefers nonempty OAuth and never invokes CLI", async () => {
     let cliCalls = 0;
     const runtime = makeFirstPartyProviderRuntime({
+      runtime: "cli",
       providers: [claude],
       settings: {
         read: (_provider, key) =>
