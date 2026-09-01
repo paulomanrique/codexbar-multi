@@ -1116,7 +1116,7 @@ export const makeFetchHttpTransport = (
           ...(request.headers === undefined ? {} : { headers: request.headers }),
           ...(requestBody === undefined ? {} : { body: requestBody }),
         });
-        const responseBody = await boundedBody(response);
+        const responseBody = await boundedBody(response, request.maximumResponseBytes);
         return {
           status: response.status,
           headers: Object.fromEntries(response.headers.entries()),
@@ -1129,11 +1129,25 @@ export const makeFetchHttpTransport = (
     }),
 });
 
-const boundedBody = async (response: Response): Promise<Uint8Array> => {
-  const maximum = 1024 * 1024;
+const defaultMaximumResponseBytes = 1024 * 1024;
+const maximumAllowedResponseBytes = 4 * 1024 * 1024;
+
+const responseMaximum = (requestedMaximum: number | undefined): number => {
+  if (requestedMaximum === undefined) return defaultMaximumResponseBytes;
+  if (
+    !Number.isSafeInteger(requestedMaximum) ||
+    requestedMaximum < 1 ||
+    requestedMaximum > maximumAllowedResponseBytes
+  )
+    throw new Error("Provider response limit is invalid");
+  return requestedMaximum;
+};
+
+const boundedBody = async (response: Response, requestedMaximum?: number): Promise<Uint8Array> => {
+  const maximum = responseMaximum(requestedMaximum);
   const length = Number(response.headers.get("content-length"));
   if (Number.isFinite(length) && length > maximum)
-    throw new Error("Provider response exceeded 1 MiB");
+    throw new Error(`Provider response exceeded ${maximum / (1024 * 1024)} MiB`);
   if (response.body === null) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -1145,7 +1159,7 @@ const boundedBody = async (response: Response): Promise<Uint8Array> => {
       total += next.value.byteLength;
       if (total > maximum) {
         await reader.cancel("response limit exceeded");
-        throw new Error("Provider response exceeded 1 MiB");
+        throw new Error(`Provider response exceeded ${maximum / (1024 * 1024)} MiB`);
       }
       chunks.push(next.value);
     }

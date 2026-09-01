@@ -43,6 +43,8 @@ export interface HttpRequest {
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: Uint8Array;
   readonly timeoutMs?: number;
+  /** Trusted host-selected response cap. Platform transports enforce an upper bound. */
+  readonly maximumResponseBytes?: number;
 }
 
 export interface HttpResponse {

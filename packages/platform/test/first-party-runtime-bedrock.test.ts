@@ -30,6 +30,7 @@ const unusedLocal = {
 describe("first-party runtime Bedrock capability broker", () => {
   it("passes only the allowlisted profile environment and returns a Bedrock snapshot", async () => {
     let sourceEnvironment: unknown;
+    const requests: HttpRequest[] = [];
     const settings: Readonly<Record<string, string>> = {
       CODEXBAR_BEDROCK_AUTH_MODE: "profile",
       AWS_PROFILE: "work",
@@ -57,8 +58,9 @@ describe("first-party runtime Bedrock capability broker", () => {
         },
       },
       http: {
-        execute: (request) =>
-          Effect.succeed(
+        execute: (request) => {
+          requests.push(request);
+          return Effect.succeed(
             response(
               request,
               request.url.startsWith("https://ce.")
@@ -76,7 +78,8 @@ describe("first-party runtime Bedrock capability broker", () => {
                   }
                 : { MetricDataResults: [] },
             ),
-          ),
+          );
+        },
       },
       clock,
     });
@@ -86,17 +89,17 @@ describe("first-party runtime Bedrock capability broker", () => {
     );
 
     expect(sourceEnvironment).toEqual({
-      accessKeyId: "persisted-access",
-      secretAccessKey: "persisted-secret",
-      sessionToken: "persisted-session",
       region: "eu-west-1",
     });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.maximumResponseBytes).toBeUndefined();
+    expect(requests[1]?.maximumResponseBytes).toBe(4 * 1024 * 1024);
     expect(outcome.snapshot.providerCost).toMatchObject({ used: 1.25, currencyCode: "USD" });
     expect(JSON.stringify(outcome)).not.toContain("resolved-secret");
     expect(JSON.stringify(outcome)).not.toContain("persisted-secret");
   });
 
-  it("redacts source credentials from adapter failures", async () => {
+  it("redacts persisted credentials from adapter failures without projecting them", async () => {
     const adapterError = Object.assign(new Error("failed with persisted-secret"), {
       name: "NodeBedrockAwsError",
       code: "api-error",

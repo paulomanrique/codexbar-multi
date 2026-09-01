@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 import { Effect } from "effect";
@@ -107,10 +107,12 @@ export const isNodeBedrockAwsProfileName = (value: string): boolean => {
   );
 };
 
-const existsExecutable = async (path: string): Promise<boolean> => {
+const existsExecutable = async (path: string, platform: NodeJS.Platform): Promise<boolean> => {
   try {
-    await access(path, constants.F_OK);
-    return true;
+    const metadata = await stat(path);
+    if (!metadata.isFile()) return false;
+    await access(path, platform === "win32" ? constants.F_OK : constants.X_OK);
+    return metadata.isFile();
   } catch {
     return false;
   }
@@ -122,16 +124,18 @@ export const resolveNodeBedrockAwsCliPath = async (options: {
   readonly platform?: NodeJS.Platform;
   readonly exists?: (path: string) => Promise<boolean>;
 }): Promise<string | undefined> => {
-  const exists = options.exists ?? existsExecutable;
+  const platform = options.platform ?? process.platform;
+  const exists =
+    options.exists ?? ((path: string): Promise<boolean> => existsExecutable(path, platform));
   const configured = options.environment.AWS_CLI_PATH?.trim();
   if (configured !== undefined && configured !== "") {
     if (!isNodeBedrockAwsCliPath(configured))
       throw new NodeBedrockAwsError("cli-not-found", "Configured AWS CLI path is invalid.");
-    return (await exists(configured)) ? configured : undefined;
   }
   const candidates = [
-    ...nodeBedrockAwsWellKnownPaths(options.homeDirectory, options.platform),
-    ...nodeBedrockAwsPathCandidates(options.environment.PATH, options.platform),
+    ...(configured === undefined || configured === "" ? [] : [configured]),
+    ...nodeBedrockAwsWellKnownPaths(options.homeDirectory, platform),
+    ...nodeBedrockAwsPathCandidates(options.environment.PATH, platform),
   ];
   for (const candidate of new Set(candidates)) {
     if (await exists(candidate)) return candidate;
@@ -362,11 +366,6 @@ export const nodeBedrockAwsEnvironment = (
   source?: ProviderBedrockAwsProfileEnvironment,
 ): Readonly<Record<string, string | undefined>> => ({
   ...Object.fromEntries(Object.entries(environment).filter(([key]) => key !== "AWS_PROFILE")),
-  ...(source?.accessKeyId === undefined ? {} : { AWS_ACCESS_KEY_ID: source.accessKeyId }),
-  ...(source?.secretAccessKey === undefined
-    ? {}
-    : { AWS_SECRET_ACCESS_KEY: source.secretAccessKey }),
-  ...(source?.sessionToken === undefined ? {} : { AWS_SESSION_TOKEN: source.sessionToken }),
   ...(source?.region === undefined ? {} : { AWS_REGION: source.region }),
   ...(source?.defaultRegion === undefined ? {} : { AWS_DEFAULT_REGION: source.defaultRegion }),
 });

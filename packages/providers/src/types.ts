@@ -81,15 +81,8 @@ export interface ProviderBedrockAwsCredentials {
   readonly region?: string;
 }
 
-/**
- * Strictly allowlisted persisted values supplied to an AWS profile command.
- * This supports assume-role profiles using `credential_source = Environment`
- * without turning the local provider broker into a generic environment API.
- */
+/** Strictly allowlisted non-secret settings supplied to an AWS profile command. */
 export interface ProviderBedrockAwsProfileEnvironment {
-  readonly accessKeyId?: string;
-  readonly secretAccessKey?: string;
-  readonly sessionToken?: string;
   readonly region?: string;
   readonly defaultRegion?: string;
 }

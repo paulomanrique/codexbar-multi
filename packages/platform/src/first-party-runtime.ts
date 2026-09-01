@@ -42,6 +42,8 @@ import type {
 import { usesAccountScopedBrowserSession } from "./account-scoped-browser-session.ts";
 
 const maximumResponseBytes = 1024 * 1024;
+const maximumBedrockCloudWatchResponseBytes = 4 * 1024 * 1024;
+const bedrockCloudWatchTarget = "GraniteServiceVersion20100801.GetMetricData";
 const defaultTimeoutMs = 15_000;
 
 const localCommands: Readonly<Partial<Record<ProviderId, readonly ProviderLocalCommand[]>>> = {
@@ -434,9 +436,12 @@ const addSecretRedactions = (
   for (const line of secret.split(/[\r\n]+/u)) addCookieComponentRedactions(redactionValues, line);
 };
 
-const text = (body: Uint8Array): string => {
-  if (body.byteLength > maximumResponseBytes)
-    throw failure("api-failure", "Provider response exceeded 1 MiB");
+const text = (body: Uint8Array, responseLimitBytes = maximumResponseBytes): string => {
+  if (body.byteLength > responseLimitBytes)
+    throw failure(
+      "api-failure",
+      `Provider response exceeded ${responseLimitBytes / (1024 * 1024)} MiB`,
+    );
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(body);
   } catch {
@@ -560,11 +565,27 @@ const withoutHeader = (headers: Record<string, string>, name: string): void => {
     if (key.toLowerCase() === name.toLowerCase()) delete headers[key];
 };
 
-const asProviderResponse = (response: HttpResponse): ProviderResponse => ({
+const asProviderResponse = (
+  response: HttpResponse,
+  responseLimitBytes = maximumResponseBytes,
+): ProviderResponse => ({
   status: response.status,
-  bodyText: text(response.body),
+  bodyText: text(response.body, responseLimitBytes),
   headers: providerResponseHeaders(response.headers),
 });
+
+const responseLimitFor = (
+  providerId: ProviderId,
+  method: "GET" | "POST",
+  headers: Readonly<Record<string, string>>,
+): number => {
+  const target = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === "x-amz-target",
+  )?.[1];
+  return providerId === "bedrock" && method === "POST" && target === bedrockCloudWatchTarget
+    ? maximumBedrockCloudWatchResponseBytes
+    : maximumResponseBytes;
+};
 
 const maximumResponseHeaderCount = 256;
 const maximumResponseHeaderNameLength = 256;
@@ -880,9 +901,6 @@ const localFor = (
       return value;
     };
     const source = request.sourceEnvironment;
-    const sourceAccessKeyId = boundedOptional(source?.accessKeyId, "source access key");
-    const sourceSecretAccessKey = boundedOptional(source?.secretAccessKey, "source secret key");
-    const sourceSessionToken = boundedOptional(source?.sessionToken, "source session token");
     const sourceRegion = boundedOptional(source?.region, "source region", 256);
     const sourceDefaultRegion = boundedOptional(
       source?.defaultRegion,
@@ -893,21 +911,9 @@ const localFor = (
       source === undefined
         ? undefined
         : {
-            ...(sourceAccessKeyId === undefined ? {} : { accessKeyId: sourceAccessKeyId }),
-            ...(sourceSecretAccessKey === undefined
-              ? {}
-              : { secretAccessKey: sourceSecretAccessKey }),
-            ...(sourceSessionToken === undefined ? {} : { sessionToken: sourceSessionToken }),
             ...(sourceRegion === undefined ? {} : { region: sourceRegion }),
             ...(sourceDefaultRegion === undefined ? {} : { defaultRegion: sourceDefaultRegion }),
           };
-    for (const value of [
-      sourceEnvironment?.accessKeyId,
-      sourceEnvironment?.secretAccessKey,
-      sourceEnvironment?.sessionToken,
-    ]) {
-      if (value !== undefined) redactionValues.add(value);
-    }
     let result: ProviderBedrockAwsCredentials;
     try {
       result = await Effect.runPromise(
@@ -1572,6 +1578,7 @@ const executeProvider = (
           }
         }
         const body = requestBody(method, requestOptions);
+        const responseLimitBytes = responseLimitFor(descriptor.id, method, headers);
         const requestSignal = requestOptions.signal;
         if (requestSignal !== undefined && !(requestSignal instanceof AbortSignal)) {
           throw failure("api-failure", "Provider request cancellation signal is invalid");
@@ -1581,10 +1588,14 @@ const executeProvider = (
           method,
           headers,
           timeoutMs: timeoutFrom(requestOptions),
+          ...(responseLimitBytes === maximumResponseBytes
+            ? {}
+            : { maximumResponseBytes: responseLimitBytes }),
           ...(body === undefined ? {} : { body }),
         };
         const response = asProviderResponse(
           await executeHttp(httpRequest, requestSignal as AbortSignal | undefined),
+          responseLimitBytes,
         );
         if (!parseJson) return response;
         try {

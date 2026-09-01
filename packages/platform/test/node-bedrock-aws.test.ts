@@ -1,3 +1,6 @@
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { ProcessResult, ProcessRunnerService, ProcessSpec } from "@codexbar/core";
@@ -48,11 +51,50 @@ describe("Node Bedrock AWS CLI adapter", () => {
     ).resolves.toBe("/usr/bin/aws");
     await expect(
       resolveNodeBedrockAwsCliPath({
-        environment: { AWS_CLI_PATH: "/missing/aws" },
+        environment: { AWS_CLI_PATH: "/missing/aws", PATH: "/usr/bin" },
         homeDirectory: "/fixture/home",
-        exists: async () => false,
+        exists: async (path) => path === "/usr/bin/aws",
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe("/usr/bin/aws");
+  });
+
+  it("skips directories and non-executable POSIX candidates", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codexbar-bedrock-cli-"));
+    try {
+      const directoryCandidate = join(root, "directory-aws");
+      const fallback = join(root, "aws");
+      await mkdir(directoryCandidate);
+
+      await expect(
+        resolveNodeBedrockAwsCliPath({
+          environment: { AWS_CLI_PATH: directoryCandidate, PATH: root },
+          homeDirectory: root,
+          platform: "linux",
+        }),
+      ).resolves.toBeUndefined();
+
+      await writeFile(fallback, "#!/bin/sh\n", { mode: 0o700 });
+      await expect(
+        resolveNodeBedrockAwsCliPath({
+          environment: { AWS_CLI_PATH: directoryCandidate, PATH: root },
+          homeDirectory: root,
+          platform: "linux",
+        }),
+      ).resolves.toBe(fallback);
+
+      if (process.platform !== "win32") {
+        await chmod(fallback, 0o600);
+        await expect(
+          resolveNodeBedrockAwsCliPath({
+            environment: { AWS_CLI_PATH: directoryCandidate, PATH: root },
+            homeDirectory: root,
+            platform: "linux",
+          }),
+        ).resolves.toBeUndefined();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("preserves Swift profile environment semantics and accepts only the Bedrock source DTO", async () => {
@@ -61,22 +103,20 @@ describe("Node Bedrock AWS CLI adapter", () => {
         AWS_PROFILE: "wrong-profile",
         AWS_ACCESS_KEY_ID: "ambient-access",
         AWS_SECRET_ACCESS_KEY: "ambient-secret",
+        AWS_SESSION_TOKEN: "ambient-session",
         AWS_REGION: "ambient-region",
         PATH: "/usr/bin",
       },
       {
-        accessKeyId: "persisted-access",
-        secretAccessKey: "persisted-secret",
-        sessionToken: "persisted-session",
         region: "eu-west-1",
         defaultRegion: "eu-west-1",
         ...({ EVIL: "must-not-reach-runner" } as object),
       } as never,
     );
     expect(environment).toMatchObject({
-      AWS_ACCESS_KEY_ID: "persisted-access",
-      AWS_SECRET_ACCESS_KEY: "persisted-secret",
-      AWS_SESSION_TOKEN: "persisted-session",
+      AWS_ACCESS_KEY_ID: "ambient-access",
+      AWS_SECRET_ACCESS_KEY: "ambient-secret",
+      AWS_SESSION_TOKEN: "ambient-session",
       AWS_REGION: "eu-west-1",
       AWS_DEFAULT_REGION: "eu-west-1",
     });
@@ -87,11 +127,14 @@ describe("Node Bedrock AWS CLI adapter", () => {
     await expect(
       runNodeBedrockAwsCredentials({
         profile: "work",
-        environment: { AWS_CLI_PATH: "/usr/bin/aws", AWS_PROFILE: "wrong-profile" },
+        environment: {
+          AWS_CLI_PATH: "/usr/bin/aws",
+          AWS_PROFILE: "wrong-profile",
+          AWS_ACCESS_KEY_ID: "ambient-access",
+          AWS_SECRET_ACCESS_KEY: "ambient-secret",
+          AWS_SESSION_TOKEN: "ambient-session",
+        },
         sourceEnvironment: {
-          accessKeyId: "persisted-access",
-          secretAccessKey: "persisted-secret",
-          sessionToken: "persisted-session",
           region: "eu-west-1",
         },
         processRunner: runner(calls),
@@ -105,9 +148,9 @@ describe("Node Bedrock AWS CLI adapter", () => {
       args: ["configure", "export-credentials", "--profile", "work", "--format", "process"],
       inheritEnvironment: false,
       env: {
-        AWS_ACCESS_KEY_ID: "persisted-access",
-        AWS_SECRET_ACCESS_KEY: "persisted-secret",
-        AWS_SESSION_TOKEN: "persisted-session",
+        AWS_ACCESS_KEY_ID: "ambient-access",
+        AWS_SECRET_ACCESS_KEY: "ambient-secret",
+        AWS_SESSION_TOKEN: "ambient-session",
         AWS_REGION: "eu-west-1",
       },
     });

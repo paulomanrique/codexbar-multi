@@ -203,15 +203,9 @@ export const resolveBedrockCredentials = async (
       if (profile === undefined) throw ctx.fail.missingCredential(BEDROCK_MISSING_CREDENTIALS);
       if (ctx.local?.fetchBedrockAwsCredentials === undefined)
         throw ctx.fail.providerUnavailable(BEDROCK_AWS_CLI_NOT_FOUND);
-      const accessKeyId = bedrockSetting(ctx, BEDROCK_ACCESS_KEY_ID_KEY);
-      const secretAccessKey = bedrockSetting(ctx, BEDROCK_SECRET_ACCESS_KEY_KEY);
-      const sessionToken = bedrockSetting(ctx, BEDROCK_SESSION_TOKEN_KEY);
       const region = bedrockSetting(ctx, "AWS_REGION");
       const defaultRegion = bedrockSetting(ctx, "AWS_DEFAULT_REGION");
       const sourceEnvironment = {
-        ...(accessKeyId === undefined ? {} : { accessKeyId }),
-        ...(secretAccessKey === undefined ? {} : { secretAccessKey }),
-        ...(sessionToken === undefined ? {} : { sessionToken }),
         ...(region === undefined ? {} : { region }),
         ...(defaultRegion === undefined ? {} : { defaultRegion }),
       };
