@@ -1528,17 +1528,36 @@ providers:
         - TestsLinux/*Bedrock*Tests.swift
       tsGlobs:
         - packages/providers/test/complex-cloud-wave-b.test.ts
+        - packages/providers/test/bedrock-parity.test.ts
+        - packages/platform/test/node-bedrock-aws.test.ts
+        - packages/platform/test/first-party-runtime-bedrock.test.ts
     fixtures:
       - packages/providers/test/complex-cloud-wave-b.test.ts
+      - packages/providers/test/bedrock-parity.test.ts
+      - packages/platform/test/node-bedrock-aws.test.ts
     tsPaths:
-      expected: [packages/providers/src/providers/bedrock.ts]
+      expected:
+        - packages/providers/src/providers/bedrock.ts
+        - packages/providers/src/providers/bedrock-aws.ts
+        - packages/providers/src/providers/bedrock-cloudwatch.ts
+        - packages/platform/src/node-bedrock-aws.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/node.ts
       real:
         - packages/providers/src/providers/bedrock.ts
+        - packages/providers/src/providers/bedrock-aws.ts
+        - packages/providers/src/providers/bedrock-cloudwatch.ts
+        - packages/platform/src/node-bedrock-aws.ts
+        - packages/platform/src/first-party-runtime.ts
+        - packages/platform/src/node.ts
     tsTestGlobs:
       - packages/providers/test/complex-cloud-wave-b.test.ts
+      - packages/providers/test/bedrock-parity.test.ts
+      - packages/platform/test/node-bedrock-aws.test.ts
+      - packages/platform/test/first-party-runtime-bedrock.test.ts
     status: partial
     oracleStatus: pending
-    lastReviewedCommit: 453174fe13eebdf403cc0776268eb2b101fd9553
+    lastReviewedCommit: 4cdb349cbc57780e524d3e874ef582078b9bf7c2
   - id: grok
     swiftGlobs:
       - Sources/CodexBar/Providers/Grok/**/*.swift

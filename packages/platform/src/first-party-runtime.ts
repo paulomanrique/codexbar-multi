@@ -19,6 +19,8 @@ import { mapFirstPartyProviderSnapshot } from "@codexbar/providers";
 import type {
   FirstPartyProvider,
   ProviderAntigravityLocalSnapshot,
+  ProviderBedrockAwsCredentials,
+  ProviderBedrockAwsProfileEnvironment,
   ProviderBinaryResponse,
   ProviderClaudeCliUsageResult,
   ProviderContext,
@@ -133,6 +135,12 @@ export interface FirstPartyLocalCapabilities {
   readonly fetchGrokCliBilling?: (
     providerId: ProviderId,
   ) => Effect.Effect<ProviderGrokCliBillingResponse, unknown>;
+  /** Bedrock-only AWS CLI credential export. Providers never receive a process surface. */
+  readonly fetchBedrockAwsCredentials?: (
+    providerId: ProviderId,
+    profile: string,
+    sourceEnvironment?: ProviderBedrockAwsProfileEnvironment,
+  ) => Effect.Effect<ProviderBedrockAwsCredentials, unknown>;
   /** Claude-only bounded PTY usage text; no credential material crosses the boundary. */
   readonly fetchClaudeCliUsage?: (
     providerId: ProviderId,
@@ -599,10 +607,32 @@ const asProviderBinaryResponse = (response: HttpResponse): ProviderBinaryRespons
   };
 };
 
+const isCancelledError = (error: unknown): boolean =>
+  (error instanceof Error ||
+    (typeof DOMException !== "undefined" && error instanceof DOMException)) &&
+  (error.name === "AbortError" ||
+    error.name === "CanceledError" ||
+    /abort|cancel/iu.test(error.name));
+
+const bedrockAwsErrorCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null) return undefined;
+  const record = error as { readonly name?: unknown; readonly code?: unknown };
+  return record.name === "NodeBedrockAwsError" && typeof record.code === "string"
+    ? record.code
+    : undefined;
+};
+
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
+  });
+
 const localFor = (
   providerId: ProviderId,
   local: FirstPartyLocalCapabilities | undefined,
   signal: AbortSignal,
+  redactionValues: Set<string>,
 ): ProviderLocalCapabilities => ({
   run: async (command, request) => {
     if (local === undefined)
@@ -814,6 +844,120 @@ const localFor = (
     )
       throw failure("api-failure", "Grok CLI billing response is invalid or exceeds 1 MiB.");
     return result;
+  },
+  fetchBedrockAwsCredentials: async (request) => {
+    const exportCredentials = local?.fetchBedrockAwsCredentials;
+    if (providerId !== "bedrock") {
+      throw failure(
+        "permission-denied",
+        "AWS credential export is not declared for this provider.",
+      );
+    }
+    if (exportCredentials === undefined)
+      throw failure(
+        "provider-unavailable",
+        "AWS CLI not found. Install the AWS CLI (v2) or set AWS_CLI_PATH to its location.",
+      );
+    if (
+      typeof request.profile !== "string" ||
+      request.profile.trim() !== request.profile ||
+      request.profile.length === 0 ||
+      request.profile.length > 256 ||
+      request.profile.startsWith("-") ||
+      hasControlCharacter(request.profile)
+    ) {
+      throw failure("api-failure", "AWS profile name is invalid.");
+    }
+    const boundedOptional = (value: unknown, name: string, maximum = 8_192): string | undefined => {
+      if (value === undefined) return undefined;
+      if (
+        typeof value !== "string" ||
+        value.length === 0 ||
+        value.length > maximum ||
+        hasControlCharacter(value)
+      )
+        throw failure("api-failure", `AWS ${name} is invalid.`);
+      return value;
+    };
+    const source = request.sourceEnvironment;
+    const sourceAccessKeyId = boundedOptional(source?.accessKeyId, "source access key");
+    const sourceSecretAccessKey = boundedOptional(source?.secretAccessKey, "source secret key");
+    const sourceSessionToken = boundedOptional(source?.sessionToken, "source session token");
+    const sourceRegion = boundedOptional(source?.region, "source region", 256);
+    const sourceDefaultRegion = boundedOptional(
+      source?.defaultRegion,
+      "source default region",
+      256,
+    );
+    const sourceEnvironment: ProviderBedrockAwsProfileEnvironment | undefined =
+      source === undefined
+        ? undefined
+        : {
+            ...(sourceAccessKeyId === undefined ? {} : { accessKeyId: sourceAccessKeyId }),
+            ...(sourceSecretAccessKey === undefined
+              ? {}
+              : { secretAccessKey: sourceSecretAccessKey }),
+            ...(sourceSessionToken === undefined ? {} : { sessionToken: sourceSessionToken }),
+            ...(sourceRegion === undefined ? {} : { region: sourceRegion }),
+            ...(sourceDefaultRegion === undefined ? {} : { defaultRegion: sourceDefaultRegion }),
+          };
+    for (const value of [
+      sourceEnvironment?.accessKeyId,
+      sourceEnvironment?.secretAccessKey,
+      sourceEnvironment?.sessionToken,
+    ]) {
+      if (value !== undefined) redactionValues.add(value);
+    }
+    let result: ProviderBedrockAwsCredentials;
+    try {
+      result = await Effect.runPromise(
+        exportCredentials(providerId, request.profile, sourceEnvironment),
+        {
+          signal,
+        },
+      );
+    } catch (error) {
+      if (isCancelledError(error) || bedrockAwsErrorCode(error) === "cancelled") throw error;
+      const code = bedrockAwsErrorCode(error);
+      const message =
+        error instanceof Error ? error.message : "AWS CLI failed to export credentials";
+      if (code === "sso-expired") throw failure("authentication-expired", message);
+      if (code === "cli-not-found") throw failure("provider-unavailable", message);
+      if (code === "parse-failed") throw failure("parse-failure", message);
+      throw failure("api-failure", message);
+    }
+    const bounded = (value: unknown, name: string): string => {
+      if (
+        typeof value !== "string" ||
+        value.length === 0 ||
+        value.length > 8_192 ||
+        hasControlCharacter(value)
+      )
+        throw failure("api-failure", `AWS ${name} is invalid.`);
+      return value;
+    };
+    const accessKeyId = bounded(result.accessKeyId, "access key");
+    const secretAccessKey = bounded(result.secretAccessKey, "secret key");
+    const sessionToken =
+      result.sessionToken === undefined ? undefined : bounded(result.sessionToken, "session token");
+    const region =
+      result.region === undefined
+        ? undefined
+        : typeof result.region !== "string" ||
+            result.region.trim() === "" ||
+            result.region.length > 256 ||
+            hasControlCharacter(result.region)
+          ? undefined
+          : result.region.trim();
+    redactionValues.add(accessKeyId);
+    redactionValues.add(secretAccessKey);
+    if (sessionToken !== undefined) redactionValues.add(sessionToken);
+    return {
+      accessKeyId,
+      secretAccessKey,
+      ...(sessionToken === undefined ? {} : { sessionToken }),
+      ...(region === undefined ? {} : { region }),
+    };
   },
   fetchClaudeCliUsage: async () => {
     if (local === undefined || local.fetchClaudeCliUsage === undefined)
@@ -1529,7 +1673,7 @@ const executeProvider = (
             return cookie;
           },
         },
-        local: localFor(descriptor.id, options.local, operationSignal),
+        local: localFor(descriptor.id, options.local, operationSignal, redactionValues),
         ...(selectedAccount === undefined
           ? {}
           : {

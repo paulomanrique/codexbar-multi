@@ -174,6 +174,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Align Groq Enterprise Prometheus API query URLs, strict payload parsing, and HTTP failure classification.
   - [x] Port Groq console JWT/cookie parsing and activity aggregation as pure TypeScript parity helpers.
 - [ ] Port multi-call/signing providers (Azure OpenAI, Gemini, Vertex AI, Bedrock, Copilot, MiniMax, LiteLLM, ZenMux, and Wayfinder are partial; MiniMax selected-account isolation and HTML-first parsing are complete).
+  - [x] Port Bedrock profile/SSO credentials, SigV4, paginated Cost Explorer semantics, and CloudWatch activity.
   - [x] Harden Wayfinder required payload decoding, cancellation, and no-redirect transport proof; native-oracle parity remains pending.
   - [x] Align ZenMux opt-in PAYG fetches, cancellation, strict decoding, and HTTP error classification; native-oracle parity remains pending.
 - [x] Port all 20 cookie/web provider domain modules with isolated-session/manual credential contracts; complete adapter/native parity remains gated separately.

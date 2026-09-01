@@ -132,7 +132,9 @@ describe("Swift-derived complex cloud provider wave B", () => {
         period: "Monthly",
         resetsAt: "2026-09-01T00:00:00.000Z",
       },
-      identity: { loginMethod: "Spend: $12.50 - Budget: $50.00" },
+      identity: {
+        loginMethod: "Spend: $12.50 - Budget: $50.00 - Claude 14d: 0 tokens - Requests: 0",
+      },
     });
   });
 

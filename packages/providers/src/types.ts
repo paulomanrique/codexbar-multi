@@ -69,6 +69,31 @@ export interface ProviderGrokCliBillingResponse {
   readonly stderr: string;
 }
 
+/**
+ * Host-resolved AWS credentials for Bedrock profile auth. The platform owns
+ * the AWS CLI process; providers receive only this DTO, never a command surface.
+ */
+export interface ProviderBedrockAwsCredentials {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly sessionToken?: string;
+  /** Profile-configured region when `aws configure get region` returns a value. */
+  readonly region?: string;
+}
+
+/**
+ * Strictly allowlisted persisted values supplied to an AWS profile command.
+ * This supports assume-role profiles using `credential_source = Environment`
+ * without turning the local provider broker into a generic environment API.
+ */
+export interface ProviderBedrockAwsProfileEnvironment {
+  readonly accessKeyId?: string;
+  readonly secretAccessKey?: string;
+  readonly sessionToken?: string;
+  readonly region?: string;
+  readonly defaultRegion?: string;
+}
+
 /** Bounded local Antigravity responses; process, port and CSRF details stay host-owned. */
 export interface ProviderAntigravityLocalSnapshot {
   readonly quotaSummaryJson: string;
@@ -116,6 +141,15 @@ export interface ProviderLocalCapabilities {
   readonly fetchGrokCredentials?: () => Promise<ProviderGrokCredentials | undefined>;
   /** Executes the fixed, non-interactive Grok billing RPC; no process surface is exposed. */
   readonly fetchGrokCliBilling?: () => Promise<ProviderGrokCliBillingResponse>;
+  /**
+   * Bedrock-only AWS CLI credential export. The host runs the fixed
+   * `aws configure export-credentials` / `aws configure get region` commands
+   * and returns resolved credentials only.
+   */
+  readonly fetchBedrockAwsCredentials?: (request: {
+    readonly profile: string;
+    readonly sourceEnvironment?: ProviderBedrockAwsProfileEnvironment;
+  }) => Promise<ProviderBedrockAwsCredentials>;
   /** Bounded Claude CLI PTY usage text; no credential material crosses the boundary. */
   readonly fetchClaudeCliUsage?: () => Promise<ProviderClaudeCliUsageResult>;
 }

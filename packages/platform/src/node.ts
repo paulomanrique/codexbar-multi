@@ -61,6 +61,11 @@ import {
   runNodeGrokCliBilling,
 } from "./node-grok-rpc.ts";
 import {
+  NodeBedrockAwsError,
+  nodeBedrockAwsEnvironment,
+  runNodeBedrockAwsCredentials,
+} from "./node-bedrock-aws.ts";
+import {
   makeNodePrivateDirectoryRestriction,
   makeNodePrivateFileRestriction,
   type NodePrivatePathRestrictionOptions,
@@ -89,6 +94,7 @@ export * from "./node-local-cost-scan.ts";
 export * from "./node-grok-local-session.ts";
 export * from "./node-grok-local-token-scan.ts";
 export * from "./node-grok-rpc.ts";
+export * from "./node-bedrock-aws.ts";
 export * from "./node-private-path-security.ts";
 export * from "./persisted-provider-settings.ts";
 
@@ -644,6 +650,8 @@ export interface NodeFirstPartyLocalCapabilitiesOptions {
   ) => Promise<import("@codexbar/providers").ProviderAntigravityLocalSnapshot>;
   /** One-shot CLI-only opt-in for a same-user external `agy` process. */
   readonly antigravityExternalCLIPath?: string;
+  /** Test/alternate-host seam for fixed AWS CLI discovery only. */
+  readonly bedrockAwsCliExists?: (path: string) => Promise<boolean>;
 }
 
 /**
@@ -874,6 +882,39 @@ export const makeNodeFirstPartyLocalCapabilities = (
             "Unable to read Grok CLI billing data.",
             error,
           ),
+      });
+    },
+    fetchBedrockAwsCredentials: (providerId, profile, sourceEnvironment) => {
+      if (providerId !== "bedrock")
+        return Effect.fail(
+          new InfrastructureError("Bedrock AWS credentials", "Bedrock AWS CLI is not allowlisted."),
+        );
+      const awsEnvironment = nodeBedrockAwsEnvironment(environment);
+      const awsRunner =
+        options.processRunner ?? makeNodeProcessRunner({ environment: awsEnvironment });
+      return Effect.tryPromise({
+        try: (signal) =>
+          runNodeBedrockAwsCredentials({
+            profile,
+            environment: awsEnvironment,
+            ...(sourceEnvironment === undefined ? {} : { sourceEnvironment }),
+            processRunner: awsRunner,
+            homeDirectory: options.homeDirectory ?? homedir(),
+            platform: options.platform ?? process.platform,
+            signal,
+            ...(options.bedrockAwsCliExists === undefined
+              ? {}
+              : { exists: options.bedrockAwsCliExists }),
+          }),
+        catch: (error) => {
+          if (error instanceof NodeBedrockAwsError) return error;
+          if (error instanceof Error && isAbort(error)) return error;
+          return new InfrastructureError(
+            "Bedrock AWS credentials",
+            "Unable to export AWS credentials.",
+            error,
+          );
+        },
       });
     },
   };
