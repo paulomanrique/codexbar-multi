@@ -19,6 +19,7 @@ import { openCodeRequestCookieHeader } from "@codexbar/providers/providers/open-
 import { manusSessionToken } from "@codexbar/providers/providers/manus";
 import { normalizeMiniMaxCookieCredential } from "@codexbar/providers/providers/minimax-credential";
 import { canonicalFactoryManualCredential } from "@codexbar/providers/providers/factory";
+import { normalizeGrokWebCookie } from "@codexbar/providers/providers/grok";
 import { normalizeOllamaTokenAccountHeader } from "@codexbar/providers/providers/ollama";
 import { normalizeQoderManualCredential } from "@codexbar/providers/providers/qoder";
 import { normalizeStepFunToken } from "@codexbar/providers/providers/stepfun";
@@ -772,11 +773,6 @@ const normalizeGrokOAuthToken = (raw: string | undefined): string | undefined =>
     return undefined;
   }
   return token;
-};
-
-const normalizeGrokWebCookie = (raw: string | undefined): string | undefined => {
-  const normalized = normalizeCookieHeader(raw);
-  return normalized?.includes("=") === true ? normalized : undefined;
 };
 
 const resolveClaudeCredentialRoute = (raw: string): ClaudeCredentialRoute | undefined => {
@@ -1568,6 +1564,7 @@ const selectedGrokAccount = (
         GROK_OAUTH_TOKEN: route.accessToken,
         GROK_COOKIE_HEADER: null,
       },
+      plainSettings: { GROK_COOKIE_SOURCE: null },
     });
   }
   return Effect.succeed({
@@ -1576,6 +1573,7 @@ const selectedGrokAccount = (
       GROK_OAUTH_TOKEN: null,
       GROK_COOKIE_HEADER: route.cookieHeader,
     },
+    plainSettings: { GROK_COOKIE_SOURCE: "manual" },
   });
 };
 

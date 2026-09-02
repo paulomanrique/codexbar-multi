@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   grok,
+  normalizeGrokWebCookie,
   parseGrokAuthJson,
   parseGrokCreditsProxyResponse,
   parseGrokGrpcWebResponse,
@@ -39,15 +40,25 @@ const billingPayload = (usedPercent: number, resetEpoch: number): Uint8Array => 
 const context = (
   postBinary?: ProviderContext["http"]["postBinary"],
   local?: ProviderContext["local"],
+  options: {
+    readonly settings?: Readonly<Record<string, string | undefined>>;
+    readonly secrets?: Readonly<Record<string, string | undefined>>;
+    readonly browserCookie?: () => Promise<string>;
+  } = {},
 ): ProviderContext => ({
-  settings: { get: () => undefined, getSecret: () => undefined },
+  settings: {
+    get: (key) => options.settings?.[key],
+    getSecret: (key) => options.secrets?.[key],
+  },
   http: {
     get: async () => ({ status: 200, bodyText: "{}" }),
     getJSON: async () => ({ status: 200, bodyText: "{}", json: {} }),
     postJSON: async () => ({ status: 200, bodyText: "{}", json: {} }),
     ...(postBinary === undefined ? {} : { postBinary }),
   },
-  browser: { cookieHeader: async () => "sso=fixture; sso-rw=fixture" },
+  browser: {
+    cookieHeader: options.browserCookie ?? (async () => "sso=fixture; sso-rw=fixture"),
+  },
   ...(local === undefined ? {} : { local }),
   env: {},
   date: {
@@ -74,6 +85,13 @@ const context = (
 });
 
 describe("Swift-derived Grok gRPC-web billing parity", () => {
+  it("normalizes Swift-compatible Grok cookie material", () => {
+    expect(
+      normalizeGrokWebCookie("curl -H 'Cookie: sso=manual; sso-rw=write' https://grok.com"),
+    ).toBe("sso=manual; sso-rw=write");
+    expect(normalizeGrokWebCookie("Cookie: token-without-pair")).toBeUndefined();
+  });
+
   it("keeps the upstream Grok web descriptor and parses a framed protobuf response", async () => {
     const requests: Array<{
       url: string;
@@ -165,6 +183,118 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
     });
   });
 
+  it("honors manual and off cookie policies without consulting the browser broker", async () => {
+    let browserCalls = 0;
+    const cookies: string[] = [];
+    const response: ProviderBinaryResponse = {
+      status: 200,
+      headers: {},
+      body: frame(billingPayload(20, 1_800_000_002)),
+    };
+    const manualContext = context(
+      async (_url, request) => {
+        cookies.push(request.headers?.Cookie ?? "");
+        return response;
+      },
+      undefined,
+      {
+        settings: { GROK_COOKIE_SOURCE: "manual" },
+        secrets: { GROK_COOKIE_HEADER: "Cookie: sso=manual" },
+        browserCookie: async () => {
+          browserCalls += 1;
+          return "sso=browser";
+        },
+      },
+    );
+
+    await expect(grok.fetchUsage(manualContext)).resolves.toMatchObject({
+      primary: { usedPercent: 20 },
+    });
+    expect(cookies).toEqual(["sso=manual"]);
+    expect(browserCalls).toBe(0);
+
+    const offContext = context(
+      async () => {
+        throw new Error("HTTP must not run");
+      },
+      undefined,
+      {
+        settings: { GROK_COOKIE_SOURCE: "off" },
+        secrets: { GROK_COOKIE_HEADER: "sso=manual-secret" },
+        browserCookie: async () => {
+          browserCalls += 1;
+          return "sso=browser-secret";
+        },
+      },
+    );
+    await expect(grok.fetchUsage(offContext)).rejects.toThrow("missing-credential");
+    expect(browserCalls).toBe(0);
+  });
+
+  it("tries a configured Auto cookie before the isolated browser session", async () => {
+    const cookies: string[] = [];
+    let browserCalls = 0;
+    const snapshot = await grok.fetchUsage(
+      context(
+        async (_url, request) => {
+          const cookie = request.headers?.Cookie ?? "";
+          cookies.push(cookie);
+          if (cookie.includes("manual-secret")) {
+            return { status: 401, headers: {}, body: new Uint8Array() };
+          }
+          return {
+            status: 200,
+            headers: {},
+            body: frame(billingPayload(30, 1_800_000_002)),
+          };
+        },
+        undefined,
+        {
+          settings: { GROK_COOKIE_SOURCE: "auto" },
+          secrets: { GROK_COOKIE_HEADER: "sso=manual-secret" },
+          browserCookie: async () => {
+            browserCalls += 1;
+            return "sso=browser-secret";
+          },
+        },
+      ),
+    );
+
+    expect(snapshot).toMatchObject({ primary: { usedPercent: 30 } });
+    expect(cookies).toEqual(["sso=manual-secret", "sso=browser-secret"]);
+    expect(browserCalls).toBe(1);
+    expect(JSON.stringify(snapshot)).not.toContain("secret");
+  });
+
+  it("fails a missing manual cookie without falling back and preserves cancellation", async () => {
+    let browserCalls = 0;
+    const browserCookie = async () => {
+      browserCalls += 1;
+      return "sso=browser-secret";
+    };
+    await expect(
+      grok.fetchUsage(
+        context(undefined, undefined, {
+          settings: { GROK_COOKIE_SOURCE: "manual" },
+          browserCookie,
+        }),
+      ),
+    ).rejects.toThrow("missing-credential");
+    expect(browserCalls).toBe(0);
+
+    const cancellation = new DOMException("cancelled", "AbortError");
+    await expect(
+      grok.fetchUsage(
+        context(async () => Promise.reject(cancellation), undefined, {
+          settings: { GROK_COOKIE_SOURCE: "auto" },
+          secrets: { GROK_COOKIE_HEADER: "sso=manual-secret" },
+          browserCookie,
+        }),
+      ),
+    ).rejects.toBe(cancellation);
+    expect(browserCalls).toBe(0);
+  });
+
   it("does not turn local activity failure into a quota or billing failure", async () => {
     const snapshot = await grok.fetchUsage(
       context(
@@ -236,6 +366,21 @@ describe("Swift-derived Grok gRPC-web billing parity", () => {
         })),
       ),
     ).rejects.toThrow("authentication-expired: Grok billing rejected the web session.");
+
+    for (const message of [
+      "No credentials presented. [WKE=unauthenticated:no-credentials]",
+      "No credentials presented",
+    ]) {
+      await expect(
+        grok.fetchUsage(
+          context(async () => ({
+            status: 200,
+            headers: { "grpc-status": "16", "grpc-message": encodeURIComponent(message) },
+            body: new Uint8Array(),
+          })),
+        ),
+      ).rejects.toThrow("Run 'grok login'.");
+    }
   });
 
   it("keeps team-billing and HTTP status failures distinct from authentication", async () => {

@@ -1087,6 +1087,7 @@ describe("first-party selected accounts from the token-account vault", () => {
         GROK_OAUTH_TOKEN: "selected-token",
         GROK_COOKIE_HEADER: null,
       },
+      plainSettings: { GROK_COOKIE_SOURCE: null },
     });
 
     await expect(
@@ -1100,6 +1101,7 @@ describe("first-party selected accounts from the token-account vault", () => {
         GROK_OAUTH_TOKEN: null,
         GROK_COOKIE_HEADER: "sso=abc; sso-rw=def",
       },
+      plainSettings: { GROK_COOKIE_SOURCE: "manual" },
     });
   });
 

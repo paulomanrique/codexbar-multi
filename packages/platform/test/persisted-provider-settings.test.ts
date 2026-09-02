@@ -130,4 +130,43 @@ describe("persisted first-party provider settings", () => {
     );
     await expect(read(settings, "openai", "CODEXBAR_FIREWORKS_API_KEY")).resolves.toBeUndefined();
   });
+
+  it("projects only Grok's normalized cookie policy and fails invalid manual input closed", async () => {
+    const config: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [
+        {
+          id: "grok",
+          cookieSource: "auto",
+          cookieHeader: "curl -H 'Cookie: sso=persisted; sso-rw=write' https://grok.com",
+          extensions: { GROK_COOKIE_HEADER: "must-not-project" },
+        },
+      ],
+    };
+    const settings = makePersistedFirstPartySettings(
+      config,
+      "grok",
+      fallback({
+        "grok:GROK_COOKIE_SOURCE": "off",
+        "grok:GROK_COOKIE_HEADER": "sso=ambient",
+      }),
+    );
+
+    await expect(read(settings, "grok", "GROK_COOKIE_SOURCE")).resolves.toBe("auto");
+    await expect(read(settings, "grok", "GROK_COOKIE_HEADER")).resolves.toBe(
+      "sso=persisted; sso-rw=write",
+    );
+
+    const invalidManual: PersistedCodexBarConfig = {
+      version: 1,
+      providers: [{ id: "grok", cookieSource: "manual", cookieHeader: "Cookie:", extensions: {} }],
+    };
+    const invalidSettings = makePersistedFirstPartySettings(
+      invalidManual,
+      "grok",
+      fallback({ "grok:GROK_COOKIE_HEADER": "sso=ambient-secret" }),
+    );
+    await expect(read(invalidSettings, "grok", "GROK_COOKIE_SOURCE")).resolves.toBe("manual");
+    await expect(read(invalidSettings, "grok", "GROK_COOKIE_HEADER")).resolves.toBe("");
+  });
 });

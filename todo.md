@@ -185,6 +185,7 @@ The states below describe the TypeScript `multi` branch; Swift remains the oracl
   - [x] Replace the one-shot Grok CLI billing probe with a bounded streaming ACP session and deterministic teardown.
   - [x] Route selected Grok bearer/cookie accounts through the Swift-compatible Auto source override.
   - [ ] Complete Grok browser-session parity.
+    - [x] Honor persisted Auto/Manual/Off cookie routing and classify WKE reauthentication without exposing session material.
 - [x] Require descriptor, strategy, config, resolving fixtures/goldens, tests, and parity state for every provider.
 
 ## Milestones 8–9 — desktop parity and final gate

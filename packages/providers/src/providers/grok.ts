@@ -7,6 +7,7 @@ import type {
   ProviderGrokCredentials,
   ProviderStrategy,
 } from "../types.ts";
+import { normalizeCookieHeader } from "./cookie-header.ts";
 import { grokLocalSessionDetails } from "./grok-local-session.ts";
 
 const endpoint = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
@@ -46,6 +47,20 @@ const decoded = (value: string): string => {
 
 const nonEmptyString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+
+export const normalizeGrokWebCookie = (raw: string | undefined): string | undefined => {
+  const normalized = normalizeCookieHeader(raw);
+  return normalized?.includes("=") === true ? normalized : undefined;
+};
+
+const grokCookieSource = (ctx: ProviderContext): "auto" | "manual" | "off" => {
+  const raw = ctx.settings.get("GROK_COOKIE_SOURCE")?.trim().toLowerCase();
+  return raw === "manual" || raw === "off" ? raw : "auto";
+};
+
+const cancelled = (error: unknown): boolean =>
+  (error instanceof DOMException && error.name === "AbortError") ||
+  (error instanceof Error && error.name === "AbortError");
 
 const normalizedOAuthToken = (value: string | undefined): string | undefined => {
   let token = value?.trim() ?? "";
@@ -364,7 +379,15 @@ const classify = (ctx: ProviderContext, error: unknown): Error => {
     return ctx.fail.apiFailure(error.message);
   }
   if (error instanceof GrokGrpcError) {
-    const message = error.message.toLowerCase();
+    const message = error.rpcMessage.toLowerCase();
+    const webKeyExchangeRejected =
+      error.status === 16 &&
+      (message.includes("no-credentials") || message.includes("no credentials presented"));
+    if (webKeyExchangeRejected) {
+      return ctx.fail.authenticationExpired(
+        "Grok browser billing needs Grok CLI authentication. Run 'grok login'.",
+      );
+    }
     const badCredential =
       error.status === 16 ||
       (error.status === 7 &&
@@ -620,49 +643,85 @@ const oauthGrpcUsage = async (ctx: ProviderContext) => {
   }
 };
 
+const fetchWebUsageWithCookie = async (ctx: ProviderContext, cookie: string) => {
+  let response: ProviderBinaryResponse;
+  try {
+    response = await fetchOnce(ctx, cookie);
+  } catch (error) {
+    if (!retryable(error)) throw error;
+    response = await fetchOnce(ctx, cookie);
+  }
+  let primary;
+  try {
+    primary = parseGrokGrpcWebResponse(response.body, ctx.date.now());
+  } catch (error) {
+    throw classify(ctx, error);
+  }
+  // Local sessions are observational diagnostics only. They never create
+  // a quota fallback and cannot make a successful billing response fail.
+  const localSummary = await ctx.local?.fetchGrokLocalSessionSummary?.().catch(() => undefined);
+  return {
+    primary,
+    ...(localSummary === undefined ? {} : { details: grokLocalSessionDetails(localSummary) }),
+  };
+};
+
 const definition: ProviderDefinition = {
   id: "grok",
   name: "Grok",
   endpoints: ["https://grok.com", "https://cli-chat-proxy.grok.com"],
   settings: [
     { key: "GROK_OAUTH_TOKEN", title: "SuperGrok OAuth token", type: "secure" },
+    {
+      key: "GROK_COOKIE_SOURCE",
+      title: "Grok cookies",
+      subtitle: "auto, manual, or off. Auto uses the manual header before the browser session.",
+      type: "plain",
+    },
     { key: "GROK_COOKIE_HEADER", title: "Cookie header", type: "secure" },
   ],
   capabilities: ["browser-cookies"],
   cookieDomains: ["grok.com"],
   fetchUsage: async (ctx) => {
-    const cookie =
-      ctx.settings.getSecret("GROK_COOKIE_HEADER")?.trim() ||
-      (await ctx.browser.cookieHeader("grok.com"));
-    if (!cookie) throw ctx.fail.missingCredential("Grok web session is not configured.");
-    let response: ProviderBinaryResponse;
-    try {
-      response = await fetchOnce(ctx, cookie);
-    } catch (error) {
-      if (!retryable(error)) {
-        if (error instanceof GrokHttpError || error instanceof GrokGrpcError)
-          throw classify(ctx, error);
-        throw error;
-      }
+    const source = grokCookieSource(ctx);
+    if (source === "off") {
+      throw ctx.fail.missingCredential("Grok web session is disabled by cookie policy.");
+    }
+    const manualCookie = normalizeGrokWebCookie(ctx.settings.getSecret("GROK_COOKIE_HEADER"));
+    let manualError: unknown;
+    if (manualCookie !== undefined) {
       try {
-        response = await fetchOnce(ctx, cookie);
-      } catch (retryError) {
-        if (retryError instanceof GrokHttpError || retryError instanceof GrokGrpcError)
-          throw classify(ctx, retryError);
-        throw retryError;
+        return await fetchWebUsageWithCookie(ctx, manualCookie);
+      } catch (error) {
+        if (cancelled(error)) throw error;
+        if (source === "manual") {
+          if (error instanceof GrokHttpError || error instanceof GrokGrpcError) {
+            throw classify(ctx, error);
+          }
+          throw error;
+        }
+        manualError = error;
       }
     }
+    if (source === "manual") {
+      throw ctx.fail.missingCredential("Grok manual cookie header is not configured.");
+    }
+
+    const browserCookie = normalizeGrokWebCookie(await ctx.browser.cookieHeader("grok.com"));
+    if (browserCookie === undefined) {
+      if (manualError instanceof GrokHttpError || manualError instanceof GrokGrpcError) {
+        throw classify(ctx, manualError);
+      }
+      if (manualError !== undefined) throw manualError;
+      throw ctx.fail.missingCredential("Grok web session is not configured.");
+    }
     try {
-      const primary = parseGrokGrpcWebResponse(response.body, ctx.date.now());
-      // Local sessions are observational diagnostics only. They never create
-      // a quota fallback and cannot make a successful billing response fail.
-      const localSummary = await ctx.local?.fetchGrokLocalSessionSummary?.().catch(() => undefined);
-      return {
-        primary,
-        ...(localSummary === undefined ? {} : { details: grokLocalSessionDetails(localSummary) }),
-      };
+      return await fetchWebUsageWithCookie(ctx, browserCookie);
     } catch (error) {
-      throw classify(ctx, error);
+      if (error instanceof GrokHttpError || error instanceof GrokGrpcError) {
+        throw classify(ctx, error);
+      }
+      throw error;
     }
   },
 };

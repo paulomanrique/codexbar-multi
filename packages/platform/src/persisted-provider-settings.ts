@@ -6,6 +6,7 @@ import {
   type PersistedProviderConfig,
 } from "@codexbar/core";
 import type { ProviderId } from "@codexbar/contracts";
+import { normalizeGrokWebCookie } from "@codexbar/providers/providers/grok";
 import type { FirstPartySettings } from "./first-party-runtime.ts";
 
 const providerConfig = (
@@ -35,6 +36,16 @@ const fireworksSetting = (config: PersistedProviderConfig, setting: string): str
   return undefined;
 };
 
+const grokSetting = (config: PersistedProviderConfig, setting: string): string | undefined => {
+  if (setting === "GROK_COOKIE_HEADER") {
+    const configured = cleanConfigString(config.cookieHeader);
+    if (configured === undefined) return config.cookieSource === "manual" ? "" : undefined;
+    return normalizeGrokWebCookie(configured) ?? "";
+  }
+  if (setting === "GROK_COOKIE_SOURCE") return config.cookieSource;
+  return undefined;
+};
+
 const projectedSetting = (
   config: PersistedCodexBarConfig | undefined,
   providerId: ProviderId,
@@ -44,6 +55,7 @@ const projectedSetting = (
   if (entry === undefined) return undefined;
   if (providerId === "moonshot") return moonshotSetting(entry, setting);
   if (providerId === "fireworks") return fireworksSetting(entry, setting);
+  if (providerId === "grok") return grokSetting(entry, setting);
   return undefined;
 };
 
@@ -63,7 +75,9 @@ export const makePersistedFirstPartySettings = (
       ? ["MOONSHOT_REGION", "CODEXBAR_MOONSHOT_API_KEY", "CODEXBAR_MOONSHOT_API_KEY_REGION"]
       : providerId === "fireworks"
         ? ["CODEXBAR_FIREWORKS_API_KEY", "CODEXBAR_FIREWORKS_ACCOUNT_SLUG"]
-        : [];
+        : providerId === "grok"
+          ? ["GROK_COOKIE_SOURCE", "GROK_COOKIE_HEADER"]
+          : [];
   for (const setting of settings) {
     const value = projectedSetting(config, providerId, setting);
     if (value !== undefined) projection.set(setting, value);

@@ -251,7 +251,7 @@ describe("published desktop spend overview (Swift #3067 parity)", () => {
       // expired/failed web billing probe. It must not gate the local scanner.
       await expect(
         grok.fetchUsage({
-          settings: { get: () => undefined, getSecret: () => "fixture-cookie" },
+          settings: { get: () => undefined, getSecret: () => "sso=fixture-cookie" },
           http: {
             get: async () => ({ status: 500, bodyText: "" }),
             getJSON: async () => ({ status: 500, bodyText: "", json: {} }),
