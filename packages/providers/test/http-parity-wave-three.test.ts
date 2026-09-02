@@ -275,6 +275,159 @@ describe("Swift-derived HTTP provider parity wave three", () => {
     ).rejects.toThrow("parse-failure:");
   });
 
+  it("matches ai& pagination order, cursor encoding and the ten-page partial cap", async () => {
+    const requests: Request[] = [];
+    const completed = await aiand.fetchUsage(
+      context(
+        (request) =>
+          request.url.search.includes("after=")
+            ? json({ data: [{ cost: "1.00", currency: "jpy" }], has_more: false })
+            : json({
+                data: [{ cost: "2.00", currency: "jpy" }],
+                has_more: true,
+                next_after: "2026-07-17 10:24:30.094374+00",
+                next_after_id: "912bf992-0000-4000-8000-000000000002",
+              }),
+        { AIAND_API_KEY: "fixture-key" },
+        requests,
+      ),
+    );
+    expect(completed).toEqual({
+      cost: { used: 3, limit: 0, currency: "JPY", period: "Last 30 days" },
+      dataConfidence: "exact",
+    });
+    expect(requests.map((request) => request.url.href)).toEqual([
+      "https://api.aiand.com/logs?range=30days&limit=100",
+      "https://api.aiand.com/logs?range=30days&limit=100&after=2026-07-17%2010:24:30.094374%2B00&after_id=912bf992-0000-4000-8000-000000000002",
+    ]);
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer fixture-key", Accept: "application/json" },
+    });
+    expect(requests[0]?.url.href).not.toContain("fixture-key");
+
+    const cappedRequests: Request[] = [];
+    const capped = await aiand.fetchUsage(
+      context(
+        () =>
+          json({
+            data: [{ cost: "1.00", currency: "jpy" }],
+            has_more: true,
+            next_after: "",
+            next_after_id: "",
+          }),
+        { AIAND_API_KEY: "fixture-key" },
+        cappedRequests,
+      ),
+    );
+    expect(cappedRequests).toHaveLength(10);
+    expect(capped).toEqual({
+      cost: { used: 10, limit: 0, currency: "JPY", period: "Last 30 days (partial)" },
+      dataConfidence: "estimated",
+    });
+  });
+
+  it("marks ai& pagination partial unless both cursors are present", async () => {
+    for (const page of [
+      {
+        data: [{ cost: "2.5", currency: "jpy" }],
+        has_more: true,
+        next_after: null,
+        next_after_id: "id",
+      },
+      {
+        data: [{ cost: "2.5", currency: "jpy" }],
+        has_more: true,
+        next_after: "cursor",
+        next_after_id: null,
+      },
+    ]) {
+      const requests: Request[] = [];
+      const snapshot = await aiand.fetchUsage(
+        context(() => json(page), { AIAND_API_KEY: "fixture-key" }, requests),
+      );
+      expect(requests).toHaveLength(1);
+      expect(snapshot).toEqual({
+        cost: { used: 2.5, limit: 0, currency: "JPY", period: "Last 30 days (partial)" },
+        dataConfidence: "estimated",
+      });
+    }
+  });
+
+  it("cleans ai& credentials, prefers the secure value and omits empty spend", async () => {
+    const requests: Request[] = [];
+    const base = context(
+      () => json({ data: [{ cost: null, currency: "jpy" }], has_more: false }),
+      {},
+      requests,
+    );
+    const snapshot = await aiand.fetchUsage({
+      ...base,
+      settings: {
+        get: () => "plain-key",
+        getSecret: () => "  'secure-key'  ",
+      },
+    });
+    expect(requests[0]?.options).toMatchObject({
+      headers: { Authorization: "Bearer secure-key" },
+    });
+    expect(snapshot).toEqual({ dataConfidence: "exact" });
+
+    for (const invalid of ["", "   ", "'", '"', "''", '  ""  ']) {
+      await expect(
+        aiand.fetchUsage(
+          context(() => json({ data: [], has_more: false }), { AIAND_API_KEY: invalid }),
+        ),
+      ).rejects.toThrow("missing-credential:");
+    }
+  });
+
+  it.each([
+    [401, "authentication-expired"],
+    [402, "permission-denied"],
+    [429, "rate-limited"],
+    [500, "api-failure"],
+  ] as const)("classifies ai& HTTP %s as %s without response leakage", async (status, kind) => {
+    let failure = "";
+    try {
+      await aiand.fetchUsage(
+        context(() => json({ error: "fixture-key", detail: "response-secret" }, status), {
+          AIAND_API_KEY: "fixture-key",
+        }),
+      );
+    } catch (error) {
+      failure = String(error);
+    }
+    expect(failure).toContain(`${kind}:`);
+    expect(failure).not.toContain("fixture-key");
+    expect(failure).not.toContain("response-secret");
+    if (status === 500) expect(failure).toContain("500");
+  });
+
+  it("accepts every ai& 2xx and rejects Codable-incompatible field types", async () => {
+    await expect(
+      aiand.fetchUsage(
+        context(() => json({ data: [], has_more: false }, 299), {
+          AIAND_API_KEY: "fixture-key",
+        }),
+      ),
+    ).resolves.toEqual({ dataConfidence: "exact" });
+
+    for (const payload of [
+      null,
+      { data: "not-an-array" },
+      { data: ["not-an-object"] },
+      { data: [{ cost: 1, currency: "jpy" }] },
+      { data: [{ cost: "1", currency: 1 }] },
+      { data: [], has_more: "true" },
+      { data: [], next_after: 1 },
+      { data: [], next_after_id: 1 },
+    ]) {
+      await expect(
+        aiand.fetchUsage(context(() => json(payload), { AIAND_API_KEY: "fixture-key" })),
+      ).rejects.toThrow("parse-failure:");
+    }
+  });
+
   it("aggregates LLM Proxy providers when summary is absent and keeps top three sorted", async () => {
     const snapshot = await llmproxy.fetchUsage(
       context(

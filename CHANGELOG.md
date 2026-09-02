@@ -6,6 +6,7 @@
 - CLI: skip the Claude Admin API strategy in Auto mode when no Admin API key is configured, allowing discovered Claude OAuth/CLI credentials to run.
 - CLI: add an allowlisted `diagnose --trace-fetch` fallback trace and stop exporting raw provider failure messages from diagnostic JSON.
 - Grok: honor persisted Auto/Manual/Off cookie policy and give safe `grok login` guidance when browser billing requires WKE credentials.
+- ai&: match Swift credential cleanup, pagination, strict response decoding, exact spend aggregation, and HTTP failure classification.
 
 ## 0.54.0 — 2026-08-18
 
