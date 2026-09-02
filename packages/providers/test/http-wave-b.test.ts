@@ -63,6 +63,8 @@ const response = (body: unknown, status = 200): ProviderResponse => ({
   status,
   bodyText: JSON.stringify(body),
 });
+const classifiedFailure = (kind: string, message: string): Error & { readonly kind: string } =>
+  Object.assign(new Error(message), { kind });
 
 describe("Swift-derived HTTP provider wave B", () => {
   it("preserves descriptor and strategy IDs", () => {
@@ -210,6 +212,105 @@ describe("Swift-derived HTTP provider wave B", () => {
       },
       identity: {},
     });
+  });
+
+  it.each(["authentication-expired", "permission-denied"] as const)(
+    "rethrows Chutes %s from the optional quotas fallback by typed kind",
+    async (kind) => {
+      const failure = classifiedFailure(kind, "Chutes rejected the API key.");
+      expect(failure.message).not.toContain(kind);
+      await expect(
+        chutes.fetchUsage(
+          context(
+            (_method, url) => {
+              if (url.pathname.endsWith("subscription_usage")) {
+                return response({ subscription: { active: false, status: "free" } });
+              }
+              if (url.pathname.endsWith("/quotas")) throw failure;
+              return response({});
+            },
+            { CHUTES_API_KEY: "key" },
+          ),
+        ),
+      ).rejects.toMatchObject({ kind });
+    },
+  );
+
+  it.each(["authentication-expired", "permission-denied"] as const)(
+    "rethrows Chutes %s from optional quota enrichment by typed kind",
+    async (kind) => {
+      const failure = classifiedFailure(kind, "Chutes rejected the API key.");
+      expect(failure.message).not.toContain(kind);
+      await expect(
+        chutes.fetchUsage(
+          context(
+            (_method, url) => {
+              if (url.pathname.endsWith("subscription_usage")) {
+                return response({ subscription: { active: false, status: "free" } });
+              }
+              if (url.pathname.endsWith("/quotas")) {
+                return response([{ chute_id: "alpha", quota: 100 }]);
+              }
+              if (url.pathname.includes("/quota_usage/")) throw failure;
+              return response({});
+            },
+            { CHUTES_API_KEY: "key" },
+          ),
+        ),
+      ).rejects.toMatchObject({ kind });
+    },
+  );
+
+  it("keeps Chutes optional quota failures fail-soft", async () => {
+    const subscriptionOnly = await chutes.fetchUsage(
+      context(
+        (_method, url) => {
+          if (url.pathname.endsWith("subscription_usage")) {
+            return response({ subscription: { active: false, status: "free" } });
+          }
+          throw classifiedFailure("api-failure", "Temporary quota failure.");
+        },
+        { CHUTES_API_KEY: "key" },
+      ),
+    );
+    expect(subscriptionOnly).toEqual({
+      identity: { loginMethod: "No active subscription" },
+    });
+
+    const snapshot = await chutes.fetchUsage(
+      context(
+        (_method, url) => {
+          if (url.pathname.endsWith("subscription_usage")) {
+            return response({ subscription: { active: false, status: "free" } });
+          }
+          if (url.pathname.endsWith("/quotas")) {
+            return response([{ chute_id: "beta", quota: 100, used: 10 }]);
+          }
+          throw classifiedFailure("api-failure", "Temporary enrichment failure.");
+        },
+        { CHUTES_API_KEY: "key" },
+      ),
+    );
+    expect(snapshot).toEqual({
+      primary: { usedPercent: 10, resetDescription: "10/100 credits" },
+      identity: { loginMethod: "No active subscription" },
+    });
+  });
+
+  it("does not swallow Chutes cancellation in optional quota work", async () => {
+    await expect(
+      chutes.fetchUsage(
+        context(
+          (_method, url) => {
+            if (url.pathname.endsWith("subscription_usage")) {
+              return response({ subscription: { active: false, status: "free" } });
+            }
+            throw new DOMException("cancelled", "AbortError");
+          },
+          { CHUTES_API_KEY: "key" },
+        ),
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("fetches every IBM Bob team, formats Bobcoins and rejects untrusted regions", async () => {

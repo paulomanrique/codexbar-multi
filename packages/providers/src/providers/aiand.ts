@@ -10,8 +10,8 @@ import { get, json, object } from "./_http.ts";
 const cleanAPIKey = (raw: string | undefined): string | undefined => {
   let value = raw?.trim() ?? "";
   if (
-    ((value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'")))
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
   ) {
     value = value.slice(1, -1).trim();
   }

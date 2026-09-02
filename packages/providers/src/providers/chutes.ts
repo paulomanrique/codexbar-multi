@@ -8,6 +8,21 @@ import type {
 } from "../types.ts";
 import { date, get, json, number, object, status, string } from "./_http.ts";
 
+const isAbortError = (error: unknown): boolean =>
+  (error instanceof DOMException || error instanceof Error) && error.name === "AbortError";
+
+const failureKind = (error: unknown): string | undefined =>
+  typeof error === "object" && error !== null && "kind" in error && typeof error.kind === "string"
+    ? error.kind
+    : error instanceof Error
+      ? /^([a-z]+(?:-[a-z]+)*):/u.exec(error.message)?.[1]
+      : undefined;
+
+const isAuthenticationFailure = (error: unknown): boolean => {
+  const kind = failureKind(error);
+  return kind === "authentication-expired" || kind === "permission-denied";
+};
+
 type Dict = Record<string, unknown>;
 const normalized = (key: string): string => key.replace(/[^a-z0-9]/gi, "").toLowerCase();
 const value = (dict: Dict, keys: readonly string[]): unknown => {
@@ -642,8 +657,7 @@ const definition: ProviderDefinition = {
       quotasResponse = await get(ctx, appendEndpointPath(rootURL, "/users/me/quotas"), { headers });
       status(ctx, "Chutes", quotasResponse);
     } catch (error) {
-      if (error instanceof Error && /authentication-expired|permission-denied/.test(error.message))
-        throw error;
+      if (isAbortError(error) || isAuthenticationFailure(error)) throw error;
       return snapshotResult(subscription);
     }
     const quotasBody = json(ctx, "Chutes", quotasResponse);
@@ -675,11 +689,7 @@ const definition: ProviderDefinition = {
             : def,
         );
       } catch (error) {
-        if (
-          error instanceof Error &&
-          /authentication-expired|permission-denied/.test(error.message)
-        )
-          throw error;
+        if (isAbortError(error) || isAuthenticationFailure(error)) throw error;
         enriched.push(def);
       }
     }
