@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Effect } from "effect";
-import { InfrastructureError, type HttpRequest } from "@codexbar/core";
+import { InfrastructureError, type HttpRequest, type HttpResponse } from "@codexbar/core";
 import type { FirstPartyProvider, ProviderContext, ProviderStrategy } from "@codexbar/providers";
+import { grok } from "@codexbar/providers/providers/grok";
 import { makeFirstPartyProviderRuntime } from "../src/first-party-runtime.ts";
 
 const clock = { now: Effect.succeed(1), sleep: () => Effect.void };
@@ -206,6 +207,48 @@ describe("first-party runtime Grok selected-account routing", () => {
     ]);
     expect(ambientOAuthReads).toBe(0);
     expect(JSON.stringify(outcome)).not.toContain("selected-cookie");
+  });
+
+  it("keeps a selected Grok cookie manual and never falls through to a browser session", async () => {
+    const requests: HttpRequest[] = [];
+    const runtime = makeFirstPartyProviderRuntime({
+      providers: [grok],
+      settings: { read: () => Effect.succeed(undefined) },
+      selectedAccounts: {
+        resolve: () =>
+          Effect.succeed({
+            id: "grok-cookie-selected",
+            secureSettings: {
+              GROK_OAUTH_TOKEN: null,
+              GROK_COOKIE_HEADER: "sso=selected-cookie",
+            },
+            plainSettings: { GROK_COOKIE_SOURCE: "manual" },
+          }),
+      },
+      credentials,
+      browserSessions: {
+        cookieHeader: () => Effect.die("selected cookie must suppress browser sessions"),
+      },
+      http: {
+        execute: (request: HttpRequest) =>
+          Effect.sync((): HttpResponse => {
+            requests.push(request);
+            return {
+              status: 401,
+              headers: {},
+              body: new Uint8Array(),
+              url: request.url,
+            };
+          }),
+      },
+      clock,
+    });
+
+    await expect(
+      Effect.runPromise(runtime.fetch("grok", { sourceMode: "auto", includeCredits: false })),
+    ).rejects.toMatchObject({ kind: "authentication-expired" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers?.Cookie).toBe("sso=selected-cookie");
   });
 
   it("keeps explicit Grok source modes explicit while suppressing opposite ambient credentials", async () => {
