@@ -6,19 +6,76 @@ import type {
   ProviderStrategy,
 } from "../types.ts";
 import { normalizeEndpoint } from "@codexbar/core";
-import { date, get, json, number, object, string } from "./_http.ts";
+import { get, json, object } from "./_http.ts";
 
 const clean = (raw: string | undefined): string | undefined => {
   let value = raw?.trim() ?? "";
   if (
-    value.length >= 2 &&
-    ((value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'")))
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
   ) {
     value = value.slice(1, -1).trim();
   }
   return value === "" ? undefined : value;
 };
+
+const requiredInt = (
+  ctx: ProviderContext,
+  payload: Readonly<Record<string, unknown>>,
+  key: string,
+): number => {
+  const value = payload[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)) {
+    throw ctx.fail.parseFailure(`ElevenLabs field ${key} must be an integer.`);
+  }
+  return value;
+};
+
+const optionalInt = (
+  ctx: ProviderContext,
+  payload: Readonly<Record<string, unknown>>,
+  key: string,
+): number | undefined => {
+  const value = payload[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)) {
+    throw ctx.fail.parseFailure(`ElevenLabs field ${key} must be an integer or null.`);
+  }
+  return value;
+};
+
+const optionalString = (
+  ctx: ProviderContext,
+  payload: Readonly<Record<string, unknown>>,
+  key: string,
+): string | undefined => {
+  const value = payload[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw ctx.fail.parseFailure(`ElevenLabs field ${key} must be a string or null.`);
+  }
+  return value;
+};
+
+const validateOverage = (
+  ctx: ProviderContext,
+  payload: Readonly<Record<string, unknown>>,
+): void => {
+  const value = payload.current_overage;
+  if (value === undefined || value === null) return;
+  const overage = object(value);
+  if (!overage) {
+    throw ctx.fail.parseFailure("ElevenLabs field current_overage must be an object or null.");
+  }
+  optionalString(ctx, overage, "amount");
+  optionalString(ctx, overage, "currency");
+};
+
+const capitalized = (value: string): string =>
+  value
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/gu, (letter) => letter.toUpperCase());
 
 const definition: ProviderDefinition = {
   id: "elevenlabs",
@@ -47,7 +104,7 @@ const definition: ProviderDefinition = {
     const response = await get(
       ctx,
       `${root.endsWith("/v1") ? root : `${root}/v1`}/user/subscription`,
-      { headers: { "xi-api-key": key, Accept: "application/json" } },
+      { headers: { "xi-api-key": key, Accept: "application/json" }, timeoutSeconds: 15 },
     );
     if (response.status === 401 || response.status === 403) {
       throw ctx.fail.missingCredential("ElevenLabs rejected the API key.");
@@ -57,47 +114,43 @@ const definition: ProviderDefinition = {
     }
     const payload = object(json(ctx, "ElevenLabs", response));
     if (!payload) throw ctx.fail.parseFailure("ElevenLabs response must be an object.");
-    const used = number(payload.character_count);
-    const limit = number(payload.character_limit);
-    if (used === undefined || limit === undefined)
-      throw ctx.fail.parseFailure("ElevenLabs character quota is invalid.");
+    const used = requiredInt(ctx, payload, "character_count");
+    const limit = requiredInt(ctx, payload, "character_limit");
+    const voiceUsed = optionalInt(ctx, payload, "voice_slots_used");
+    const voiceLimit = optionalInt(ctx, payload, "voice_limit");
+    const professionalVoiceUsed = optionalInt(ctx, payload, "professional_voice_slots_used");
+    const professionalVoiceLimit = optionalInt(ctx, payload, "professional_voice_limit");
+    const resetUnix = optionalInt(ctx, payload, "next_character_count_reset_unix");
+    const tier = optionalString(ctx, payload, "tier");
+    const status = optionalString(ctx, payload, "status");
+    validateOverage(ctx, payload);
     const primary: Record<string, unknown> = {
       usedPercent: limit > 0 ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0,
       resetDescription: `${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} credits`,
     };
-    const reset = date(payload.next_character_count_reset_unix, ctx);
-    if (reset) primary.resetsAt = reset;
+    if (resetUnix !== undefined) primary.resetsAt = ctx.date.unixSeconds(resetUnix);
     const extras: unknown[] = [];
-    for (const [id, title, usedKey, limitKey] of [
-      ["voice-slots", "Voice slots", "voice_slots_used", "voice_limit"],
-      [
-        "professional-voices",
-        "Professional voices",
-        "professional_voice_slots_used",
-        "professional_voice_limit",
-      ],
+    for (const [id, title, voiceCount, voiceCap] of [
+      ["voice-slots", "Voice slots", voiceUsed, voiceLimit],
+      ["professional-voices", "Professional voices", professionalVoiceUsed, professionalVoiceLimit],
     ] as const) {
-      const u = number(payload[usedKey]);
-      const l = number(payload[limitKey]);
-      if (u !== undefined && l !== undefined && l > 0)
+      if (voiceCount !== undefined && voiceCap !== undefined && voiceCap > 0)
         extras.push({
           id,
           title,
           window: {
-            usedPercent: Math.max(0, Math.min(100, (u / l) * 100)),
-            resetDescription: `${u} / ${l}`,
+            usedPercent: Math.max(0, Math.min(100, (voiceCount / voiceCap) * 100)),
+            resetDescription: `${voiceCount} / ${voiceCap}`,
           },
         });
     }
-    const tier = string(payload.tier);
-    const displayTier = tier
-      ? tier.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
-      : string(payload.status);
-    const statusValue = string(payload.status);
-    const loginMethod =
-      displayTier && statusValue && statusValue.toLowerCase() !== "active"
-        ? `${displayTier} · ${statusValue}`
-        : displayTier;
+    const trimmedTier = tier?.trim();
+    const displayTier = trimmedTier ? capitalized(trimmedTier) : undefined;
+    const loginMethod = displayTier
+      ? status !== undefined && status !== "" && status.toLowerCase() !== "active"
+        ? `${displayTier} · ${status}`
+        : displayTier
+      : status;
     return {
       primary,
       identity: { loginMethod },

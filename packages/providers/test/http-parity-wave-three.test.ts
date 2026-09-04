@@ -214,6 +214,7 @@ describe("Swift-derived HTTP provider parity wave three", () => {
       expect(requests[0]?.url.pathname).toBe(expectedPath);
       expect(requests[0]?.options).toMatchObject({
         headers: { "xi-api-key": "canonical-key", Accept: "application/json" },
+        timeoutSeconds: 15,
       });
     }
   });
@@ -235,6 +236,88 @@ describe("Swift-derived HTTP provider parity wave three", () => {
     ).rejects.toThrow("api-failure: ElevenLabs endpoint override");
     expect(requests).toHaveLength(0);
   });
+
+  it("rejects ElevenLabs fields that Swift Decodable cannot decode", async () => {
+    const base = { character_count: 1, character_limit: 10 };
+    for (const payload of [
+      { character_limit: 10 },
+      { character_count: 1 },
+      { ...base, character_count: null },
+      { ...base, character_count: "1" },
+      { ...base, character_count: 1.5 },
+      { ...base, character_limit: null },
+      { ...base, character_limit: "10" },
+      { ...base, voice_slots_used: "2" },
+      { ...base, voice_slots_used: 2.5 },
+      { ...base, voice_limit: "10" },
+      { ...base, professional_voice_slots_used: "1" },
+      { ...base, professional_voice_limit: 2.5 },
+      { ...base, next_character_count_reset_unix: "1738356858" },
+      { ...base, next_character_count_reset_unix: 1_738_356_858.5 },
+      { ...base, tier: 1 },
+      { ...base, status: false },
+      { ...base, current_overage: [] },
+      { ...base, current_overage: { amount: 1, currency: "usd" } },
+      { ...base, current_overage: { amount: "0", currency: 1 } },
+    ]) {
+      await expect(
+        elevenlabs.fetchUsage(context(() => json(payload), { ELEVENLABS_API_KEY: "fixture-key" })),
+      ).rejects.toThrow("parse-failure:");
+    }
+  });
+
+  it("accepts ElevenLabs null optionals and matches Swift tier presentation", async () => {
+    const baseQuota = { character_count: 1, character_limit: 10 };
+    const nulled = await elevenlabs.fetchUsage(
+      context(
+        () =>
+          json({
+            character_count: 1,
+            character_limit: 10,
+            voice_slots_used: null,
+            voice_limit: null,
+            professional_voice_slots_used: null,
+            professional_voice_limit: null,
+            next_character_count_reset_unix: null,
+            tier: null,
+            status: null,
+            current_overage: null,
+          }),
+        { ELEVENLABS_API_KEY: "fixture-key" },
+      ),
+    );
+    expect(nulled).toEqual({
+      primary: { usedPercent: 10, resetDescription: "1 / 10 credits" },
+      identity: { loginMethod: undefined },
+    });
+
+    const statusOnly = await elevenlabs.fetchUsage(
+      context(() => json({ ...baseQuota, status: "paused" }), {
+        ELEVENLABS_API_KEY: "fixture-key",
+      }),
+    );
+    expect(statusOnly.identity).toEqual({ loginMethod: "paused" });
+
+    const uppercaseTier = await elevenlabs.fetchUsage(
+      context(() => json({ ...baseQuota, tier: "PRO_PLAN", status: "active" }), {
+        ELEVENLABS_API_KEY: "fixture-key",
+      }),
+    );
+    expect(uppercaseTier.identity).toEqual({ loginMethod: "Pro Plan" });
+  });
+
+  it.each(["'", '"', "''", '""'])(
+    "rejects quote-only ElevenLabs credential %j",
+    async (credential) => {
+      await expect(
+        elevenlabs.fetchUsage(
+          context(() => json({ character_count: 1, character_limit: 10 }), {
+            ELEVENLABS_API_KEY: credential,
+          }),
+        ),
+      ).rejects.toThrow("missing-credential:");
+    },
+  );
 
   it.each([
     [401, "missing-credential"],

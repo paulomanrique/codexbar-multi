@@ -8,6 +8,7 @@
 - Grok: honor persisted Auto/Manual/Off cookie policy and give safe `grok login` guidance when browser billing requires WKE credentials.
 - ai&: match Swift credential cleanup, pagination, strict response decoding, exact spend aggregation, and HTTP failure classification.
 - Chutes: propagate credential failures from optional quota fallbacks instead of publishing a misleading partial snapshot.
+- ElevenLabs: match Swift's strict subscription decoding, reset handling, tier labels, credential cleanup, and request timeout.
 
 ## 0.54.0 — 2026-08-18
 
